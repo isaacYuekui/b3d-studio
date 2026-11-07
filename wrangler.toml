@@ -1,0 +1,4 @@
+# Cloudflare Pages project (free tier). Static site, no server code in V0.1.
+name = "b3d-studio"
+compatibility_date = "2026-11-01"
+pages_build_output_dir = "dist"
