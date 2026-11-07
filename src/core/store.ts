@@ -6,6 +6,7 @@ import type { Command, IdGen } from './commands';
 import type { SceneDoc } from './types';
 
 export type ToolMode = 'select' | 'move' | 'rotate' | 'scale';
+export type Shading = 'solid' | 'rendered';
 
 export interface AppState {
   doc: SceneDoc;
@@ -17,6 +18,8 @@ export interface AppState {
   notice: string | null;
   frame: number;
   playing: boolean;
+  /** Solid = studio lighting for modelling; Rendered = the scene's own lights, materials and shadows. */
+  shading: Shading;
 }
 
 const HISTORY_LIMIT = 200;
@@ -44,6 +47,7 @@ export class Store {
       notice: null,
       frame: 1,
       playing: false,
+      shading: 'solid',
     };
   }
 
@@ -155,6 +159,10 @@ export class Store {
 
   setFrame(frame: number) {
     this.set({ frame });
+  }
+
+  setShading(shading: Shading) {
+    this.set({ shading });
   }
 
   setPlaying(playing: boolean) {

@@ -177,6 +177,77 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await ctx.close();
 }
 
+// ---------------------------------------------------------------- scene builder (v0.2)
+{
+  const fs = await import('node:fs');
+  const { ctx, page, errors } = await open({ width: 1440, height: 900 });
+  const script = fs.readFileSync(new URL('../../examples/robot-studio.b3d-script.json', import.meta.url), 'utf8');
+
+  // invalid script shows a readable error and cannot run
+  await page.click('[data-testid="script-btn"]');
+  await page.fill('[data-testid="script-text"]', '{"format":"b3d-studio-script","version":1,"commands":[{"type":"add","primitive":"teapot"}]}');
+  check('v0.2: invalid script shows error and disables Run', (await page.isDisabled('[data-testid="script-run"]')) && /primitive/.test(await page.textContent('.script-status')));
+
+  // valid script (wrapped in a chat-style code fence)
+  await page.fill('[data-testid="script-text"]', 'Here is your scene:\n```json\n' + script + '\n```');
+  check('v0.2: script parsed and ready', /23 commands/.test(await page.textContent('.script-status')));
+  await page.click('[data-testid="script-run"]');
+  await page.waitForTimeout(1200);
+  check('v0.2: script builds the scene (23 objects, default cube replaced)', (await objCount(page)) === 23);
+  check('v0.2: hierarchy — eyes nested under visor under head', await page.isVisible('[data-outliner-id] >> text=Eye.L'));
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: `${shots}/v02-robot-solid.png` });
+
+  await page.click('[data-outliner-id] >> text=Robot');
+  await page.keyboard.press('Period');
+  await page.keyboard.press('Escape');
+  await page.click('[data-shading="rendered"]');
+  await page.waitForTimeout(1800);
+  await page.screenshot({ path: `${shots}/v02-robot-rendered.png` });
+  check('v0.2: rendered shading toggles on', (await page.getAttribute('[data-shading="rendered"]', 'aria-pressed')) === 'true');
+
+  // material edit through Properties
+  await page.click('[data-outliner-id] >> text=Vase');
+  check('v0.2: custom mesh shows geometry stats', /verts/.test(await page.textContent('[data-testid="properties"]')));
+  const metal = page.locator('[aria-label="Metallic"]');
+  await metal.click();
+  await page.keyboard.press('Control+a');
+  await page.keyboard.type('1');
+  await page.keyboard.press('Enter');
+  check('v0.2: material metallic edit applies', (await page.locator('[aria-label="Metallic"]').getAttribute('aria-valuenow')) === '1');
+
+  // light properties
+  await page.click('[data-outliner-id] >> text=Key Sun');
+  check('v0.2: light shows Light properties', await page.isVisible('#light-type'));
+
+  // one undo reverts the edit, the second reverts the whole script
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+z');
+  await page.keyboard.press('Control+z');
+  check('v0.2: two undos revert edit + entire script', (await objCount(page)) === 1);
+  await page.keyboard.press('Control+Shift+z');
+  check('v0.2: redo restores the scene', (await objCount(page)) === 23);
+
+  // add menu: torus + light
+  await page.mouse.move(700, 450);
+  await page.keyboard.press('Shift+A');
+  await page.click('.menu [data-action="add.torus"]');
+  check('v0.2: Add > Torus', (await selectedName(page)) === 'Torus');
+
+  // GLB export
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), (async () => { await page.click('[data-menu="File"]'); await page.click('.menu [data-action="file.glb"]'); })()]);
+  const glbPath = `${shots}/scene.glb`;
+  await dl.saveAs(glbPath);
+  const glb = fs.readFileSync(glbPath);
+  const json = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString('utf8'));
+  const names = (json.nodes ?? []).map((n) => n.name);
+  check('v0.2: GLB export is a valid glTF binary', glb.subarray(0, 4).toString() === 'glTF' && glb.readUInt32LE(4) === 2, `${glb.length} bytes`);
+  check('v0.2: GLB contains scene objects, not grid/helpers', names.includes('Vase') && names.includes('Torso') && !names.includes('grid') && !names.some((n) => /helper/.test(n)), `${names.length} nodes`);
+
+  check('v0.2: no console/page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // ---------------------------------------------------------------- iPad (landscape + portrait), touch
 for (const [label, vp] of [['ipad-landscape', { width: 1180, height: 820 }], ['ipad-portrait', { width: 820, height: 1180 }]]) {
   const { ctx, page, errors } = await open(vp, { touch: true, dpr: 2 });

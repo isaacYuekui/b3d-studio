@@ -12,17 +12,30 @@ import type { SceneDoc } from './types';
 
 const vec3 = { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 } as const;
 const color = { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' } as const;
+const material = {
+  type: 'object',
+  properties: { baseColor: color, metallic: { type: 'number' }, roughness: { type: 'number' }, emission: color, emissionStrength: { type: 'number' }, alpha: { type: 'number' } },
+} as const;
+const light = {
+  type: 'object',
+  properties: { type: { type: 'string', enum: ['point', 'sun', 'spot'] }, color, power: { type: 'number' }, spotAngle: { type: 'number' }, shadows: { type: 'boolean' } },
+} as const;
 
 export const AI_TOOLS = [
   {
     name: 'add',
-    description: 'Add a primitive object. Units are metres, Z is up, rotation in degrees (Blender conventions).',
+    description: 'Add an object: a primitive, custom mesh, light or empty. Units are metres, Z is up, rotation in degrees (Blender conventions). Give an id to reference it later (e.g. as parentId).',
     input_schema: {
       type: 'object',
       properties: {
-        primitive: { type: 'string', enum: ['cube', 'sphere', 'cylinder', 'plane'] },
+        primitive: { type: 'string', enum: ['cube', 'sphere', 'cylinder', 'cone', 'torus', 'capsule', 'plane', 'mesh', 'light', 'empty'] },
+        id: { type: 'string' },
         name: { type: 'string' },
         color,
+        material,
+        light,
+        params: { type: 'object', properties: { segments: { type: 'integer' }, radiusTop: { type: 'number' }, radiusBottom: { type: 'number' }, majorRadius: { type: 'number' }, minorRadius: { type: 'number' } } },
+        mesh: { type: 'object', properties: { vertices: { type: 'array', items: vec3 }, faces: { type: 'array', items: { type: 'array', items: { type: 'integer' } } }, smooth: { type: 'boolean' } } },
         parentId: { type: ['string', 'null'] },
         transform: { type: 'object', properties: { position: vec3, rotation: vec3, scale: vec3 } },
       },
@@ -39,6 +52,8 @@ export const AI_TOOLS = [
   { name: 'rename', description: 'Rename an object.', input_schema: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } }, required: ['id', 'name'] } },
   { name: 'setParent', description: 'Parent an object to another (or null to unparent).', input_schema: { type: 'object', properties: { id: { type: 'string' }, parentId: { type: ['string', 'null'] } }, required: ['id', 'parentId'] } },
   { name: 'setColor', description: 'Set an object viewport colour.', input_schema: { type: 'object', properties: { id: { type: 'string' }, color }, required: ['id', 'color'] } },
+  { name: 'setMaterial', description: 'Change material values (PBR: base colour, metallic, roughness, emission, alpha).', input_schema: { type: 'object', properties: { id: { type: 'string' }, material }, required: ['id', 'material'] } },
+  { name: 'setLight', description: 'Change a light (type, colour, power in watts or sun strength, spot angle, shadows).', input_schema: { type: 'object', properties: { id: { type: 'string' }, light }, required: ['id', 'light'] } },
   { name: 'setVisible', description: 'Show or hide an object.', input_schema: { type: 'object', properties: { id: { type: 'string' }, visible: { type: 'boolean' } }, required: ['id', 'visible'] } },
 ] as const;
 
@@ -53,7 +68,7 @@ export function summarizeScene(doc: SceneDoc): string {
     .map((id) => {
       const o = doc.objects[id];
       const t = o.transform;
-      return `${id} "${o.name}" ${o.type} parent=${o.parentId ?? '-'} loc=${t.position.join(',')} rot=${t.rotation.join(',')} scale=${t.scale.join(',')} color=${o.color}${o.visible ? '' : ' hidden'}`;
+      return `${id} "${o.name}" ${o.type} parent=${o.parentId ?? '-'} loc=${t.position.join(',')} rot=${t.rotation.join(',')} scale=${t.scale.join(',')} base=${o.material.baseColor}${o.light ? ` light=${o.light.type}/${o.light.power}` : ''}${o.visible ? '' : ' hidden'}`;
     })
     .join('\n');
 }

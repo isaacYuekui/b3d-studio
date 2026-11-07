@@ -5,6 +5,15 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Scene scripts (v0.2)
+
+Describe a scene to Claude, paste the script it writes into **File > Run Scene Script**, and it builds. See [docs/SCRIPTS.md](docs/SCRIPTS.md).
+
+- Primitives: cube, sphere, cylinder, cone, torus, capsule, plane; custom meshes; empties; point, sun and spot lights
+- PBR materials (base colour, metallic, roughness, emission, alpha)
+- Solid and Rendered shading (Z), with shadows from sun and spot lights
+- GLB export that opens in real Blender (File > Import > glTF 2.0)
+
 ## V0.1 features
 
 - Interactive 3D viewport: perspective camera, ground grid, coloured X/Y axes, default cube
