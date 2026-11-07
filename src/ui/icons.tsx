@@ -20,6 +20,8 @@ export const Icon = {
   torus: () => <S><ellipse cx="10" cy="10" rx="7.5" ry="4" /><ellipse cx="10" cy="9.6" rx="3" ry="1.3" /></S>,
   capsule: () => <S><rect x="6" y="2.5" width="8" height="15" rx="4" /></S>,
   mesh: () => <S><path d="M3 15 7 4l6 3 4 9zM7 4l2 12M13 7l-4 9M3 15l14 1" /></S>,
+  model: () => <S><path d="M4 7.5 10 4l6 3.5v6L10 17l-6-3.5z" /><path d="M10 10.5v6.5M4 7.5l6 3 6-3" /><circle cx="10" cy="10.5" r="1.2" fill="currentColor" /></S>,
+  library: () => <S><rect x="3" y="3" width="6" height="6" rx="1" /><rect x="11" y="3" width="6" height="6" rx="1" /><rect x="3" y="11" width="6" height="6" rx="1" /><rect x="11" y="11" width="6" height="6" rx="1" /></S>,
   light: () => <S><circle cx="10" cy="8" r="4.5" /><path d="M8 14h4M8.5 17h3M10 1v1.5M3.5 3.5l1 1M16.5 3.5l-1 1" /></S>,
   empty: () => <S><path d="M10 3v14M3 10h14M5.5 5.5l9 9M14.5 5.5l-9 9" /></S>,
   script: () => <S><path d="M5 2.5h7l3 3v12H5zM12 2.5v3h3M7.5 9.5l-1.5 1.5 1.5 1.5M12.5 9.5l1.5 1.5-1.5 1.5M10.8 9l-1.6 5" /></S>,
@@ -46,5 +48,5 @@ export const Icon = {
 
 export const typeIcon: Record<import('../core/types').ObjectType, () => ReturnType<typeof Icon.cube>> = {
   cube: Icon.cube, sphere: Icon.sphere, cylinder: Icon.cylinder, cone: Icon.cone, torus: Icon.torus, capsule: Icon.capsule,
-  plane: Icon.plane, mesh: Icon.mesh, light: Icon.light, empty: Icon.empty,
+  plane: Icon.plane, mesh: Icon.mesh, model: Icon.model, light: Icon.light, empty: Icon.empty,
 };

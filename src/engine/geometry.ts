@@ -24,7 +24,27 @@ export function buildVertexData(mesh: MeshData): VertexData {
   const normals: number[] = [];
   VertexData.ComputeNormals(positions, indices, normals);
   vd.normals = normals;
+  vd.uvs = boxUVs(mesh, normals);
   return vd;
+}
+
+/**
+ * Box-projected UVs in metres: each vertex is projected on the axis plane its normal
+ * faces most. A texture with textureScale 1 then repeats once per metre on walls,
+ * floors and props alike, with no unwrapping needed.
+ */
+export function boxUVs(mesh: MeshData, babylonNormals: number[]): number[] {
+  const uvs: number[] = [];
+  mesh.vertices.forEach(([x, y, z], i) => {
+    // Babylon normal (x, y, z) = Blender (x, z, y)
+    const nx = Math.abs(babylonNormals[i * 3]);
+    const nz = Math.abs(babylonNormals[i * 3 + 1]);
+    const ny = Math.abs(babylonNormals[i * 3 + 2]);
+    if (nz >= nx && nz >= ny) uvs.push(x, y);
+    else if (nx >= ny) uvs.push(y, z);
+    else uvs.push(x, z);
+  });
+  return uvs;
 }
 
 export interface Bounds {

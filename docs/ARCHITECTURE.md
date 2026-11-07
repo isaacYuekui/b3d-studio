@@ -25,6 +25,7 @@ gets a safe surface — Claude emits JSON commands that pass the same validator 
 | `src/core/store.ts` | App store: doc, selection, tool, history, live preview (`preview` / `commitPreview`) |
 | `src/core/serialize.ts` | Project file format (`b3d-studio-project` v1), browser autosave |
 | `src/core/serialize.ts` → `parseScript` | Scene scripts: validated command batches, one undo step (docs/SCRIPTS.md) |
+| `src/engine/library.ts`, `scripts/fetch-assets.mjs` | Asset library: build-time download + WebP/quantize compression from `library/manifest.json`; runtime catalog |
 | `src/engine/geometry.ts` | Custom mesh data → Babylon vertex data (winding verified by test) |
 | `src/core/aiTools.ts` | Claude tool schemas mapped 1:1 to commands; scene summary for prompts (not wired up yet) |
 | `src/engine/coords.ts` | Blender (right-handed, Z-up) ↔ Babylon (left-handed, Y-up) conversion — unit tested |
@@ -54,7 +55,8 @@ gets a safe surface — Claude emits JSON commands that pass the same validator 
 | Milestone | Scope |
 |---|---|
 | v0.2 Scene builder ✅ | Scene scripts, more primitives, custom meshes, PBR materials, lights, shadows, Solid/Rendered shading, GLB export |
-| v0.3 Modeling | Edit mode: vertex/edge/face select, extrude, inset, loop cut, bevel; subdivision surface |
-| v0.4 Animation | Keyframes on transforms, dope sheet in the timeline, camera objects |
-| v0.5 AI operator | Cloudflare Worker + Claude tools above; "studio lighting", "orbit camera" style commands |
+| v0.3 Realism ✅ | CC0 asset library (models, HDRIs, PBR textures), World settings, SSAO, bloom, box-projected UVs |
+| v0.4 Modeling | Edit mode: vertex/edge/face select, extrude, inset, loop cut, bevel; subdivision surface |
+| v0.5 Animation | Keyframes on transforms, dope sheet in the timeline, camera objects |
+| v0.6 AI operator | Cloudflare Worker + Claude tools above; "studio lighting", "orbit camera" style commands |
 | later | Modifiers & subdivision, UV editor, sculpting, shader/geometry nodes, rigging, physics |

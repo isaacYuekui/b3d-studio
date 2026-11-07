@@ -7,8 +7,8 @@
 //   - a safe surface for AI: Claude emits JSON commands, never JavaScript
 //   - easy unit testing
 
-import { DEFAULT_LIGHT, DEFAULT_MATERIAL, IDENTITY, LIGHT_TYPES, OBJECT_TYPES, PRIMITIVES } from './types';
-import type { LightData, LightType, Material, MeshData, ObjectType, PrimitiveParams, SceneDoc, SceneObject, Transform, Vec3 } from './types';
+import { BACKGROUNDS, DEFAULT_LIGHT, DEFAULT_MATERIAL, DEFAULT_WORLD, IDENTITY, LIGHT_TYPES, OBJECT_TYPES, PRIMITIVES } from './types';
+import type { Background, LightData, LightType, Material, MeshData, ObjectType, PrimitiveParams, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 
 export interface AddCommand {
   type: 'add';
@@ -24,6 +24,8 @@ export interface AddCommand {
   params?: PrimitiveParams;
   mesh?: MeshData;
   light?: Partial<LightData>;
+  /** Library model id (type 'model'). */
+  asset?: string;
   parentId?: string | null;
 }
 
@@ -38,6 +40,7 @@ export type Command =
   | { type: 'setMaterial'; id: string; material: Partial<Material> }
   | { type: 'setLight'; id: string; light: Partial<LightData> }
   | { type: 'setVisible'; id: string; visible: boolean }
+  | { type: 'setWorld'; world: Partial<World> }
   | { type: 'batch'; commands: Command[] }
   | { type: 'replaceScene'; doc: SceneDoc };
 
@@ -104,6 +107,7 @@ function withObject(doc: SceneDoc, obj: SceneObject): SceneDoc {
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function defaultName(cmd: AddCommand): string {
+  if (cmd.primitive === 'model' && cmd.asset) return cmd.asset.replace(/_\d+$/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   if (cmd.primitive === 'light') return `${capitalize(cmd.light?.type ?? 'point')} Light`;
   return capitalize(cmd.primitive);
 }
@@ -118,6 +122,7 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       if (cmd.parentId) requireObj(doc, cmd.parentId);
       if (cmd.id !== undefined && doc.objects[cmd.id]) throw new CommandError(`Id already in use: ${cmd.id}`);
       if (cmd.primitive === 'mesh' && !cmd.mesh) throw new CommandError('A mesh object needs mesh data');
+      if (cmd.primitive === 'model' && !cmd.asset) throw new CommandError('A model object needs an asset id from the library');
       const id = cmd.id ?? idGen();
       const lightType: LightType = cmd.light?.type ?? 'point';
       const obj: SceneObject = {
@@ -136,7 +141,8 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       if (cmd.params) obj.params = { ...cmd.params };
       if (cmd.primitive === 'mesh' && cmd.mesh) obj.mesh = clone(cmd.mesh);
       if (cmd.primitive === 'light') obj.light = { ...DEFAULT_LIGHT[lightType], ...cmd.light, type: lightType };
-      return { doc: { objects: { ...doc.objects, [id]: obj }, order: [...doc.order, id] }, created: [id] };
+      if (cmd.primitive === 'model') obj.asset = cmd.asset;
+      return { doc: { ...doc, objects: { ...doc.objects, [id]: obj }, order: [...doc.order, id] }, created: [id] };
     }
 
     case 'delete': {
@@ -145,7 +151,7 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       if (doomed.size === 0) return { doc, created: [] };
       const objects: Record<string, SceneObject> = {};
       for (const [id, o] of Object.entries(doc.objects)) if (!doomed.has(id)) objects[id] = o;
-      return { doc: { objects, order: doc.order.filter((id) => !doomed.has(id)) }, created: [] };
+      return { doc: { ...doc, objects, order: doc.order.filter((id) => !doomed.has(id)) }, created: [] };
     }
 
     case 'duplicate': {
@@ -167,7 +173,7 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
             parentId: isRoot ? src.parentId : map.get(src.parentId!) ?? null,
           };
           if (isRoot) copy.transform.position[0] += 1;
-          next = { objects: { ...next.objects, [newId]: copy }, order: [...next.order, newId] };
+          next = { ...next, objects: { ...next.objects, [newId]: copy }, order: [...next.order, newId] };
           if (isRoot) created.push(newId);
         }
       }
@@ -224,6 +230,9 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       return { doc: withObject(doc, { ...o, visible: cmd.visible }), created: [] };
     }
 
+    case 'setWorld':
+      return { doc: { ...doc, world: { ...DEFAULT_WORLD, ...doc.world, ...cmd.world } }, created: [] };
+
     case 'batch': {
       // Atomic: any failure throws and the original doc is untouched (we never mutate).
       let next = doc;
@@ -266,6 +275,8 @@ function validateMaterial(v: unknown, partial: boolean): Partial<Material> {
   const m: Partial<Material> = {};
   const req = (k: keyof Material) => !partial && v[k] === undefined && fail(`material.${k} missing`);
   (['baseColor', 'metallic', 'roughness', 'emission', 'emissionStrength', 'alpha'] as const).forEach(req);
+  if (v.texture !== undefined) m.texture = v.texture === null || (typeof v.texture === 'string' && ASSET_ID.test(v.texture)) ? (v.texture as string | null) : fail('material.texture must be a library texture id or null');
+  if (v.textureScale !== undefined) m.textureScale = inRange(v.textureScale, 0.01, 1000) ? v.textureScale : fail('material.textureScale must be 0.01..1000');
   if (v.baseColor !== undefined) m.baseColor = isColor(v.baseColor) ? v.baseColor : fail('material.baseColor must be #rrggbb');
   if (v.emission !== undefined) m.emission = isColor(v.emission) ? v.emission : fail('material.emission must be #rrggbb');
   if (v.metallic !== undefined) m.metallic = inRange(v.metallic, 0, 1) ? v.metallic : fail('material.metallic must be 0..1');
@@ -274,6 +285,22 @@ function validateMaterial(v: unknown, partial: boolean): Partial<Material> {
   if (v.emissionStrength !== undefined)
     m.emissionStrength = inRange(v.emissionStrength, 0, 1000) ? v.emissionStrength : fail('material.emissionStrength must be 0..1000');
   return m;
+}
+
+const ASSET_ID = /^[A-Za-z0-9_.-]{1,80}$/;
+
+export function validateWorld(v: unknown): Partial<World> {
+  if (!isRecord(v)) fail('world must be an object');
+  const w: Partial<World> = {};
+  if (v.hdri !== undefined) w.hdri = v.hdri === null || (typeof v.hdri === 'string' && ASSET_ID.test(v.hdri)) ? (v.hdri as string | null) : fail('world.hdri must be a library HDRI id or null');
+  if (v.strength !== undefined) w.strength = inRange(v.strength, 0, 100) ? v.strength : fail('world.strength must be 0..100');
+  if (v.rotation !== undefined) w.rotation = inRange(v.rotation, -3600, 3600) ? v.rotation : fail('world.rotation must be degrees');
+  if (v.background !== undefined) w.background = BACKGROUNDS.includes(v.background as Background) ? (v.background as Background) : fail(`world.background must be one of ${BACKGROUNDS.join(', ')}`);
+  if (v.color !== undefined) w.color = isColor(v.color) ? v.color : fail('world.color must be #rrggbb');
+  if (v.exposure !== undefined) w.exposure = inRange(v.exposure, 0, 20) ? v.exposure : fail('world.exposure must be 0..20');
+  if (v.bloom !== undefined) w.bloom = inRange(v.bloom, 0, 1) ? v.bloom : fail('world.bloom must be 0..1');
+  if (v.ao !== undefined) w.ao = typeof v.ao === 'boolean' ? v.ao : fail('world.ao must be true/false');
+  return w;
 }
 
 function validateLight(v: unknown, partial: boolean): Partial<LightData> {
@@ -342,6 +369,7 @@ export function validateSceneObject(raw: unknown): SceneObject {
   if (v.params !== undefined) obj.params = validateParams(v.params);
   if (obj.type === 'mesh') obj.mesh = validateMeshData(v.mesh);
   if (obj.type === 'light') obj.light = { ...DEFAULT_LIGHT.point, ...validateLight(v.light, false) } as LightData;
+  if (obj.type === 'model') obj.asset = typeof v.asset === 'string' && ASSET_ID.test(v.asset) ? v.asset : fail(`object ${v.id}: asset invalid`);
   return obj;
 }
 
@@ -368,7 +396,9 @@ export function validateSceneDoc(v: unknown): SceneDoc {
       cur = objects[cur].parentId;
     }
   }
-  return { objects, order };
+  const doc: SceneDoc = { objects, order };
+  if (v.world !== undefined) doc.world = { ...DEFAULT_WORLD, ...validateWorld(v.world) };
+  return doc;
 }
 
 const REF_ID = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -405,6 +435,7 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (v.material !== undefined) cmd.material = validateMaterial(v.material, true);
       if (v.params !== undefined) cmd.params = validateParams(v.params);
       if (cmd.primitive === 'mesh') cmd.mesh = validateMeshData(v.mesh);
+      if (cmd.primitive === 'model') cmd.asset = typeof v.asset === 'string' && ASSET_ID.test(v.asset) ? v.asset : fail('model needs an asset id from the library (see docs/LIBRARY.md)');
       if (v.light !== undefined) cmd.light = validateLight(v.light, true);
       return cmd;
     }
@@ -433,6 +464,8 @@ export function validateCommand(v: unknown, depth = 0): Command {
     case 'setVisible':
       if (!isId(v.id) || typeof v.visible !== 'boolean') fail('setVisible needs id and boolean');
       return { type: 'setVisible', id: v.id, visible: v.visible };
+    case 'setWorld':
+      return { type: 'setWorld', world: validateWorld(v.world) };
     case 'batch':
       if (depth > 0) fail('batches cannot be nested');
       if (!Array.isArray(v.commands) || v.commands.length > LIMITS.commands) fail(`batch needs a commands list (max ${LIMITS.commands})`);

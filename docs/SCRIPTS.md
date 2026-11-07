@@ -26,10 +26,28 @@ Conventions: metres, **Z up**, rotations in degrees (Blender's).
 | `transform` | `id`, `position` / `rotation` / `scale` |
 | `setMaterial` | `id`, `material` {baseColor, metallic, roughness, emission, emissionStrength, alpha} |
 | `setLight` | `id`, `light` {…} |
+| `setWorld` | `world` {hdri, strength, rotation, background: color/hdri/blurred, color, exposure, bloom, ao} |
 | `setParent`, `rename`, `setVisible`, `delete`, `duplicate` | as named |
+
+## Realistic scenes (v0.3)
+
+Use the CC0 library (ids and real-world sizes in [LIBRARY.md](LIBRARY.md)):
+
+```json
+{ "type": "setWorld", "world": { "hdri": "brown_photostudio_02", "background": "blurred", "ao": true } },
+{ "type": "add", "primitive": "model", "asset": "WoodenTable_01" },
+{ "type": "add", "primitive": "model", "asset": "ceramic_vase_01", "transform": { "position": [-0.45, 0.08, 0.549] } },
+{ "type": "add", "primitive": "mesh", "mesh": { "vertices": [[-3,-2.5,0],[3,-2.5,0],[3,2.5,0],[-3,2.5,0]], "faces": [[0,1,2,3]], "smooth": true },
+  "material": { "texture": "brown_planks_05", "textureScale": 1, "baseColor": "#ffffff" } }
+```
+
+- Models sit with their origin at the base; when LIBRARY.md lists a negative `bottom`, lift the model by that amount.
+- `texture` + `textureScale`: on custom meshes the texture repeats `textureScale` times per metre; on primitives, per face. Use `baseColor: "#ffffff"` for the photo's true colours.
+- With a texture, metallic and roughness come from the texture's maps.
+- HDRI, background, bloom and ambient occlusion show in **Rendered** shading.
 
 Custom meshes: `vertices` are `[x, y, z]` in metres; `faces` list vertex indices counter-clockwise seen from outside (Blender's convention), 3–64 per face. Limits: 200k vertices, 200k faces, 5,000 commands per script.
 
 Lights: point/spot `power` in watts (1000 W is a good start at 4–5 m), sun `power` is strength (2–5). Lights only show in **Rendered** shading (Z). Sun and spot lights cast shadows; point lights don't yet.
 
-Example: [`examples/robot-studio.b3d-script.json`](../examples/robot-studio.b3d-script.json).
+Examples: [`robot-studio`](../examples/robot-studio.b3d-script.json) (stylized), [`still-life`](../examples/still-life.b3d-script.json) (realistic).

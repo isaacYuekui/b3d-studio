@@ -16,6 +16,7 @@ const KEYS: [string, string][] = [
   ['Space', 'Play / pause timeline'],
   ['Z', 'Toggle Solid / Rendered shading'],
   [`${MOD} R`, 'Run a scene script'],
+  ['⇧ L', 'Open the asset library'],
 ];
 
 const MOUSE: [string, string][] = [

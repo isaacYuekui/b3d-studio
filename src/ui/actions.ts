@@ -14,6 +14,8 @@ export interface Ctx {
   confirm: (message: string, okLabel: string) => Promise<boolean>;
   /** Opens the Run Scene Script dialog. */
   openScript: () => void;
+  /** Opens the asset library browser. */
+  openLibrary: () => void;
 }
 
 export interface Action {
@@ -206,6 +208,12 @@ export const actions = {
     shortcut: `${MOD} R`,
     run: (c) => c.openScript(),
   },
+  'add.library': {
+    id: 'add.library',
+    label: 'From Library…',
+    shortcut: '⇧ L',
+    run: (c) => c.openLibrary(),
+  },
   'file.glb': {
     id: 'file.glb',
     label: 'Export GLB (for Blender)…',
@@ -213,7 +221,7 @@ export const actions = {
       const vp = c.viewport();
       if (!vp) return;
       try {
-        c.store.notify('Exporting GLB…');
+        c.store.notify('Exporting GLB… scenes with photo textures can take up to a minute');
         downloadBlob(`b3d-scene-${stamp()}.glb`, await vp.exportGLB());
         c.store.notify('GLB exported');
       } catch (e) {
@@ -284,6 +292,7 @@ export function shortcutFor(e: KeyboardEvent): ActionId | null {
   }
   if (e.shiftKey) {
     if (code === 'KeyD') return 'edit.duplicate';
+    if (code === 'KeyL') return 'add.library';
     return null;
   }
   switch (code) {

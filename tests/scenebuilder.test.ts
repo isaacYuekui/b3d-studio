@@ -74,6 +74,32 @@ describe('scene builder model', () => {
   });
 });
 
+describe('realism (v0.3)', () => {
+  it('adds library models and requires an asset id', () => {
+    const doc = applyCommand(empty(), validateCommand({ type: 'add', primitive: 'model', asset: 'WoodenTable_01' })).doc;
+    const o = Object.values(doc.objects)[0];
+    expect(o).toMatchObject({ type: 'model', asset: 'WoodenTable_01', name: 'WoodenTable' });
+    expect(() => validateCommand({ type: 'add', primitive: 'model' })).toThrow(/asset id/);
+    expect(() => validateCommand({ type: 'add', primitive: 'model', asset: '../../etc/passwd' })).toThrow();
+  });
+
+  it('world settings merge, validate and survive other edits and file round-trips', () => {
+    let doc = applyCommand(empty(), validateCommand({ type: 'setWorld', world: { hdri: 'venice_sunset', exposure: 1.4 } })).doc;
+    doc = applyCommand(doc, { type: 'add', primitive: 'cube' }, seq()).doc;
+    doc = applyCommand(doc, { type: 'delete', ids: doc.order }).doc;
+    expect(doc.world).toMatchObject({ hdri: 'venice_sunset', exposure: 1.4, strength: 1, ao: true });
+    expect(parseProject(serializeProject(doc)).world).toEqual(doc.world);
+    expect(() => validateCommand({ type: 'setWorld', world: { bloom: 3 } })).toThrow(/0..1/);
+    expect(() => validateCommand({ type: 'setWorld', world: { background: 'neon' } })).toThrow();
+  });
+
+  it('materials accept library textures with a repeat scale', () => {
+    const cmd = validateCommand({ type: 'setMaterial', id: 'x', material: { texture: 'brown_planks_05', textureScale: 4 } });
+    expect(cmd).toMatchObject({ material: { texture: 'brown_planks_05', textureScale: 4 } });
+    expect(() => validateCommand({ type: 'setMaterial', id: 'x', material: { texture: 'a b/c' } })).toThrow(/texture/);
+  });
+});
+
 describe('scene scripts', () => {
   const script = { format: 'b3d-studio-script', version: 1, title: 'Test', commands: [{ type: 'add', primitive: 'cone' }] };
 

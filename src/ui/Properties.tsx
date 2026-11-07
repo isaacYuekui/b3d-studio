@@ -8,6 +8,9 @@ import type { Command } from '../core/commands';
 import type { LightType, Vec3 } from '../core/types';
 import { isRenderable } from '../core/types';
 import { runAction } from './actions';
+import { useCatalog } from './LibraryDialog';
+import { worldOf } from '../core/types';
+import type { Background } from '../core/types';
 
 const AXES = ['x', 'y', 'z'] as const;
 
@@ -30,6 +33,7 @@ export function Properties() {
   const doc = useApp((s) => s.doc);
   const sel = useApp((s) => s.selection);
   const o = sel ? doc.objects[sel] : null;
+  const catalog = useCatalog();
 
   // Every field edit goes through preview+commit so scrubs and typed values are one undo step each.
   const commit = (cmd: Command) => {
@@ -49,6 +53,7 @@ export function Properties() {
           <div className="prop-row"><span>Units</span><b>Metres, Z up</b></div>
           <p className="prop-hint">Select an object in the viewport or Outliner to edit its properties.</p>
         </Section>
+        <WorldSection />
       </div>
     );
   }
@@ -140,8 +145,32 @@ export function Properties() {
         </label>
       </Section>
 
-      {isRenderable(o.type) && (
+      {o.type === 'model' && (
+        <Section title="Model">
+          <div className="prop-row"><span>Asset</span><b>{o.asset}</b></div>
+          <p className="prop-hint">A scanned model from the library, with its own photo materials. CC0 from Poly Haven.</p>
+        </Section>
+      )}
+
+      {isRenderable(o.type) && o.type !== 'model' && (
         <Section title="Material">
+          <label className="prop-row">
+            <span>Texture</span>
+            <select
+              id="mat-texture"
+              aria-label="Texture"
+              value={o.material.texture ?? ''}
+              onChange={(e) =>
+                store.dispatch({ type: 'setMaterial', id: o.id, material: e.target.value ? { texture: e.target.value, baseColor: '#ffffff' } : { texture: null } }, { select: false })
+              }
+            >
+              <option value="">None (plain colour)</option>
+              {catalog?.textures.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </label>
+          {o.material.texture && scalar('Repeat', o.material.textureScale, 0.01, 1000, (v) => ({ type: 'setMaterial', id: o.id, material: { textureScale: v } }), 0.1)}
           <label className="prop-row">
             <span>Base Color</span>
             <input
@@ -222,5 +251,70 @@ export function Properties() {
         </button>
       </div>
     </div>
+  );
+}
+
+/** Scene-wide look for Rendered shading: HDRI sky, exposure, bloom, ambient occlusion. */
+function WorldSection() {
+  const { store } = useCtx();
+  const raw = useApp((s) => s.doc.world); // stable reference; worldOf() fills defaults
+  const w = worldOf({ objects: {}, order: [], world: raw });
+  const shading = useApp((s) => s.shading);
+  const catalog = useCatalog();
+  const set = (world: Partial<typeof w>) => store.dispatch({ type: 'setWorld', world }, { select: false });
+  const num = (label: string, value: number, min: number, max: number, key: 'strength' | 'rotation' | 'exposure' | 'bloom', step: number) => (
+    <NumberField
+      key={key}
+      label={label}
+      value={value}
+      step={step}
+      dragRate={step}
+      onPreview={(v) => store.preview({ type: 'setWorld', world: { [key]: Math.min(max, Math.max(min, v)) } })}
+      onCommit={(v) => {
+        store.preview({ type: 'setWorld', world: { [key]: Math.min(max, Math.max(min, v)) } });
+        store.commitPreview();
+      }}
+      onCancel={() => store.cancelPreview()}
+    />
+  );
+  return (
+    <Section title="World">
+      <label className="prop-row">
+        <span>Sky (HDRI)</span>
+        <select id="world-hdri" aria-label="Sky" value={w.hdri ?? ''} onChange={(e) => set({ hdri: e.target.value || null, ...(e.target.value && w.background === 'color' ? { background: 'hdri' as Background } : {}) })}>
+          <option value="">Neutral studio</option>
+          {catalog?.hdris.map((h) => (
+            <option key={h.id} value={h.id}>{h.name}</option>
+          ))}
+        </select>
+      </label>
+      {w.hdri && (
+        <label className="prop-row">
+          <span>Background</span>
+          <select id="world-bg" aria-label="Background" value={w.background} onChange={(e) => set({ background: e.target.value as Background })}>
+            <option value="hdri">Sky</option>
+            <option value="blurred">Blurred sky</option>
+            <option value="color">Solid colour</option>
+          </select>
+        </label>
+      )}
+      {(!w.hdri || w.background === 'color') && (
+        <label className="prop-row">
+          <span>Colour</span>
+          <input type="color" id="world-color" aria-label="Background colour" value={w.color} onChange={(e) => store.preview({ type: 'setWorld', world: { color: e.target.value } })} onBlur={() => store.commitPreview()} />
+        </label>
+      )}
+      {num('Strength', w.strength, 0, 100, 'strength', 0.05)}
+      {w.hdri && num('Rotation °', w.rotation, -3600, 3600, 'rotation', 1)}
+      {num('Exposure', w.exposure, 0, 20, 'exposure', 0.05)}
+      {num('Bloom', w.bloom, 0, 1, 'bloom', 0.01)}
+      <label className="prop-row">
+        <span>Ambient occlusion</span>
+        <input type="checkbox" checked={w.ao} onChange={(e) => set({ ao: e.target.checked })} />
+      </label>
+      {shading !== 'rendered' && (
+        <button className="btn" onClick={() => store.setShading('rendered')}>Show Rendered view</button>
+      )}
+    </Section>
   );
 }
