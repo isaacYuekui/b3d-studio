@@ -10,6 +10,8 @@ import type { PrimitiveType } from '../core/types';
 export interface Ctx {
   store: Store;
   viewport: () => Viewport | null;
+  /** In-app confirmation dialog (native confirm() is blocked in some embedded browsers). */
+  confirm: (message: string, okLabel: string) => Promise<boolean>;
 }
 
 export interface Action {
@@ -81,8 +83,8 @@ export const actions = {
   'file.new': {
     id: 'file.new',
     label: 'New Scene',
-    run: (c) => {
-      if (c.store.getState().doc.order.length > 1 && !window.confirm('Start a new scene? Unsaved changes will be lost (export first if needed).')) return;
+    run: async (c) => {
+      if (c.store.getState().doc.order.length > 1 && !(await c.confirm('Start a new scene? The current scene will be replaced. Export it first if you want to keep a copy.', 'New Scene'))) return;
       c.store.reset(createDefaultDoc(), 'New scene');
       c.store.select(c.store.getState().doc.order[0]);
     },

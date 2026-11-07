@@ -156,9 +156,9 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   check('desktop: reload restores autosaved scene', (await objCount(page)) === 4);
 
   // Import: new scene, then import exported file
-  page.once('dialog', (d) => d.accept());
   await page.click('[data-menu="File"]');
   await page.click('.menu [data-action="file.new"]');
+  await page.click('[data-testid="confirm-ok"]');
   check('desktop: File > New resets to default cube', (await objCount(page)) === 1);
   const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 10000 }), page.keyboard.press('Control+i')]);
   await chooser.setFiles(path);
