@@ -105,7 +105,11 @@ function Item({ id, onDone }: { id: ActionId; onDone: () => void }) {
   );
 }
 
-export const ADD_ITEMS: MenuItem[] = ['add.cube', 'add.sphere', 'add.cylinder', 'add.plane'];
+export const ADD_ITEMS: MenuItem[] = [
+  'add.cube', 'add.sphere', 'add.cylinder', 'add.cone', 'add.torus', 'add.capsule', 'add.plane',
+  '-', 'add.empty',
+  { label: 'Light', items: ['add.pointLight', 'add.sunLight', 'add.spotLight'] },
+];
 
 export const OBJECT_CONTEXT: MenuItem[] = [
   'edit.duplicate',

@@ -13,6 +13,7 @@ import { Outliner } from './ui/Outliner';
 import { Properties } from './ui/Properties';
 import { Timeline } from './ui/Timeline';
 import { Help } from './ui/Help';
+import { ScriptDialog } from './ui/ScriptDialog';
 import { Icon } from './ui/icons';
 import { runAction, shortcutFor } from './ui/actions';
 import type { Ctx } from './ui/actions';
@@ -115,10 +116,20 @@ export function App() {
   }, []);
   const vpRef = useRef<Viewport | null>(null);
   const [ask, setAsk] = useState<{ message: string; ok: string; resolve: (v: boolean) => void } | null>(null);
+  const [script, setScript] = useState(false);
   const ctx: Ctx = useMemo(
-    () => ({ store, viewport: () => vpRef.current, confirm: (message, ok) => new Promise<boolean>((resolve) => setAsk({ message, ok, resolve })) }),
+    () => ({
+      store,
+      viewport: () => vpRef.current,
+      confirm: (message, ok) => new Promise<boolean>((resolve) => setAsk({ message, ok, resolve })),
+      openScript: () => setScript(true),
+    }),
     [store],
   );
+  // Test/debug hook, only with ?debug in the URL.
+  useEffect(() => {
+    if (new URLSearchParams(location.search).has('debug')) (window as unknown as Record<string, unknown>).__b3d = ctx;
+  }, [ctx]);
   const answer = (v: boolean) => {
     ask?.resolve(v);
     setAsk(null);
@@ -167,7 +178,7 @@ export function App() {
       const t = e.target as HTMLElement;
       if (t.closest('input, textarea, select, [contenteditable="true"]')) return;
       if (e.repeat && !['KeyZ', 'KeyY'].includes(e.code)) return;
-      if (menu || ask) return; // menus/dialogs handle their own keys
+      if (menu || ask || script) return; // menus/dialogs handle their own keys
       if (e.shiftKey && e.code === 'KeyA' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         openMenu(ADD_ITEMS, pointer.current.x, pointer.current.y, 'Add');
@@ -192,7 +203,7 @@ export function App() {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('keydown', onKey);
     };
-  }, [ctx, menu, help, ask, openMenu]);
+  }, [ctx, menu, help, ask, script, openMenu]);
 
   const clampSide = (w: number) => Math.max(220, Math.min(w, Math.min(560, window.innerWidth - 320)));
 
@@ -251,6 +262,7 @@ export function App() {
           <StatusBar />
           {menu && <Menu {...menu} onClose={closeMenu} />}
           {help && <Help onClose={() => setHelp(false)} />}
+          {script && <ScriptDialog onClose={() => setScript(false)} />}
           {ask && (
             <div className="modal-backdrop" onClick={() => answer(false)}>
               <div className="modal confirm" role="alertdialog" aria-label="Confirm" onClick={(e) => e.stopPropagation()}>

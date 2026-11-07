@@ -1,24 +1,44 @@
 // The command system: the ONLY way the scene changes.
 //
-// Every edit (UI click, keyboard shortcut, gizmo drag, file import, and in
-// the future the Claude AI operator) is expressed as a plain JSON command,
-// validated, then applied by a pure function. This gives us:
+// Every edit (UI click, keyboard shortcut, gizmo drag, file import, scene scripts
+// written by Claude) is expressed as a plain JSON command, validated, then applied
+// by a pure function. This gives us:
 //   - undo/redo for free (snapshots of immutable docs)
 //   - a safe surface for AI: Claude emits JSON commands, never JavaScript
 //   - easy unit testing
 
-import { IDENTITY, PRIMITIVES } from './types';
-import type { PrimitiveType, SceneDoc, SceneObject, Transform, Vec3 } from './types';
+import { DEFAULT_LIGHT, DEFAULT_MATERIAL, IDENTITY, LIGHT_TYPES, OBJECT_TYPES, PRIMITIVES } from './types';
+import type { LightData, LightType, Material, MeshData, ObjectType, PrimitiveParams, SceneDoc, SceneObject, Transform, Vec3 } from './types';
+
+export interface AddCommand {
+  type: 'add';
+  /** Object type: a primitive, 'mesh' (custom geometry), 'light' or 'empty'. */
+  primitive: ObjectType;
+  /** Optional stable id so later commands in a script can refer to this object. */
+  id?: string;
+  name?: string;
+  transform?: Partial<Transform>;
+  /** Shorthand for material.baseColor. */
+  color?: string;
+  material?: Partial<Material>;
+  params?: PrimitiveParams;
+  mesh?: MeshData;
+  light?: Partial<LightData>;
+  parentId?: string | null;
+}
 
 export type Command =
-  | { type: 'add'; primitive: PrimitiveType; name?: string; transform?: Partial<Transform>; color?: string; parentId?: string | null }
+  | AddCommand
   | { type: 'delete'; ids: string[] }
   | { type: 'duplicate'; ids: string[] }
   | { type: 'transform'; id: string; position?: Vec3; rotation?: Vec3; scale?: Vec3 }
   | { type: 'rename'; id: string; name: string }
   | { type: 'setParent'; id: string; parentId: string | null }
   | { type: 'setColor'; id: string; color: string }
+  | { type: 'setMaterial'; id: string; material: Partial<Material> }
+  | { type: 'setLight'; id: string; light: Partial<LightData> }
   | { type: 'setVisible'; id: string; visible: boolean }
+  | { type: 'batch'; commands: Command[] }
   | { type: 'replaceScene'; doc: SceneDoc };
 
 export interface ApplyResult {
@@ -35,7 +55,7 @@ let counter = 0;
 export const defaultIdGen: IdGen = () =>
   `obj_${Date.now().toString(36)}_${(counter++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
-const DEFAULT_COLOR = '#b4b4b4';
+export const LIMITS = { vertices: 200_000, faces: 200_000, commands: 5_000, objects: 10_000 };
 
 // ---------------------------------------------------------------- helpers
 
@@ -83,16 +103,26 @@ function withObject(doc: SceneDoc, obj: SceneObject): SceneDoc {
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+function defaultName(cmd: AddCommand): string {
+  if (cmd.primitive === 'light') return `${capitalize(cmd.light?.type ?? 'point')} Light`;
+  return capitalize(cmd.primitive);
+}
+
+const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
 // ---------------------------------------------------------------- apply
 
 export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = defaultIdGen): ApplyResult {
   switch (cmd.type) {
     case 'add': {
       if (cmd.parentId) requireObj(doc, cmd.parentId);
-      const id = idGen();
+      if (cmd.id !== undefined && doc.objects[cmd.id]) throw new CommandError(`Id already in use: ${cmd.id}`);
+      if (cmd.primitive === 'mesh' && !cmd.mesh) throw new CommandError('A mesh object needs mesh data');
+      const id = cmd.id ?? idGen();
+      const lightType: LightType = cmd.light?.type ?? 'point';
       const obj: SceneObject = {
         id,
-        name: uniqueName(doc, cmd.name?.trim() || capitalize(cmd.primitive)),
+        name: uniqueName(doc, cmd.name?.trim() || defaultName(cmd)),
         type: cmd.primitive,
         parentId: cmd.parentId ?? null,
         transform: {
@@ -100,9 +130,12 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
           rotation: cmd.transform?.rotation ?? [...IDENTITY.rotation],
           scale: cmd.transform?.scale ?? [...IDENTITY.scale],
         },
-        color: cmd.color ?? DEFAULT_COLOR,
         visible: true,
+        material: { ...DEFAULT_MATERIAL, ...(cmd.color ? { baseColor: cmd.color } : {}), ...cmd.material },
       };
+      if (cmd.params) obj.params = { ...cmd.params };
+      if (cmd.primitive === 'mesh' && cmd.mesh) obj.mesh = clone(cmd.mesh);
+      if (cmd.primitive === 'light') obj.light = { ...DEFAULT_LIGHT[lightType], ...cmd.light, type: lightType };
       return { doc: { objects: { ...doc.objects, [id]: obj }, order: [...doc.order, id] }, created: [id] };
     }
 
@@ -128,18 +161,12 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
           map.set(srcId, newId);
           const isRoot = srcId === rootId;
           const copy: SceneObject = {
-            ...src,
+            ...clone(src),
             id: newId,
             name: uniqueName(next, src.name),
             parentId: isRoot ? src.parentId : map.get(src.parentId!) ?? null,
-            transform: {
-              position: isRoot
-                ? [src.transform.position[0] + 1, src.transform.position[1], src.transform.position[2]]
-                : [...src.transform.position],
-              rotation: [...src.transform.rotation],
-              scale: [...src.transform.scale],
-            },
           };
+          if (isRoot) copy.transform.position[0] += 1;
           next = { objects: { ...next.objects, [newId]: copy }, order: [...next.order, newId] };
           if (isRoot) created.push(newId);
         }
@@ -178,12 +205,39 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
 
     case 'setColor': {
       const o = requireObj(doc, cmd.id);
-      return { doc: withObject(doc, { ...o, color: cmd.color }), created: [] };
+      return { doc: withObject(doc, { ...o, material: { ...o.material, baseColor: cmd.color } }), created: [] };
+    }
+
+    case 'setMaterial': {
+      const o = requireObj(doc, cmd.id);
+      return { doc: withObject(doc, { ...o, material: { ...o.material, ...cmd.material } }), created: [] };
+    }
+
+    case 'setLight': {
+      const o = requireObj(doc, cmd.id);
+      if (!o.light) throw new CommandError(`${o.name} is not a light`);
+      return { doc: withObject(doc, { ...o, light: { ...o.light, ...cmd.light } }), created: [] };
     }
 
     case 'setVisible': {
       const o = requireObj(doc, cmd.id);
       return { doc: withObject(doc, { ...o, visible: cmd.visible }), created: [] };
+    }
+
+    case 'batch': {
+      // Atomic: any failure throws and the original doc is untouched (we never mutate).
+      let next = doc;
+      const created: string[] = [];
+      cmd.commands.forEach((c, i) => {
+        try {
+          const r = applyCommand(next, c, idGen);
+          next = r.doc;
+          created.push(...r.created);
+        } catch (e) {
+          throw new CommandError(`Command ${i + 1} (${c.type}): ${e instanceof Error ? e.message : String(e)}`);
+        }
+      });
+      return { doc: next, created };
     }
 
     case 'replaceScene':
@@ -192,8 +246,8 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
 }
 
 // ---------------------------------------------------------------- validation
-// Validates untrusted input (imported files, and later Claude tool calls).
-// Returns a typed Command or throws CommandError with a readable reason.
+// Validates untrusted input (imported files, scene scripts, future AI tool calls).
+// Returns typed data or throws CommandError with a readable reason.
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isVec3 = (v: unknown): v is Vec3 => Array.isArray(v) && v.length === 3 && v.every(isNum);
@@ -201,35 +255,99 @@ const isStr = (v: unknown, max = 200): v is string => typeof v === 'string' && v
 const isId = (v: unknown): v is string => isStr(v, 100) && v.length > 0;
 const isColor = (v: unknown): v is string => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v);
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const inRange = (v: unknown, lo: number, hi: number): v is number => isNum(v) && v >= lo && v <= hi;
 
 function fail(msg: string): never {
   throw new CommandError(msg);
 }
 
-export function validateSceneObject(v: unknown): SceneObject {
-  if (!isRecord(v)) fail('object must be a record');
+function validateMaterial(v: unknown, partial: boolean): Partial<Material> {
+  if (!isRecord(v)) fail('material must be an object');
+  const m: Partial<Material> = {};
+  const req = (k: keyof Material) => !partial && v[k] === undefined && fail(`material.${k} missing`);
+  (['baseColor', 'metallic', 'roughness', 'emission', 'emissionStrength', 'alpha'] as const).forEach(req);
+  if (v.baseColor !== undefined) m.baseColor = isColor(v.baseColor) ? v.baseColor : fail('material.baseColor must be #rrggbb');
+  if (v.emission !== undefined) m.emission = isColor(v.emission) ? v.emission : fail('material.emission must be #rrggbb');
+  if (v.metallic !== undefined) m.metallic = inRange(v.metallic, 0, 1) ? v.metallic : fail('material.metallic must be 0..1');
+  if (v.roughness !== undefined) m.roughness = inRange(v.roughness, 0, 1) ? v.roughness : fail('material.roughness must be 0..1');
+  if (v.alpha !== undefined) m.alpha = inRange(v.alpha, 0, 1) ? v.alpha : fail('material.alpha must be 0..1');
+  if (v.emissionStrength !== undefined)
+    m.emissionStrength = inRange(v.emissionStrength, 0, 1000) ? v.emissionStrength : fail('material.emissionStrength must be 0..1000');
+  return m;
+}
+
+function validateLight(v: unknown, partial: boolean): Partial<LightData> {
+  if (!isRecord(v)) fail('light must be an object');
+  const l: Partial<LightData> = {};
+  if (v.type !== undefined) l.type = LIGHT_TYPES.includes(v.type as LightType) ? (v.type as LightType) : fail(`light.type must be one of ${LIGHT_TYPES.join(', ')}`);
+  else if (!partial) fail('light.type missing');
+  if (v.color !== undefined) l.color = isColor(v.color) ? v.color : fail('light.color must be #rrggbb');
+  if (v.power !== undefined) l.power = inRange(v.power, 0, 1_000_000) ? v.power : fail('light.power must be 0..1000000');
+  if (v.spotAngle !== undefined) l.spotAngle = inRange(v.spotAngle, 1, 179) ? v.spotAngle : fail('light.spotAngle must be 1..179');
+  if (v.shadows !== undefined) l.shadows = typeof v.shadows === 'boolean' ? v.shadows : fail('light.shadows must be true/false');
+  return l;
+}
+
+function validateParams(v: unknown): PrimitiveParams {
+  if (!isRecord(v)) fail('params must be an object');
+  const p: PrimitiveParams = {};
+  if (v.segments !== undefined) p.segments = Number.isInteger(v.segments) && inRange(v.segments, 3, 256) ? (v.segments as number) : fail('params.segments must be an integer 3..256');
+  for (const k of ['radiusTop', 'radiusBottom', 'majorRadius', 'minorRadius'] as const) {
+    if (v[k] !== undefined) p[k] = inRange(v[k], 0, 10000) ? (v[k] as number) : fail(`params.${k} must be 0..10000`);
+  }
+  return p;
+}
+
+export function validateMeshData(v: unknown): MeshData {
+  if (!isRecord(v) || !Array.isArray(v.vertices) || !Array.isArray(v.faces)) fail('mesh needs vertices and faces arrays');
+  if (v.vertices.length > LIMITS.vertices) fail(`mesh has too many vertices (max ${LIMITS.vertices})`);
+  if (v.faces.length > LIMITS.faces) fail(`mesh has too many faces (max ${LIMITS.faces})`);
+  const n = v.vertices.length;
+  const vertices = v.vertices.map((p, i) => (isVec3(p) ? ([p[0], p[1], p[2]] as Vec3) : fail(`mesh vertex ${i} must be [x,y,z]`)));
+  const faces = v.faces.map((f, i) => {
+    if (!Array.isArray(f) || f.length < 3 || f.length > 64) fail(`mesh face ${i} must list 3..64 vertex indices`);
+    return f.map((idx) => (Number.isInteger(idx) && idx >= 0 && idx < n ? (idx as number) : fail(`mesh face ${i} has invalid index ${String(idx)}`)));
+  });
+  return { vertices, faces, smooth: v.smooth === true };
+}
+
+/** Upgrade a v1 object (single `color` field) to the current shape before validation. */
+function migrateObject(v: Record<string, unknown>): Record<string, unknown> {
+  if (v.material === undefined && isColor(v.color)) {
+    const { color, ...rest } = v;
+    return { ...rest, material: { ...DEFAULT_MATERIAL, baseColor: color } };
+  }
+  return v;
+}
+
+export function validateSceneObject(raw: unknown): SceneObject {
+  if (!isRecord(raw)) fail('object must be a record');
+  const v = migrateObject(raw);
   const t = v.transform;
   if (!isId(v.id)) fail('object.id invalid');
   if (!isStr(v.name) || !v.name) fail(`object ${v.id}: name invalid`);
-  if (!PRIMITIVES.includes(v.type as PrimitiveType)) fail(`object ${v.id}: unknown type ${String(v.type)}`);
+  if (!OBJECT_TYPES.includes(v.type as ObjectType)) fail(`object ${v.id}: unknown type ${String(v.type)}`);
   if (!(v.parentId === null || isId(v.parentId))) fail(`object ${v.id}: parentId invalid`);
   if (!isRecord(t) || !isVec3(t.position) || !isVec3(t.rotation) || !isVec3(t.scale)) fail(`object ${v.id}: transform invalid`);
-  if (!isColor(v.color)) fail(`object ${v.id}: color invalid`);
   if (typeof v.visible !== 'boolean') fail(`object ${v.id}: visible invalid`);
-  return {
+  const obj: SceneObject = {
     id: v.id,
     name: v.name,
-    type: v.type as PrimitiveType,
+    type: v.type as ObjectType,
     parentId: v.parentId as string | null,
     transform: { position: [...t.position], rotation: [...t.rotation], scale: [...t.scale] },
-    color: v.color,
     visible: v.visible,
+    material: { ...DEFAULT_MATERIAL, ...validateMaterial(v.material, false) },
   };
+  if (v.params !== undefined) obj.params = validateParams(v.params);
+  if (obj.type === 'mesh') obj.mesh = validateMeshData(v.mesh);
+  if (obj.type === 'light') obj.light = { ...DEFAULT_LIGHT.point, ...validateLight(v.light, false) } as LightData;
+  return obj;
 }
 
 export function validateSceneDoc(v: unknown): SceneDoc {
   if (!isRecord(v) || !isRecord(v.objects) || !Array.isArray(v.order)) fail('scene must have objects and order');
-  if (Object.keys(v.objects).length > 10000) fail('scene too large');
+  if (Object.keys(v.objects).length > LIMITS.objects) fail('scene too large');
   const objects: Record<string, SceneObject> = {};
   for (const [key, raw] of Object.entries(v.objects)) {
     const o = validateSceneObject(raw);
@@ -241,7 +359,6 @@ export function validateSceneDoc(v: unknown): SceneDoc {
   for (const o of Object.values(objects)) {
     if (o.parentId && !objects[o.parentId]) fail(`object ${o.id}: parent ${o.parentId} missing`);
   }
-  // cycle check
   for (const o of Object.values(objects)) {
     const seen = new Set<string>();
     let cur: string | null = o.id;
@@ -254,12 +371,16 @@ export function validateSceneDoc(v: unknown): SceneDoc {
   return { objects, order };
 }
 
-export function validateCommand(v: unknown): Command {
+const REF_ID = /^[A-Za-z0-9_.-]{1,64}$/;
+
+export function validateCommand(v: unknown, depth = 0): Command {
   if (!isRecord(v) || typeof v.type !== 'string') fail('command must be an object with a type');
   const optVec = (k: string) => (v[k] === undefined ? undefined : isVec3(v[k]) ? (v[k] as Vec3) : fail(`${k} must be [x,y,z]`));
   switch (v.type) {
     case 'add': {
-      if (!PRIMITIVES.includes(v.primitive as PrimitiveType)) fail(`primitive must be one of ${PRIMITIVES.join(', ')}`);
+      const type = v.primitive ?? v.object;
+      if (!OBJECT_TYPES.includes(type as ObjectType)) fail(`primitive must be one of ${OBJECT_TYPES.join(', ')}`);
+      if (v.id !== undefined && !(typeof v.id === 'string' && REF_ID.test(v.id))) fail('id may only use letters, digits, _ . - (max 64)');
       if (v.name !== undefined && !isStr(v.name, 100)) fail('name invalid');
       if (v.color !== undefined && !isColor(v.color)) fail('color must be #rrggbb');
       if (v.parentId !== undefined && v.parentId !== null && !isId(v.parentId)) fail('parentId invalid');
@@ -275,7 +396,17 @@ export function validateCommand(v: unknown): Command {
           }
         }
       }
-      return { type: 'add', primitive: v.primitive as PrimitiveType, name: v.name as string | undefined, color: v.color as string | undefined, parentId: v.parentId as string | null | undefined, transform };
+      const cmd: AddCommand = { type: 'add', primitive: type as ObjectType };
+      if (v.id !== undefined) cmd.id = v.id as string;
+      if (v.name !== undefined) cmd.name = v.name as string;
+      if (v.color !== undefined) cmd.color = v.color as string;
+      if (v.parentId !== undefined) cmd.parentId = v.parentId as string | null;
+      if (transform) cmd.transform = transform;
+      if (v.material !== undefined) cmd.material = validateMaterial(v.material, true);
+      if (v.params !== undefined) cmd.params = validateParams(v.params);
+      if (cmd.primitive === 'mesh') cmd.mesh = validateMeshData(v.mesh);
+      if (v.light !== undefined) cmd.light = validateLight(v.light, true);
+      return cmd;
     }
     case 'delete':
     case 'duplicate':
@@ -293,12 +424,33 @@ export function validateCommand(v: unknown): Command {
     case 'setColor':
       if (!isId(v.id) || !isColor(v.color)) fail('setColor needs id and #rrggbb color');
       return { type: 'setColor', id: v.id, color: v.color };
+    case 'setMaterial':
+      if (!isId(v.id)) fail('setMaterial needs id');
+      return { type: 'setMaterial', id: v.id, material: validateMaterial(v.material, true) };
+    case 'setLight':
+      if (!isId(v.id)) fail('setLight needs id');
+      return { type: 'setLight', id: v.id, light: validateLight(v.light, true) };
     case 'setVisible':
       if (!isId(v.id) || typeof v.visible !== 'boolean') fail('setVisible needs id and boolean');
       return { type: 'setVisible', id: v.id, visible: v.visible };
+    case 'batch':
+      if (depth > 0) fail('batches cannot be nested');
+      if (!Array.isArray(v.commands) || v.commands.length > LIMITS.commands) fail(`batch needs a commands list (max ${LIMITS.commands})`);
+      return {
+        type: 'batch',
+        commands: v.commands.map((c, i) => {
+          try {
+            return validateCommand(c, depth + 1);
+          } catch (e) {
+            throw new CommandError(`Command ${i + 1}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }),
+      };
     case 'replaceScene':
       return { type: 'replaceScene', doc: validateSceneDoc(v.doc) };
     default:
       fail(`unknown command type: ${v.type}`);
   }
 }
+
+export { PRIMITIVES };

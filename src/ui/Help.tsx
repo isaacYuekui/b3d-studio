@@ -14,6 +14,8 @@ const KEYS: [string, string][] = [
   ['5 or 0', 'Default perspective view'],
   ['.  ·  Home', 'Frame selected · frame all'],
   ['Space', 'Play / pause timeline'],
+  ['Z', 'Toggle Solid / Rendered shading'],
+  [`${MOD} R`, 'Run a scene script'],
 ];
 
 const MOUSE: [string, string][] = [

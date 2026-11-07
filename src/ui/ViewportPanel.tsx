@@ -17,7 +17,7 @@ const TOOLS: { mode: ToolMode; label: string; key: string; icon: () => ReactElem
   { mode: 'scale', label: 'Scale', key: 'S', icon: Icon.scale },
 ];
 
-const VIEW_ITEMS: MenuItem[] = ['view.persp', 'view.front', 'view.back', 'view.right', 'view.left', 'view.top', 'view.bottom', '-', 'view.frameSelected', 'view.frameAll'];
+const VIEW_ITEMS: MenuItem[] = ['view.shading', '-', 'view.persp', 'view.front', 'view.back', 'view.right', 'view.left', 'view.top', 'view.bottom', '-', 'view.frameSelected', 'view.frameAll'];
 
 export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -27,6 +27,7 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
   const tool = useApp((s) => s.tool);
   const selName = useApp((s) => (s.selection ? s.doc.objects[s.selection]?.name ?? null : null));
   const count = useApp((s) => s.doc.order.length);
+  const shading = useApp((s) => s.shading);
 
   useEffect(() => {
     const canvas = canvasRef.current!;
@@ -143,9 +144,34 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
         <button className="tool-btn" title="Delete (X)" aria-label="Delete" onClick={() => run('edit.delete')}>
           <Icon.trash />
         </button>
+        <div className="tool-sep" />
+        <button className="tool-btn" title={'Run scene script (Ctrl/⌘ R)'} aria-label="Run scene script" data-testid="script-btn" onClick={() => run('file.script')}>
+          <Icon.script />
+        </button>
       </div>
 
       <div className="vp-nav">
+        <button
+          className={`tool-btn${shading === 'solid' ? ' active' : ''}`}
+          title="Solid shading (Z)"
+          aria-label="Solid shading"
+          aria-pressed={shading === 'solid'}
+          data-shading="solid"
+          onClick={() => ctx.store.setShading('solid')}
+        >
+          <Icon.solid />
+        </button>
+        <button
+          className={`tool-btn${shading === 'rendered' ? ' active' : ''}`}
+          title="Rendered shading: scene lights, materials, shadows (Z)"
+          aria-label="Rendered shading"
+          aria-pressed={shading === 'rendered'}
+          data-shading="rendered"
+          onClick={() => ctx.store.setShading('rendered')}
+        >
+          <Icon.render />
+        </button>
+        <div className="tool-sep-v" />
         <button
           className="tool-btn"
           title="Views"

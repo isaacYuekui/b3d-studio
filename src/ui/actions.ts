@@ -5,13 +5,15 @@ import type { Store, ToolMode } from '../core/store';
 import type { Viewport, ViewName } from '../engine/Viewport';
 import { createDefaultDoc } from '../core/store';
 import { loadLocal, parseProject, saveLocal, serializeProject } from '../core/serialize';
-import type { PrimitiveType } from '../core/types';
+import type { LightType, ObjectType } from '../core/types';
 
 export interface Ctx {
   store: Store;
   viewport: () => Viewport | null;
   /** In-app confirmation dialog (native confirm() is blocked in some embedded browsers). */
   confirm: (message: string, okLabel: string) => Promise<boolean>;
+  /** Opens the Run Scene Script dialog. */
+  openScript: () => void;
 }
 
 export interface Action {
@@ -27,11 +29,21 @@ const hasSel = (c: Ctx) => c.store.getState().selection !== null;
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 export const MOD = isMac ? '⌘' : 'Ctrl';
 
-const add = (primitive: PrimitiveType): Action => ({
+const add = (primitive: ObjectType): Action => ({
   id: `add.${primitive}`,
   label: primitive.charAt(0).toUpperCase() + primitive.slice(1),
   run: (c) => {
     c.store.dispatch({ type: 'add', primitive });
+  },
+});
+
+// New lights appear above the origin so they light the default scene.
+const addLight = (type: LightType, label: string): Action => ({
+  id: `add.${type}Light`,
+  label,
+  run: (c) => {
+    const transform = type === 'sun' ? { position: [4, -4, 8] as [number, number, number], rotation: [40, 0, 45] as [number, number, number] } : { position: [4, -4, 5] as [number, number, number] };
+    c.store.dispatch({ type: 'add', primitive: 'light', light: { type }, transform });
   },
 });
 
@@ -49,8 +61,7 @@ const tool = (t: ToolMode, label: string, shortcut: string): Action => ({
   run: (c) => c.store.setTool(t),
 });
 
-function download(filename: string, text: string) {
-  const blob = new Blob([text], { type: 'application/json' });
+export function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -61,7 +72,9 @@ function download(filename: string, text: string) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-function pickFile(): Promise<File | null> {
+const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+
+export function pickFile(): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -110,8 +123,7 @@ export const actions = {
     label: 'Export Project File…',
     shortcut: `${MOD} E`,
     run: (c) => {
-      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-      download(`b3d-scene-${stamp}.b3d.json`, serializeProject(c.store.getState().doc));
+      downloadBlob(`b3d-scene-${stamp()}.b3d.json`, new Blob([serializeProject(c.store.getState().doc)], { type: 'application/json' }));
       c.store.notify('Project exported');
     },
   },
@@ -180,6 +192,41 @@ export const actions = {
   'add.sphere': add('sphere'),
   'add.cylinder': add('cylinder'),
   'add.plane': add('plane'),
+  'add.cone': add('cone'),
+  'add.torus': add('torus'),
+  'add.capsule': add('capsule'),
+  'add.empty': add('empty'),
+  'add.pointLight': addLight('point', 'Point'),
+  'add.sunLight': addLight('sun', 'Sun'),
+  'add.spotLight': addLight('spot', 'Spot'),
+
+  'file.script': {
+    id: 'file.script',
+    label: 'Run Scene Script…',
+    shortcut: `${MOD} R`,
+    run: (c) => c.openScript(),
+  },
+  'file.glb': {
+    id: 'file.glb',
+    label: 'Export GLB (for Blender)…',
+    run: async (c) => {
+      const vp = c.viewport();
+      if (!vp) return;
+      try {
+        c.store.notify('Exporting GLB…');
+        downloadBlob(`b3d-scene-${stamp()}.glb`, await vp.exportGLB());
+        c.store.notify('GLB exported');
+      } catch (e) {
+        c.store.notify(`GLB export failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  },
+  'view.shading': {
+    id: 'view.shading',
+    label: 'Toggle Solid / Rendered',
+    shortcut: 'Z',
+    run: (c) => c.store.setShading(c.store.getState().shading === 'solid' ? 'rendered' : 'solid'),
+  },
 
   'view.front': view('front', 'Front', '1'),
   'view.back': view('back', 'Back', `${MOD} 1`),
@@ -224,6 +271,7 @@ export function shortcutFor(e: KeyboardEvent): ActionId | null {
     if (k === 'o') return 'file.load';
     if (k === 'e') return 'file.export';
     if (k === 'i') return 'file.import';
+    if (k === 'r') return 'file.script';
     if (code === 'Digit1' || code === 'Numpad1') return 'view.back';
     if (code === 'Digit3' || code === 'Numpad3') return 'view.left';
     if (code === 'Digit7' || code === 'Numpad7') return 'view.bottom';
@@ -262,6 +310,7 @@ export function shortcutFor(e: KeyboardEvent): ActionId | null {
     case 'NumpadDecimal': return 'view.frameSelected';
     case 'Home': return 'view.frameAll';
     case 'Space': return 'anim.play';
+    case 'KeyZ': return 'view.shading';
   }
   return null;
 }

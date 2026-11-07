@@ -7,7 +7,7 @@ describe('AI operator tool layer', () => {
   it('every tool name is a command the validator understands', () => {
     const samples: Record<string, unknown> = {
       add: { primitive: 'cube' }, transform: { id: 'a', position: [0, 0, 1] }, delete: { ids: ['a'] }, duplicate: { ids: ['a'] },
-      rename: { id: 'a', name: 'Car' }, setParent: { id: 'a', parentId: null }, setColor: { id: 'a', color: '#101010' }, setVisible: { id: 'a', visible: false },
+      rename: { id: 'a', name: 'Car' }, setMaterial: { id: 'a', material: { metallic: 1 } }, setLight: { id: 'a', light: { power: 500 } }, setParent: { id: 'a', parentId: null }, setColor: { id: 'a', color: '#101010' }, setVisible: { id: 'a', visible: false },
     };
     for (const t of AI_TOOLS) expect(validateCommand(toolCallToCommandInput(t.name, samples[t.name])).type).toBe(t.name);
   });

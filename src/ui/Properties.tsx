@@ -5,7 +5,8 @@ import { NumberField } from './NumberField';
 import { Icon } from './icons';
 import { subtree } from '../core/commands';
 import type { Command } from '../core/commands';
-import type { Vec3 } from '../core/types';
+import type { LightType, Vec3 } from '../core/types';
+import { isRenderable } from '../core/types';
 import { runAction } from './actions';
 
 const AXES = ['x', 'y', 'z'] as const;
@@ -80,6 +81,19 @@ export function Properties() {
     </Section>
   );
 
+  const scalar = (label: string, value: number, min: number, max: number, make: (v: number) => Command, step = 0.01) => (
+    <NumberField
+      key={label}
+      label={label}
+      value={value}
+      step={step}
+      dragRate={step}
+      onPreview={(v) => store.preview(make(Math.min(max, Math.max(min, v))))}
+      onCommit={(v) => commit(make(Math.min(max, Math.max(min, v))))}
+      onCancel={() => store.cancelPreview()}
+    />
+  );
+
   // Valid parents: anything not in this object's own subtree.
   const forbidden = new Set(subtree(doc, o.id));
   const parentOptions = doc.order.filter((id) => !forbidden.has(id));
@@ -126,22 +140,77 @@ export function Properties() {
         </label>
       </Section>
 
-      <Section title="Viewport Display">
-        <label className="prop-row">
-          <span>Colour</span>
-          <input
-            type="color"
-            aria-label="Object colour"
-            value={o.color}
-            onChange={(e) => store.preview({ type: 'setColor', id: o.id, color: e.target.value })}
-            onBlur={() => store.commitPreview()}
-          />
-        </label>
+      {isRenderable(o.type) && (
+        <Section title="Material">
+          <label className="prop-row">
+            <span>Base Color</span>
+            <input
+              type="color"
+              id="mat-base"
+              aria-label="Base color"
+              value={o.material.baseColor}
+              onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, material: { baseColor: e.target.value } })}
+              onBlur={() => store.commitPreview()}
+            />
+          </label>
+          {scalar('Metallic', o.material.metallic, 0, 1, (v) => ({ type: 'setMaterial', id: o.id, material: { metallic: v } }))}
+          {scalar('Roughness', o.material.roughness, 0, 1, (v) => ({ type: 'setMaterial', id: o.id, material: { roughness: v } }))}
+          {scalar('Alpha', o.material.alpha, 0, 1, (v) => ({ type: 'setMaterial', id: o.id, material: { alpha: v } }))}
+          <label className="prop-row">
+            <span>Emission</span>
+            <input
+              type="color"
+              id="mat-emission"
+              aria-label="Emission color"
+              value={o.material.emission}
+              onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, material: { emission: e.target.value, emissionStrength: o.material.emissionStrength || 1 } })}
+              onBlur={() => store.commitPreview()}
+            />
+          </label>
+          {scalar('Strength', o.material.emissionStrength, 0, 100, (v) => ({ type: 'setMaterial', id: o.id, material: { emissionStrength: v } }), 0.1)}
+        </Section>
+      )}
+
+      {o.light && (
+        <Section title="Light">
+          <label className="prop-row">
+            <span>Type</span>
+            <select id="light-type" aria-label="Light type" value={o.light.type} onChange={(e) => store.dispatch({ type: 'setLight', id: o.id, light: { type: e.target.value as LightType } }, { select: false })}>
+              <option value="point">Point</option>
+              <option value="sun">Sun</option>
+              <option value="spot">Spot</option>
+            </select>
+          </label>
+          <label className="prop-row">
+            <span>Color</span>
+            <input
+              type="color"
+              id="light-color"
+              aria-label="Light color"
+              value={o.light.color}
+              onChange={(e) => store.preview({ type: 'setLight', id: o.id, light: { color: e.target.value } })}
+              onBlur={() => store.commitPreview()}
+            />
+          </label>
+          {o.light.type === 'sun'
+            ? scalar('Strength', o.light.power, 0, 100, (v) => ({ type: 'setLight', id: o.id, light: { power: v } }), 0.1)
+            : scalar('Power (W)', o.light.power, 0, 100000, (v) => ({ type: 'setLight', id: o.id, light: { power: v } }), 10)}
+          {o.light.type === 'spot' && scalar('Spot Size °', o.light.spotAngle, 1, 179, (v) => ({ type: 'setLight', id: o.id, light: { spotAngle: v } }), 1)}
+          <label className="prop-row">
+            <span>Shadows</span>
+            <input type="checkbox" checked={o.light.shadows} onChange={(e) => store.dispatch({ type: 'setLight', id: o.id, light: { shadows: e.target.checked } }, { select: false })} />
+          </label>
+          <p className="prop-hint">Lights take effect in Rendered shading (Z). Point lights do not cast shadows yet.</p>
+        </Section>
+      )}
+
+      <Section title="Object">
         <label className="prop-row">
           <span>Visible</span>
           <input type="checkbox" checked={o.visible} onChange={(e) => store.dispatch({ type: 'setVisible', id: o.id, visible: e.target.checked }, { select: false })} />
         </label>
         <div className="prop-row"><span>Type</span><b style={{ textTransform: 'capitalize' }}>{o.type}</b></div>
+        {o.mesh && <div className="prop-row"><span>Geometry</span><b>{o.mesh.vertices.length} verts · {o.mesh.faces.length} faces</b></div>}
       </Section>
 
       <div className="prop-actions">
