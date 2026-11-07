@@ -22,21 +22,30 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { RawCubeTexture } from '@babylonjs/core/Materials/Textures/rawCubeTexture';
+import { HDRCubeTexture } from '@babylonjs/core/Materials/Textures/hdrCubeTexture';
+import { Texture } from '@babylonjs/core/Materials/Textures/texture';
+import type { BaseTexture } from '@babylonjs/core/Materials/Textures/baseTexture';
+import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader';
+import type { AssetContainer } from '@babylonjs/core/assetContainer';
+import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline';
+import { SSAO2RenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/ssao2RenderingPipeline';
 import { Constants } from '@babylonjs/core/Engines/constants';
 import { GizmoManager } from '@babylonjs/core/Gizmos/gizmoManager';
 import { PointerEventTypes } from '@babylonjs/core/Events/pointerEvents';
-import { Animation } from '@babylonjs/core/Animations/animation';
-import { CubicEase, EasingFunction } from '@babylonjs/core/Animations/easing';
 import { ImageProcessingConfiguration } from '@babylonjs/core/Materials/imageProcessingConfiguration';
 // Side-effect imports required by deep-import usage:
 import '@babylonjs/core/Culling/ray'; // scene picking
 import '@babylonjs/core/Rendering/outlineRenderer'; // selection outline
-import '@babylonjs/core/Animations/animatable'; // camera transitions
 import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent'; // shadows
+import '@babylonjs/core/Helpers/sceneHelpers'; // skybox
+import '@babylonjs/core/PostProcesses/RenderPipeline/postProcessRenderPipelineManagerSceneComponent';
+import '@babylonjs/core/Rendering/prePassRendererSceneComponent'; // SSAO2
+import '@babylonjs/core/Rendering/geometryBufferRendererSceneComponent'; // SSAO2
 
 import type { Store, AppState, ToolMode, Shading } from '../core/store';
-import type { SceneObject, SceneDoc, Vec3 } from '../core/types';
-import { isRenderable } from '../core/types';
+import type { Material as SceneMaterial, SceneObject, SceneDoc, Vec3, World } from '../core/types';
+import { isRenderable, worldOf } from '../core/types';
+import { catalogNow, hdriUrl, loadCatalog, modelUrl, textureUrl } from './library';
 import { babylonQuatToEulerDeg, clean, eulerDegToBabylonQuat, fromBabylonVec, toBabylonVec } from './coords';
 import { buildVertexData } from './geometry';
 import { subtree } from '../core/commands';
@@ -48,6 +57,8 @@ interface Entry {
   node: TransformNode;
   /** Pickable visual: the geometry itself, or a helper for lights/empties. */
   pick: AbstractMesh | null;
+  /** Renderable meshes (outline, shadows, framing). Filled asynchronously for library models. */
+  meshes: AbstractMesh[];
   /** Rebuild key — when it changes, the node is recreated. */
   key: string;
   material?: PBRMaterial;
@@ -79,6 +90,16 @@ export class Viewport {
   private lastShading: Shading | null = null;
   private resizeObs: ResizeObserver;
   private studio: Light[] = [];
+  private studioEnv!: RawCubeTexture;
+  private hdris = new Map<string, HDRCubeTexture>();
+  private skybox: Mesh | null = null;
+  private skyKey = '';
+  private pipeline: DefaultRenderingPipeline | null = null;
+  private ssao: SSAO2RenderingPipeline | null = null;
+  private lastWorld: World | null = null;
+  private containers = new Map<string, Promise<AssetContainer>>();
+  private loadersReady: Promise<unknown> | null = null;
+  private pending = new Set<Promise<void>>();
   private helperMat: StandardMaterial;
 
   constructor(private canvas: HTMLCanvasElement, private store: Store) {
@@ -91,7 +112,8 @@ export class Viewport {
     scene.skipPointerMovePicking = true; // we only pick on tap; saves CPU on mobile
     scene.imageProcessingConfiguration.toneMappingEnabled = true;
     scene.imageProcessingConfiguration.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
-    scene.environmentTexture = this.makeEnvironment();
+    scene.environmentTexture = this.studioEnv = this.makeEnvironment();
+    void loadCatalog();
 
     // Camera — Blender default view, Y-up internally (see coords.ts).
     const cam = (this.camera = new ArcRotateCamera('cam', -0.72, 1.08, 14, Vector3.Zero(), scene));
@@ -150,6 +172,7 @@ export class Viewport {
       this.store.select(this.pickAt(scene.pointerX, scene.pointerY));
     });
 
+    scene.onBeforeRenderObservable.add(() => this.stepTween());
     this.engine.runRenderLoop(() => scene.render());
     this.resizeObs = new ResizeObserver(() => this.engine.resize());
     this.resizeObs.observe(canvas);
@@ -203,9 +226,12 @@ export class Viewport {
       this.syncDoc(state.doc);
       this.lastDoc = state.doc;
     }
-    if (state.shading !== this.lastShading) {
+    const world = worldOf(state.doc);
+    if (state.shading !== this.lastShading || JSON.stringify(world) !== JSON.stringify(this.lastWorld)) {
       this.lastShading = state.shading;
+      this.lastWorld = world;
       this.applyShading();
+      this.applyWorld(world, state.shading === 'rendered');
     }
     if (state.selection !== this.lastSel || state.tool !== this.lastTool) {
       this.syncSelection(state.selection, state.tool);
@@ -215,7 +241,7 @@ export class Viewport {
   }
 
   private keyFor(o: SceneObject): string {
-    return `${o.type}|${JSON.stringify(o.params ?? {})}|${o.light?.type ?? ''}`;
+    return `${o.type}|${JSON.stringify(o.params ?? {})}|${o.light?.type ?? ''}|${o.asset ?? ''}`;
   }
 
   private disposeEntry(e: Entry) {
@@ -263,6 +289,15 @@ export class Viewport {
   private createEntry(o: SceneObject): Entry {
     const s = this.scene;
     const key = this.keyFor(o);
+    if (o.type === 'model') {
+      const node = new TransformNode(o.name, s);
+      node.rotationQuaternion = new Quaternion();
+      node.metadata = { id: o.id, export: true };
+      const entry: Entry = { node, pick: null, key, meshes: [] };
+      const job = this.attachModel(entry, o).finally(() => this.pending.delete(job));
+      this.pending.add(job);
+      return entry;
+    }
     if (isRenderable(o.type)) {
       const mesh = this.createGeometry(o);
       const mat = new PBRMaterial(`${o.id}-mat`, s);
@@ -273,7 +308,7 @@ export class Viewport {
       mesh.outlineColor = SELECT_COLOR;
       mesh.outlineWidth = 0.035;
       mesh.rotationQuaternion = new Quaternion();
-      return { node: mesh, pick: mesh, key, material: mat };
+      return { node: mesh, pick: mesh, key, material: mat, meshes: [mesh] };
     }
     const node = new TransformNode(o.name, s);
     node.rotationQuaternion = new Quaternion();
@@ -289,7 +324,7 @@ export class Viewport {
       light.metadata = { export: true };
       const helper = this.lightHelper(o, l.type);
       helper.parent = node;
-      return { node, pick: helper, key, light };
+      return { node, pick: helper, key, light, meshes: [] };
     }
     // empty: small axes cross
     const size = 0.5;
@@ -304,7 +339,72 @@ export class Viewport {
     helper.intersectionThreshold = 0.15;
     helper.metadata = { id: o.id };
     helper.parent = node;
-    return { node, pick: helper, key };
+    return { node, pick: helper, key, meshes: [] };
+  }
+
+  /** Load a library model (cached per asset) and instance it under the entry's node. */
+  private async attachModel(e: Entry, o: SceneObject) {
+    const asset = o.asset!;
+    try {
+      this.loadersReady ??= import('@babylonjs/loaders/glTF/2.0');
+      await this.loadersReady;
+      let p = this.containers.get(asset);
+      if (!p) {
+        p = LoadAssetContainerAsync(modelUrl(asset), this.scene, { pluginExtension: '.glb' });
+        this.containers.set(asset, p);
+        p.catch(() => this.containers.delete(asset));
+      }
+      const container = await p;
+      if (this.entries.get(o.id) !== e) return; // object was deleted or rebuilt meanwhile
+      const inst = container.instantiateModelsToScene((n) => n, false, { doNotInstantiate: true });
+      for (const root of inst.rootNodes) root.parent = e.node;
+      for (const d of e.node.getDescendants(false)) d.metadata = { ...(d.metadata ?? {}), export: true };
+      e.meshes = e.node.getChildMeshes(false).filter((m) => m.getTotalVertices() > 0);
+      for (const m of e.meshes) {
+        m.metadata = { ...(m.metadata ?? {}), id: o.id, export: true };
+        m.isPickable = true;
+        m.outlineColor = SELECT_COLOR;
+        m.outlineWidth = 0.01;
+      }
+      e.pick = e.meshes[0] ?? null;
+      this.applyShading();
+      this.syncSelection(this.store.getState().selection, this.store.getState().tool);
+    } catch {
+      this.store.notify(`Could not load model “${asset}”. It may not be in the library.`);
+    }
+  }
+
+  /** Photo-scanned PBR maps from the library (colour, normal, AO/roughness/metal). */
+  private applyTexture(mat: PBRMaterial, m: SceneMaterial, prev?: SceneMaterial) {
+    if (prev && prev.texture === m.texture && prev.textureScale === m.textureScale) return;
+    for (const t of [mat.albedoTexture, mat.bumpTexture, mat.metallicTexture]) t?.dispose();
+    mat.albedoTexture = mat.bumpTexture = mat.metallicTexture = null;
+    mat.useAmbientOcclusionFromMetallicTextureRed = mat.useRoughnessFromMetallicTextureGreen = mat.useMetallnessFromMetallicTextureBlue = false;
+    if (!m.texture) return;
+    const id = m.texture;
+    const maps = catalogNow()?.textures.find((t) => t.id === id)?.maps ?? ['diff', 'nor', 'arm'];
+    const load = (map: 'diff' | 'nor' | 'arm' | 'rough'): Texture => {
+      const t = new Texture(textureUrl(id, map), this.scene, false, true, Texture.TRILINEAR_SAMPLINGMODE, null, () => this.store.notify(`Could not load texture “${id}”.`));
+      t.uScale = t.vScale = m.textureScale;
+      t.anisotropicFilteringLevel = 8;
+      return t;
+    };
+    mat.albedoTexture = load('diff');
+    if (maps.includes('nor')) {
+      mat.bumpTexture = load('nor');
+      // OpenGL-style normal maps in a left-handed scene (same as Babylon's glTF loader).
+      mat.invertNormalMapX = true;
+      mat.invertNormalMapY = false;
+    }
+    if (maps.includes('arm')) {
+      mat.metallicTexture = load('arm');
+      mat.useAmbientOcclusionFromMetallicTextureRed = true;
+      mat.useRoughnessFromMetallicTextureGreen = true;
+      mat.useMetallnessFromMetallicTextureBlue = true;
+    } else if (maps.includes('rough')) {
+      mat.metallicTexture = load('rough');
+      mat.useRoughnessFromMetallicTextureGreen = true;
+    }
   }
 
   private lightHelper(o: SceneObject, type: string): Mesh {
@@ -364,9 +464,11 @@ export class Viewport {
     if (e.material && o.material !== prev?.material) {
       const m = o.material;
       const mat = e.material;
+      this.applyTexture(mat, m, prev?.material);
       mat.albedoColor = Color3.FromHexString(m.baseColor).toLinearSpace();
-      mat.metallic = m.metallic;
-      mat.roughness = m.roughness;
+      // With a texture, metal/roughness come from its maps (scalars act as multipliers).
+      mat.metallic = m.texture ? 1 : m.metallic;
+      mat.roughness = m.texture ? 1 : m.roughness;
       mat.emissiveColor = Color3.FromHexString(m.emission).toLinearSpace().scale(m.emissionStrength);
       mat.alpha = m.alpha;
       mat.transparencyMode = m.alpha < 1 ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
@@ -396,8 +498,7 @@ export class Viewport {
     const sceneLights = [...this.entries.values()].filter((e) => e.light);
     const useStudio = !rendered || sceneLights.length === 0;
     this.studio.forEach((l) => l.setEnabled(useStudio));
-    this.scene.environmentIntensity = rendered ? 0.35 : 0.8;
-    const casters = [...this.entries.values()].filter((e) => e.material).map((e) => e.node as Mesh);
+    const casters = [...this.entries.values()].flatMap((e) => e.meshes);
     let shadowCount = 0;
     for (const e of sceneLights) {
       const obj = e.last;
@@ -422,10 +523,78 @@ export class Viewport {
     for (const m of casters) m.receiveShadows = rendered && shadowCount > 0;
   }
 
+  /** HDRI lighting, background, exposure and post-processing. Only in Rendered shading. */
+  private applyWorld(w: World, rendered: boolean) {
+    const scene = this.scene;
+    const hasLights = [...this.entries.values()].some((e) => e.light);
+    let env: BaseTexture = this.studioEnv;
+    if (rendered && w.hdri) {
+      let hdr = this.hdris.get(w.hdri);
+      if (!hdr) {
+        // 256px prefiltered cube: good reflections at a size phones handle.
+        hdr = new HDRCubeTexture(hdriUrl(w.hdri), scene, 256, false, true, false, true, null, () => this.store.notify(`Could not load sky “${w.hdri}”.`));
+        this.hdris.set(w.hdri, hdr);
+      }
+      hdr.rotationY = (-w.rotation * Math.PI) / 180;
+      env = hdr;
+    }
+    scene.environmentTexture = env;
+    scene.environmentIntensity = !rendered ? 0.8 : w.hdri ? w.strength : (hasLights ? 0.35 : 0.8) * w.strength;
+
+    // Background
+    const wantSky = rendered && !!w.hdri && w.background !== 'color';
+    const skyKey = wantSky ? `${w.hdri}|${w.background}` : '';
+    if (skyKey !== this.skyKey) {
+      this.skybox?.dispose(false, false);
+      this.skybox = wantSky ? scene.createDefaultSkybox(env, true, 1000, w.background === 'blurred' ? 0.5 : 0, false) : null;
+      if (this.skybox) {
+        this.skybox.isPickable = false;
+        this.skybox.infiniteDistance = true;
+      }
+      this.skyKey = skyKey;
+    }
+    scene.clearColor = rendered ? Color4.FromColor3(Color3.FromHexString(w.color), 1) : BG;
+    // Rendered view shows the scene as it will look: no grid, no light/empty helpers.
+    for (const g of this.grid) g.setEnabled(!rendered);
+    for (const e of this.entries.values()) if (e.pick && !e.meshes.includes(e.pick)) e.pick.setEnabled(!rendered);
+    scene.imageProcessingConfiguration.exposure = rendered ? w.exposure : 1;
+
+    // Post-processing (rendered only): anti-aliasing, bloom, ambient occlusion.
+    if (rendered) {
+      if (!this.pipeline) {
+        this.pipeline = new DefaultRenderingPipeline('look', true, scene, [this.camera]);
+        this.pipeline.fxaaEnabled = true;
+        this.pipeline.bloomThreshold = 0.85;
+        this.pipeline.bloomKernel = 48;
+        this.pipeline.bloomScale = 0.5;
+      }
+      this.pipeline.bloomEnabled = w.bloom > 0;
+      this.pipeline.bloomWeight = w.bloom;
+      if (w.ao && !this.ssao && SSAO2RenderingPipeline.IsSupported) {
+        const ssao = new SSAO2RenderingPipeline('ao', scene, { ssaoRatio: 0.5, blurRatio: 0.5 }, [this.camera], true);
+        ssao.radius = 0.5;
+        ssao.totalStrength = 1.1;
+        ssao.samples = 16;
+        ssao.maxZ = 60;
+        ssao.expensiveBlur = true;
+        this.ssao = ssao;
+      } else if (!w.ao && this.ssao) {
+        this.ssao.dispose(true);
+        this.ssao = null;
+      }
+    } else {
+      this.ssao?.dispose(true);
+      this.ssao = null;
+      this.pipeline?.dispose();
+      this.pipeline = null;
+    }
+  }
+
   private syncSelection(sel: string | null, tool: ToolMode) {
     for (const [id, e] of this.entries) {
       const on = id === sel;
-      if (e.pick && 'renderOutline' in e.pick && e.pick.getClassName() !== 'LinesMesh') e.pick.renderOutline = on;
+      for (const m of e.meshes) m.renderOutline = on;
+      if (e.pick && !e.meshes.includes(e.pick) && e.pick.getClassName() !== 'LinesMesh') e.pick.renderOutline = on;
       if (e.pick?.getClassName() === 'LinesMesh') (e.pick as LinesMesh).color = on ? SELECT_COLOR : HELPER_COLOR;
     }
     const gm = this.gizmos;
@@ -447,6 +616,8 @@ export class Viewport {
     this.store.dispatch({ type: 'transform', id: sel, position: r(n.position), rotation: babylonQuatToEulerDeg([q.x, q.y, q.z, q.w]), scale: r(n.scaling) });
   }
 
+  private grid: LinesMesh[] = [];
+
   private buildGrid() {
     const size = 20;
     const lines: Vector3[][] = [];
@@ -467,6 +638,7 @@ export class Viewport {
     y.color = new Color3(0.47, 0.72, 0.18);
     x.isPickable = y.isPickable = false;
     x.position.y = y.position.y = -0.015;
+    this.grid = [grid, x, y];
   }
 
   // ---------------------------------------------------------------- public API
@@ -482,6 +654,11 @@ export class Viewport {
     // scene.pick takes CSS pixels relative to the canvas (it divides by hardware scaling itself).
     const rect = this.canvas.getBoundingClientRect();
     return this.pickAt(clientX - rect.left, clientY - rect.top);
+  }
+
+  /** Resolves when every library model currently loading has finished (or failed). */
+  async settle(): Promise<void> {
+    while (this.pending.size) await Promise.all([...this.pending]);
   }
 
   setView(view: ViewName) {
@@ -504,7 +681,7 @@ export class Viewport {
     const st = this.store.getState();
     let ids = !all && st.selection ? subtree(st.doc, st.selection) : st.doc.order;
     // Frame geometry; lights and empties only count when there is nothing else to frame.
-    const geo = ids.filter((id) => this.entries.get(id)?.material);
+    const geo = ids.filter((id) => (this.entries.get(id)?.meshes.length ?? 0) > 0);
     if (geo.length) ids = geo;
     let min = new Vector3(Infinity, Infinity, Infinity);
     let max = new Vector3(-Infinity, -Infinity, -Infinity);
@@ -512,12 +689,15 @@ export class Viewport {
     for (const id of ids) {
       const e = this.entries.get(id);
       if (!e || !e.node.isEnabled()) continue;
-      e.node.computeWorldMatrix(true);
       any = true;
-      if (e.material) {
-        const bb = (e.node as Mesh).getBoundingInfo().boundingBox;
-        min = Vector3.Minimize(min, bb.minimumWorld);
-        max = Vector3.Maximize(max, bb.maximumWorld);
+      // Parent-first, so quantized model meshes get their real scale before measuring.
+      for (const n of [e.node, ...e.node.getDescendants(false)]) n.computeWorldMatrix(true);
+      if (e.meshes.length) {
+        for (const m of e.meshes) {
+          const bb = m.getBoundingInfo().boundingBox;
+          min = Vector3.Minimize(min, bb.minimumWorld);
+          max = Vector3.Maximize(max, bb.maximumWorld);
+        }
       } else {
         const p = e.node.getAbsolutePosition();
         min = Vector3.Minimize(min, p.subtract(new Vector3(0.5, 0.5, 0.5)));
@@ -534,22 +714,34 @@ export class Viewport {
     this.animateCamera(this.camera.alpha, this.camera.beta, radius, center);
   }
 
+  private tween: { from: [number, number, number, Vector3]; to: [number, number, number, Vector3]; t0: number } | null = null;
+
+  /**
+   * Time-based camera move (300 ms ease-in-out). Driven from the render loop and always
+   * finishing on the exact target, even if frames stall while assets load.
+   */
   private animateCamera(alpha: number, beta: number, radius: number, target: Vector3) {
     const cam = this.camera;
-    const ease = new CubicEase();
-    ease.setEasingMode(EasingFunction.EASINGMODE_EASEINOUT);
     let a = alpha;
     while (a - cam.alpha > Math.PI) a -= 2 * Math.PI;
     while (cam.alpha - a > Math.PI) a += 2 * Math.PI;
-    const fps = 60;
-    const frames = 18;
-    // CONSTANT mode: play once and hold. (Mode 0 is RELATIVE, which accumulates offsets.)
-    const mode = Animation.ANIMATIONLOOPMODE_CONSTANT;
-    this.scene.stopAnimation(cam);
-    Animation.CreateAndStartAnimation('ca', cam, 'alpha', fps, frames, cam.alpha, a, mode, ease);
-    Animation.CreateAndStartAnimation('cb', cam, 'beta', fps, frames, cam.beta, beta, mode, ease);
-    Animation.CreateAndStartAnimation('cr', cam, 'radius', fps, frames, cam.radius, radius, mode, ease);
-    Animation.CreateAndStartAnimation('ct', cam, 'target', fps, frames, cam.target.clone(), target, mode, ease);
+    this.tween = { from: [cam.alpha, cam.beta, cam.radius, cam.target.clone()], to: [a, beta, radius, target.clone()], t0: performance.now() };
+  }
+
+  private stepTween() {
+    const tw = this.tween;
+    if (!tw) return;
+    const cam = this.camera;
+    const k = Math.min(1, (performance.now() - tw.t0) / 300);
+    const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+    const lerp = (x: number, y: number) => x + (y - x) * e;
+    // Target first: ArcRotateCamera.setTarget() recomputes alpha/beta/radius from the old
+    // position, so the angles and distance must be applied after it.
+    cam.setTarget(Vector3.Lerp(tw.from[3], tw.to[3], e));
+    cam.alpha = lerp(tw.from[0], tw.to[0]);
+    cam.beta = lerp(tw.from[1], tw.to[1]);
+    cam.radius = lerp(tw.from[2], tw.to[2]);
+    if (k >= 1) this.tween = null;
   }
 
   /** Export the scene as binary glTF (opens in Blender via File > Import > glTF 2.0). */

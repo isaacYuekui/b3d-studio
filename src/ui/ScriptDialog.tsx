@@ -37,7 +37,9 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
     store.select(null);
     store.notify(`Ran script${parsed.value.title ? ` “${parsed.value.title}”` : ''}: ${parsed.value.count} commands (one undo step)`);
     onClose();
-    setTimeout(() => ctx.viewport()?.frame(true), 50);
+    // Frame once library models have loaded, so the shot includes them.
+    const vp = ctx.viewport();
+    void vp?.settle().then(() => vp.frame(true));
   };
 
   return (

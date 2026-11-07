@@ -14,7 +14,11 @@ const vec3 = { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 
 const color = { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' } as const;
 const material = {
   type: 'object',
-  properties: { baseColor: color, metallic: { type: 'number' }, roughness: { type: 'number' }, emission: color, emissionStrength: { type: 'number' }, alpha: { type: 'number' } },
+  properties: { baseColor: color, metallic: { type: 'number' }, roughness: { type: 'number' }, emission: color, emissionStrength: { type: 'number' }, alpha: { type: 'number' }, texture: { type: ['string', 'null'] }, textureScale: { type: 'number' } },
+} as const;
+const world = {
+  type: 'object',
+  properties: { hdri: { type: ['string', 'null'] }, strength: { type: 'number' }, rotation: { type: 'number' }, background: { type: 'string', enum: ['color', 'hdri', 'blurred'] }, color, exposure: { type: 'number' }, bloom: { type: 'number' }, ao: { type: 'boolean' } },
 } as const;
 const light = {
   type: 'object',
@@ -28,8 +32,9 @@ export const AI_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        primitive: { type: 'string', enum: ['cube', 'sphere', 'cylinder', 'cone', 'torus', 'capsule', 'plane', 'mesh', 'light', 'empty'] },
+        primitive: { type: 'string', enum: ['cube', 'sphere', 'cylinder', 'cone', 'torus', 'capsule', 'plane', 'mesh', 'model', 'light', 'empty'] },
         id: { type: 'string' },
+        asset: { type: 'string', description: 'Library model id (docs/LIBRARY.md) when primitive is "model"' },
         name: { type: 'string' },
         color,
         material,
@@ -54,6 +59,7 @@ export const AI_TOOLS = [
   { name: 'setColor', description: 'Set an object viewport colour.', input_schema: { type: 'object', properties: { id: { type: 'string' }, color }, required: ['id', 'color'] } },
   { name: 'setMaterial', description: 'Change material values (PBR: base colour, metallic, roughness, emission, alpha).', input_schema: { type: 'object', properties: { id: { type: 'string' }, material }, required: ['id', 'material'] } },
   { name: 'setLight', description: 'Change a light (type, colour, power in watts or sun strength, spot angle, shadows).', input_schema: { type: 'object', properties: { id: { type: 'string' }, light }, required: ['id', 'light'] } },
+  { name: 'setWorld', description: 'Scene lighting and look: HDRI sky id from the library, strength, rotation, background, exposure, bloom, ambient occlusion.', input_schema: { type: 'object', properties: { world }, required: ['world'] } },
   { name: 'setVisible', description: 'Show or hide an object.', input_schema: { type: 'object', properties: { id: { type: 'string' }, visible: { type: 'boolean' } }, required: ['id', 'visible'] } },
 ] as const;
 

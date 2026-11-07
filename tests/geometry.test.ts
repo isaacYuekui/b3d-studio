@@ -28,6 +28,11 @@ describe('custom mesh geometry', () => {
     expect(ourSign).toBe(refSign);
   });
 
+  it('box-projects UVs in metres so textures repeat at real-world scale', () => {
+    const vd = buildVertexData({ vertices: [[0,0,0],[3,0,0],[3,2,0],[0,2,0]], faces: [[0,1,2,3]], smooth: true });
+    expect(vd.uvs).toEqual([0,0, 3,0, 3,2, 0,2]); // floor quad: UV = (x, y)
+  });
+
   it('fan-triangulates polygons', () => {
     const vd = buildVertexData({ vertices: [[0,0,0],[1,0,0],[1,1,0],[0.5,1.5,0],[0,1,0]], faces: [[0,1,2,3,4]], smooth: true });
     expect(vd.indices).toEqual([0,1,2, 0,2,3, 0,3,4]);

@@ -248,6 +248,63 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await ctx.close();
 }
 
+// ---------------------------------------------------------------- realism (v0.3)
+{
+  const fs = await import('node:fs');
+  const { ctx, page, errors } = await open({ width: 1440, height: 900 });
+  const failed = [];
+  page.on('requestfailed', (r) => failed.push(r.url()));
+  page.on('response', (r) => r.status() >= 400 && failed.push(`${r.status()} ${r.url()}`));
+
+  // Library browser
+  await page.click('[data-testid="library-btn"]');
+  await page.waitForSelector('[data-asset]');
+  const models = await page.$$eval('[data-asset]', (els) => els.length);
+  check('v0.3: library lists models with thumbnails', models >= 40, `${models} models`);
+  await page.fill('#lib-search', 'vase');
+  const found = await page.$$eval('[data-asset]', (els) => els.map((e) => e.dataset.asset));
+  check('v0.3: library search filters by name and category', found.length >= 3 && found.length < 10 && found.includes('ceramic_vase_01'), found.join(', '));
+  await page.click('[data-asset="ceramic_vase_01"]');
+  await page.waitForTimeout(2500);
+  check('v0.3: adding a library model selects it', (await selectedName(page)) === 'Ceramic Vase');
+  check('v0.3: model shows its asset in Properties', /ceramic_vase_01/.test(await page.textContent('[data-testid="properties"]')));
+
+  // Apply a photo material to a cube
+  await page.click('[data-outliner-id] >> text=Cube');
+  await page.click('[data-testid="library-btn"]');
+  await page.click('[data-lib-tab="textures"]');
+  await page.click('[data-asset="brown_planks_05"]');
+  check('v0.3: material from library applies to selected cube', (await page.inputValue('#mat-texture')) === 'brown_planks_05');
+
+  // Sky
+  await page.click('[data-testid="library-btn"]');
+  await page.click('[data-lib-tab="hdris"]');
+  await page.click('[data-asset="venice_sunset"]');
+  await page.waitForTimeout(3000);
+  check('v0.3: sky applies and switches to Rendered view', (await page.getAttribute('[data-shading="rendered"]', 'aria-pressed')) === 'true');
+  await page.keyboard.press('Escape');
+  check('v0.3: World panel shows the chosen sky', (await page.inputValue('#world-hdri')) === 'venice_sunset');
+
+  // Realistic scene script
+  await page.click('[data-testid="script-btn"]');
+  await page.fill('[data-testid="script-text"]', fs.readFileSync(new URL('../../examples/still-life.b3d-script.json', import.meta.url), 'utf8'));
+  await page.click('[data-testid="script-run"]');
+  await page.waitForTimeout(7000);
+  check('v0.3: still-life script builds 13 objects', (await objCount(page)) === 13);
+  await page.screenshot({ path: `${shots}/v03-still-life.png` });
+
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 150000 }), (async () => { await page.click('[data-menu="File"]'); await page.click('.menu [data-action="file.glb"]'); })()]);
+  const glbPath = `${shots}/still-life.glb`;
+  await dl.saveAs(glbPath);
+  const glb = fs.readFileSync(glbPath);
+  const json = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString('utf8'));
+  check('v0.3: GLB export includes scanned models and their textures', (json.meshes?.length ?? 0) >= 10 && (json.images?.length ?? 0) >= 10, `${json.meshes?.length} meshes, ${json.images?.length} images, ${(glb.length / 1e6).toFixed(1)} MB`);
+
+  check('v0.3: every asset loaded (no failed requests)', failed.length === 0, failed.slice(0, 3).join(' | '));
+  check('v0.3: no console/page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // ---------------------------------------------------------------- iPad (landscape + portrait), touch
 for (const [label, vp] of [['ipad-landscape', { width: 1180, height: 820 }], ['ipad-portrait', { width: 820, height: 1180 }]]) {
   const { ctx, page, errors } = await open(vp, { touch: true, dpr: 2 });

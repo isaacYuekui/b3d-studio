@@ -5,6 +5,12 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Realism (v0.3)
+
+- Built-in CC0 library from Poly Haven: 60 scanned models, 9 HDRI skies, 18 photo materials ([docs/LIBRARY.md](docs/LIBRARY.md)); browse it with the Library button (⇧L)
+- HDRI image-based lighting, photo textures (colour, normal, AO/roughness/metal), ambient occlusion, bloom, exposure
+- Assets are downloaded and compressed at build time (`npm run fetch-assets`), not stored in git
+
 ## Scene scripts (v0.2)
 
 Describe a scene to Claude, paste the script it writes into **File > Run Scene Script**, and it builds. See [docs/SCRIPTS.md](docs/SCRIPTS.md).

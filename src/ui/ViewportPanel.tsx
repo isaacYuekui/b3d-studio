@@ -145,6 +145,9 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
           <Icon.trash />
         </button>
         <div className="tool-sep" />
+        <button className="tool-btn" title="Library: real models, materials, skies (⇧ L)" aria-label="Library" data-testid="library-btn" onClick={() => run('add.library')}>
+          <Icon.library />
+        </button>
         <button className="tool-btn" title={'Run scene script (Ctrl/⌘ R)'} aria-label="Run scene script" data-testid="script-btn" onClick={() => run('file.script')}>
           <Icon.script />
         </button>

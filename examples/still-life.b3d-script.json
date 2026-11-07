@@ -1,0 +1,291 @@
+{
+ "format": "b3d-studio-script",
+ "version": 1,
+ "title": "Morning still life",
+ "commands": [
+  {
+   "type": "setWorld",
+   "world": {
+    "hdri": "brown_photostudio_02",
+    "strength": 0.9,
+    "background": "blurred",
+    "exposure": 1.05,
+    "bloom": 0.08,
+    "ao": true
+   }
+  },
+  {
+   "type": "add",
+   "primitive": "mesh",
+   "id": "floor",
+   "name": "Floor",
+   "mesh": {
+    "vertices": [
+     [
+      -3,
+      -2.5,
+      0
+     ],
+     [
+      3,
+      -2.5,
+      0
+     ],
+     [
+      3,
+      2.5,
+      0
+     ],
+     [
+      -3,
+      2.5,
+      0
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2,
+      3
+     ]
+    ],
+    "smooth": true
+   },
+   "material": {
+    "texture": "brown_planks_05",
+    "textureScale": 1,
+    "baseColor": "#ffffff"
+   }
+  },
+  {
+   "type": "add",
+   "primitive": "mesh",
+   "id": "wall",
+   "name": "Back Wall",
+   "mesh": {
+    "vertices": [
+     [
+      -3,
+      1.3,
+      0
+     ],
+     [
+      3,
+      1.3,
+      0
+     ],
+     [
+      3,
+      1.3,
+      2.8
+     ],
+     [
+      -3,
+      1.3,
+      2.8
+     ]
+    ],
+    "faces": [
+     [
+      0,
+      1,
+      2,
+      3
+     ]
+    ],
+    "smooth": true
+   },
+   "material": {
+    "baseColor": "#d8d0c2",
+    "roughness": 0.92
+   }
+  },
+  {
+   "type": "add",
+   "primitive": "model",
+   "id": "table",
+   "asset": "WoodenTable_01",
+   "name": "Table"
+  },
+  {
+   "type": "add",
+   "primitive": "model",
+   "asset": "ceramic_vase_01",
+   "name": "Vase",
+   "transform": {
+    "position": [
+     -0.45,
+     0.08,
+     0.548
+    ],
+    "rotation": [
+     0,
+     0,
+     20
+    ]
+   }
+  },
+  {
+   "type": "add",
+   "primitive": "model",
+   "asset": "carved_wooden_plate",
+   "name": "Plate",
+   "transform": {
+    "position": [
+     0.22,
+     -0.06,
+     0.551
+    ]
+   }
+  },
+  {
+   "type": "add",
+   "primitive": "model",
+   "asset": "food_apple_01",
+   "name": "Apple",
+   "transform": {
+    "position": [
+     0.18,
+     -0.08,
+     0.569
+    ],
+    "rotation": [
+     0,
+     0,
+     40
+    ]
+   }
+  },
+  {
+   "type": "add",
+   "primitive": "model",
+   "asset": "food_apple_01",
+   "name": "Apple.001",
+   "transform": {
+    "position": [
+     0.28,
+     -0.02,
+     0.569
+    ],
+    "rotation": [
+     10,
+     0,
+     160
+    ]
+   }
+  },
+  {
+   "type": "add",
+   "primitive": "model",
+   "asset": "lemon",
+   "name": "Lemon",
+   "transform": {
+    "position": [
+     0.55,
+     0.12,
+     0.601
+    ],
+    "rotation": [
+     90,
+     0,
+     30
+    ]
+   }
+  },
+  {
+   "type": "add",
+   "primitive": "model",
+   "asset": "croissant",
+   "name": "Croissant",
+   "transform": {
+    "position": [
+     -0.12,
+     -0.16,
+     0.55
+    ],
+    "rotation": [
+     0,
+     0,
+     -25
+    ]
+   }
+  },
+  {
+   "type": "add",
+   "primitive": "model",
+   "asset": "book_encyclopedia_set_01",
+   "name": "Books",
+   "transform": {
+    "position": [
+     -0.68,
+     0.14,
+     0.549
+    ],
+    "rotation": [
+     0,
+     0,
+     8
+    ],
+    "scale": [
+     0.8,
+     0.8,
+     0.8
+    ]
+   }
+  },
+  {
+   "type": "add",
+   "primitive": "model",
+   "asset": "potted_plant_01",
+   "name": "Plant",
+   "transform": {
+    "position": [
+     1.55,
+     0.75,
+     0.014
+    ]
+   }
+  },
+  {
+   "type": "add",
+   "primitive": "model",
+   "asset": "ArmChair_01",
+   "name": "Armchair",
+   "transform": {
+    "position": [
+     -1.7,
+     -0.2,
+     0
+    ],
+    "rotation": [
+     0,
+     0,
+     -35
+    ]
+   }
+  },
+  {
+   "type": "add",
+   "primitive": "light",
+   "name": "Window Sun",
+   "light": {
+    "type": "sun",
+    "power": 2.2,
+    "color": "#ffe9cc"
+   },
+   "transform": {
+    "position": [
+     -3,
+     -4,
+     4
+    ],
+    "rotation": [
+     48,
+     0,
+     -35
+    ]
+   }
+  }
+ ]
+}
