@@ -100,6 +100,15 @@ describe('realism (v0.3)', () => {
   });
 });
 
+describe('scene camera', () => {
+  it('stores a composed shot that survives file round-trips', () => {
+    const doc = applyCommand(empty(), validateCommand({ type: 'setCamera', position: [6, -6, 3], target: [0, 0, 1] })).doc;
+    expect(doc.camera).toEqual({ position: [6, -6, 3], target: [0, 0, 1] });
+    expect(parseProject(serializeProject(doc)).camera).toEqual(doc.camera);
+    expect(() => validateCommand({ type: 'setCamera', position: [1, 2] , target: [0, 0, 0] })).toThrow();
+  });
+});
+
 describe('scene scripts', () => {
   const script = { format: 'b3d-studio-script', version: 1, title: 'Test', commands: [{ type: 'add', primitive: 'cone' }] };
 

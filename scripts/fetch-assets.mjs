@@ -11,7 +11,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { NodeIO, getBounds } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import { dedup, prune, quantize, textureCompress, weld } from '@gltf-transform/functions';
+import { dedup, prune, quantize, simplify, textureCompress, weld } from '@gltf-transform/functions';
+import { MeshoptSimplifier } from 'meshoptimizer';
 import sharp from 'sharp';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
@@ -86,7 +87,8 @@ async function fetchModel(id) {
   const g = files.gltf?.[RES]?.gltf;
   if (!g) throw new Error(`no ${RES} glTF`);
   const total = g.size + Object.values(g.include ?? {}).reduce((s, f) => s + f.size, 0);
-  if (total / 1e6 > manifest.maxModelMB) throw new Error(`too large (${(total / 1e6).toFixed(1)} MB)`);
+  const limit = manifest.maxRawMB?.[id] ?? manifest.maxModelMB;
+  if (total / 1e6 > limit) throw new Error(`too large (${(total / 1e6).toFixed(1)} MB)`);
   if (FORCE || !(await exists(glb))) {
     const dir = path.join(TMP, id);
     const gltfPath = path.join(dir, `${id}.gltf`);
@@ -95,7 +97,17 @@ async function fetchModel(id) {
     const doc = await io.read(gltfPath);
     // Shrink for phones/tablets: WebP textures (max 1024px), quantized geometry (KHR_mesh_quantization,
     // read natively by Babylon — no external decoder needed).
-    await doc.transform(dedup(), prune(), weld(), quantize(), textureCompress({ encoder: sharp, targetFormat: 'webp', quality: 82, resize: [1024, 1024] }));
+    const ratio = manifest.simplify?.[id];
+    if (ratio) await MeshoptSimplifier.ready;
+    await doc.transform(
+      dedup(),
+      prune(),
+      weld(),
+      // Very dense scans (trees) are simplified so they stay usable on tablets.
+      ...(ratio ? [simplify({ simplifier: MeshoptSimplifier, ratio, error: 0.01 })] : []),
+      quantize(),
+      textureCompress({ encoder: sharp, targetFormat: 'webp', quality: 82, resize: [1024, 1024] }),
+    );
     await fs.mkdir(path.dirname(glb), { recursive: true });
     await io.write(glb, doc); // pack into one binary .glb
   }

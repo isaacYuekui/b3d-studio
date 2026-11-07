@@ -60,6 +60,7 @@ export const AI_TOOLS = [
   { name: 'setMaterial', description: 'Change material values (PBR: base colour, metallic, roughness, emission, alpha).', input_schema: { type: 'object', properties: { id: { type: 'string' }, material }, required: ['id', 'material'] } },
   { name: 'setLight', description: 'Change a light (type, colour, power in watts or sun strength, spot angle, shadows).', input_schema: { type: 'object', properties: { id: { type: 'string' }, light }, required: ['id', 'light'] } },
   { name: 'setWorld', description: 'Scene lighting and look: HDRI sky id from the library, strength, rotation, background, exposure, bloom, ambient occlusion.', input_schema: { type: 'object', properties: { world }, required: ['world'] } },
+  { name: 'setCamera', description: 'Set the scene camera (the composed shot the scene opens at): camera position and the point it looks at, Blender coordinates.', input_schema: { type: 'object', properties: { position: vec3, target: vec3 }, required: ['position', 'target'] } },
   { name: 'setVisible', description: 'Show or hide an object.', input_schema: { type: 'object', properties: { id: { type: 'string' }, visible: { type: 'boolean' } }, required: ['id', 'visible'] } },
 ] as const;
 

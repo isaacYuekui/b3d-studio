@@ -4,6 +4,13 @@ import type { Command } from '../core/commands';
 import { useCtx } from './context';
 import { pickFile } from './actions';
 
+/** Bundled example scenes, loaded on demand (each is its own small chunk). */
+const EXAMPLES: { id: string; label: string; load: () => Promise<{ default: string }> }[] = [
+  { id: 'forest-supercar', label: 'Supercar in the pines', load: () => import('../../examples/forest-supercar.b3d-script.json?raw') },
+  { id: 'still-life', label: 'Morning still life', load: () => import('../../examples/still-life.b3d-script.json?raw') },
+  { id: 'robot-studio', label: 'Robot in the studio', load: () => import('../../examples/robot-studio.b3d-script.json?raw') },
+];
+
 /**
  * Run Scene Script: paste (or open) a JSON script that Claude wrote in chat.
  * The whole script runs as one undoable step, and nothing changes if any command is invalid.
@@ -39,7 +46,7 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
     onClose();
     // Frame once library models have loaded, so the shot includes them.
     const vp = ctx.viewport();
-    void vp?.settle().then(() => vp.frame(true));
+    void vp?.settle().then(() => vp.viewCamera() || vp.frame(true));
   };
 
   return (
@@ -52,6 +59,14 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
         <p className="help-foot" style={{ marginTop: 0 }}>
           Paste a script Claude wrote for you in chat, or open a script file. It runs as one step, so a single Undo reverts it.
         </p>
+        <div className="script-examples" role="group" aria-label="Examples">
+          <span className="muted">Examples:</span>
+          {EXAMPLES.map((ex) => (
+            <button key={ex.id} className="chip" data-example={ex.id} onClick={async () => setText((await ex.load()).default)}>
+              {ex.label}
+            </button>
+          ))}
+        </div>
         <textarea
           id="script-text"
           className="script-text"

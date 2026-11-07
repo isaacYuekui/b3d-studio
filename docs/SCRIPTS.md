@@ -27,6 +27,7 @@ Conventions: metres, **Z up**, rotations in degrees (Blender's).
 | `setMaterial` | `id`, `material` {baseColor, metallic, roughness, emission, emissionStrength, alpha} |
 | `setLight` | `id`, `light` {…} |
 | `setWorld` | `world` {hdri, strength, rotation, background: color/hdri/blurred, color, exposure, bloom, ao} |
+| `setCamera` | `position`, `target` (Blender coordinates). The scene opens at this shot after a script runs; key 0 returns to it |
 | `setParent`, `rename`, `setVisible`, `delete`, `duplicate` | as named |
 
 ## Realistic scenes (v0.3)

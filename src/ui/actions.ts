@@ -243,6 +243,25 @@ export const actions = {
   'view.top': view('top', 'Top', '7'),
   'view.bottom': view('bottom', 'Bottom', `${MOD} 7`),
   'view.persp': view('persp', 'Perspective (default)', '5'),
+  'view.camera': {
+    id: 'view.camera',
+    label: 'Scene Camera View',
+    shortcut: '0',
+    run: (c) => {
+      if (!c.viewport()?.viewCamera()) c.store.notify('This scene has no camera yet. Use View > Set Scene Camera to View.');
+    },
+  },
+  'view.setCamera': {
+    id: 'view.setCamera',
+    label: 'Set Scene Camera to View',
+    shortcut: `${MOD} ⌥ 0`,
+    run: (c) => {
+      const v = c.viewport()?.currentView();
+      if (!v) return;
+      c.store.dispatch({ type: 'setCamera', ...v }, { select: false });
+      c.store.notify('Scene camera saved — press 0 to return to this view');
+    },
+  },
   'view.frameSelected': { id: 'view.frameSelected', label: 'Frame Selected', shortcut: '.', run: (c) => c.viewport()?.frame(false) },
   'view.frameAll': { id: 'view.frameAll', label: 'Frame All', shortcut: 'Home', run: (c) => c.viewport()?.frame(true) },
 
@@ -283,6 +302,7 @@ export function shortcutFor(e: KeyboardEvent): ActionId | null {
     if (code === 'Digit1' || code === 'Numpad1') return 'view.back';
     if (code === 'Digit3' || code === 'Numpad3') return 'view.left';
     if (code === 'Digit7' || code === 'Numpad7') return 'view.bottom';
+    if (e.altKey && (code === 'Digit0' || code === 'Numpad0')) return 'view.setCamera';
     return null;
   }
   if (e.altKey) {
@@ -312,9 +332,9 @@ export function shortcutFor(e: KeyboardEvent): ActionId | null {
     case 'Digit7':
     case 'Numpad7': return 'view.top';
     case 'Digit5':
-    case 'Numpad5':
+    case 'Numpad5': return 'view.persp';
     case 'Digit0':
-    case 'Numpad0': return 'view.persp';
+    case 'Numpad0': return 'view.camera';
     case 'Period':
     case 'NumpadDecimal': return 'view.frameSelected';
     case 'Home': return 'view.frameAll';
