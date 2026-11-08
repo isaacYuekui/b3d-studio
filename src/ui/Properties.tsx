@@ -8,7 +8,8 @@ import type { Command } from '../core/commands';
 import type { LightType, Vec3 } from '../core/types';
 import { isRenderable } from '../core/types';
 import { runAction } from './actions';
-import { useCatalog } from './LibraryDialog';
+import { useCatalog, useUserModels } from './LibraryDialog';
+import { guessUnitScale, isUserAsset } from '../engine/userModels';
 import { worldOf } from '../core/types';
 import type { Background } from '../core/types';
 
@@ -145,12 +146,7 @@ export function Properties() {
         </label>
       </Section>
 
-      {o.type === 'model' && (
-        <Section title="Model">
-          <div className="prop-row"><span>Asset</span><b>{o.asset}</b></div>
-          <p className="prop-hint">A scanned model from the library, with its own photo materials. CC0 from Poly Haven.</p>
-        </Section>
-      )}
+      {o.type === 'model' && <ModelSection id={o.id} />}
 
       {isRenderable(o.type) && o.type !== 'model' && (
         <Section title="Material">
@@ -315,6 +311,62 @@ function WorldSection() {
       {shading !== 'rendered' && (
         <button className="btn" onClick={() => store.setShading('rendered')}>Show Rendered view</button>
       )}
+    </Section>
+  );
+}
+
+/** Library or imported model: source, and its real-world size (longest side) as an editable value. */
+function ModelSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const o = useApp((s) => s.doc.objects[id]);
+  const catalog = useCatalog();
+  const mine = useUserModels();
+  if (!o?.asset) return null;
+  const user = isUserAsset(o.asset);
+  let base = 0; // longest side in metres at scale 1
+  let label = o.asset;
+  if (user) {
+    const m = mine.find((x) => x.id === o.asset);
+    label = m?.name ?? 'Imported model (not on this device)';
+    if (m?.min && m.max) {
+      const longest = Math.max(...m.max.map((v, i) => v - m.min![i]));
+      base = longest * guessUnitScale(longest);
+    }
+  } else {
+    const c = catalog?.models.find((x) => x.id === o.asset);
+    if (c) {
+      label = c.name;
+      base = Math.max(...c.size);
+    }
+  }
+  const k = Math.max(...o.transform.scale.map(Math.abs));
+  const ratio = o.transform.scale.map((v) => v / (k || 1)) as Vec3;
+  const make = (len: number): Command => {
+    const f = Math.max(0.001, len) / base;
+    return { type: 'transform', id: o.id, scale: ratio.map((r) => +(r * f).toFixed(5)) as Vec3 };
+  };
+  return (
+    <Section title="Model">
+      <div className="prop-row"><span>Source</span><b className="prop-ellipsis" title={label}>{label}</b></div>
+      {base > 0 && (
+        <NumberField
+          label="Size (longest side, m)"
+          value={+(base * k).toFixed(3)}
+          step={0.05}
+          dragRate={0.01}
+          onPreview={(v) => store.preview(make(v))}
+          onCommit={(v) => {
+            store.preview(make(v));
+            store.commitPreview();
+          }}
+          onCancel={() => store.cancelPreview()}
+        />
+      )}
+      <p className="prop-hint">
+        {user
+          ? 'Imported on this device. Units are converted to metres automatically; type a size above to match the real object (a supercar is about 4.5 m long).'
+          : 'A scanned model from the library, with its own photo materials. CC0 from Poly Haven.'}
+      </p>
     </Section>
   );
 }

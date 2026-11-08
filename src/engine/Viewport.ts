@@ -46,6 +46,9 @@ import type { Store, AppState, ToolMode, Shading } from '../core/store';
 import type { Material as SceneMaterial, SceneObject, SceneDoc, Vec3, World } from '../core/types';
 import { isRenderable, worldOf } from '../core/types';
 import { catalogNow, hdriUrl, loadCatalog, modelUrl, textureUrl } from './library';
+import { guessUnitScale, isUserAsset, updateUserModelMeta, userModelMetaNow, userModelUrl } from './userModels';
+
+class MissingModel extends Error {}
 import { babylonQuatToEulerDeg, clean, eulerDegToBabylonQuat, fromBabylonVec, toBabylonVec } from './coords';
 import { buildVertexData } from './geometry';
 import { subtree } from '../core/commands';
@@ -345,19 +348,29 @@ export class Viewport {
   /** Load a library model (cached per asset) and instance it under the entry's node. */
   private async attachModel(e: Entry, o: SceneObject) {
     const asset = o.asset!;
+    const user = isUserAsset(asset);
     try {
       this.loadersReady ??= import('@babylonjs/loaders/glTF/2.0');
       await this.loadersReady;
       let p = this.containers.get(asset);
       if (!p) {
-        p = LoadAssetContainerAsync(modelUrl(asset), this.scene, { pluginExtension: '.glb' });
+        p = (async () => {
+          const url = user ? await userModelUrl(asset) : modelUrl(asset);
+          if (!url) throw new MissingModel();
+          return LoadAssetContainerAsync(url, this.scene, { pluginExtension: '.glb' });
+        })();
         this.containers.set(asset, p);
         p.catch(() => this.containers.delete(asset));
       }
       const container = await p;
       if (this.entries.get(o.id) !== e) return; // object was deleted or rebuilt meanwhile
       const inst = container.instantiateModelsToScene((n) => n, false, { doNotInstantiate: true });
-      for (const root of inst.rootNodes) root.parent = e.node;
+      // Imported files come in any units and with any origin: a "fit" node grounds and
+      // centres them and converts their units to metres. Library models are already clean.
+      const fit = new TransformNode(`${o.id}-fit`, this.scene);
+      for (const root of inst.rootNodes) root.parent = fit;
+      if (user) this.fitUserModel(fit, asset);
+      fit.parent = e.node;
       for (const d of e.node.getDescendants(false)) d.metadata = { ...(d.metadata ?? {}), export: true };
       e.meshes = e.node.getChildMeshes(false).filter((m) => m.getTotalVertices() > 0);
       for (const m of e.meshes) {
@@ -369,9 +382,30 @@ export class Viewport {
       e.pick = e.meshes[0] ?? null;
       this.applyShading();
       this.syncSelection(this.store.getState().selection, this.store.getState().tool);
-    } catch {
-      this.store.notify(`Could not load model “${asset}”. It may not be in the library.`);
+    } catch (err) {
+      if (err instanceof MissingModel) this.store.notify(`“${o.name}” was imported on another device. Import the model again, or open the project file that includes it.`);
+      else this.store.notify(`Could not load model “${user ? o.name : asset}”.`);
     }
+  }
+
+  /** Centre an imported model on its footprint, put it on the ground, and convert its units to metres. */
+  private fitUserModel(fit: TransformNode, asset: string) {
+    let min = new Vector3(Infinity, Infinity, Infinity);
+    let max = new Vector3(-Infinity, -Infinity, -Infinity);
+    for (const n of [fit, ...fit.getDescendants(false)]) n.computeWorldMatrix(true);
+    for (const m of fit.getChildMeshes(false)) {
+      if (!m.getTotalVertices()) continue;
+      const bb = m.getBoundingInfo().boundingBox;
+      min = Vector3.Minimize(min, bb.minimumWorld);
+      max = Vector3.Maximize(max, bb.maximumWorld);
+    }
+    if (!Number.isFinite(min.x)) return;
+    const size = max.subtract(min);
+    const k = guessUnitScale(Math.max(size.x, size.y, size.z));
+    fit.scaling.setAll(k);
+    fit.position.set(-((min.x + max.x) / 2) * k, -min.y * k, -((min.z + max.z) / 2) * k);
+    const meta = userModelMetaNow(asset);
+    if (meta && !meta.max) void updateUserModelMeta(asset, { min: min.asArray() as Vec3, max: max.asArray() as Vec3 });
   }
 
   /** Photo-scanned PBR maps from the library (colour, normal, AO/roughness/metal). */

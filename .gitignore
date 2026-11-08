@@ -5,3 +5,4 @@ dist-single
 *.log
 test-results
 public/library
+tests/fixtures

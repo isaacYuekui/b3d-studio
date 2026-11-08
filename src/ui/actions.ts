@@ -76,11 +76,15 @@ export function downloadBlob(filename: string, blob: Blob) {
 
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
 
-export function pickFile(): Promise<File | null> {
+/**
+ * Opens the system file picker. `accept` is omitted for 3D models: iOS greys out
+ * .glb/.gltf files it doesn't recognise, so the type is checked after picking instead.
+ */
+export function pickFile(accept: string | null = '.json,.b3d,application/json'): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json,.b3d,application/json';
+    if (accept) input.accept = accept;
     // Must be attached to the DOM: iOS Safari ignores clicks on detached file inputs.
     input.style.cssText = 'position:fixed;left:-9999px;opacity:0';
     document.body.appendChild(input);
@@ -124,9 +128,15 @@ export const actions = {
     id: 'file.export',
     label: 'Export Project File…',
     shortcut: `${MOD} E`,
-    run: (c) => {
-      downloadBlob(`b3d-scene-${stamp()}.b3d.json`, new Blob([serializeProject(c.store.getState().doc)], { type: 'application/json' }));
-      c.store.notify('Project exported');
+    run: async (c) => {
+      const doc = c.store.getState().doc;
+      const { collectEmbeddedModels } = await import('../engine/userModels');
+      const models = await collectEmbeddedModels(doc.order.map((id) => doc.objects[id].asset ?? ''));
+      const json = serializeProject(doc);
+      // Imported models travel inside the project file so it opens on any device.
+      const text = Object.keys(models).length ? json.replace(/\n}$/, `,\n  "models": ${JSON.stringify(models)}\n}`) : json;
+      downloadBlob(`b3d-scene-${stamp()}.b3d.json`, new Blob([text], { type: 'application/json' }));
+      c.store.notify(Object.keys(models).length ? `Project exported with ${Object.keys(models).length} imported model(s)` : 'Project exported');
     },
   },
   'file.import': {
@@ -137,7 +147,14 @@ export const actions = {
       const file = await pickFile();
       if (!file) return;
       try {
-        c.store.reset(parseProject(await file.text()), `Imported ${file.name}`);
+        const text = await file.text();
+        const doc = parseProject(text);
+        const embedded = (JSON.parse(text) as { models?: unknown }).models;
+        if (embedded) {
+          const { restoreEmbeddedModels } = await import('../engine/userModels');
+          await restoreEmbeddedModels(embedded);
+        }
+        c.store.reset(doc, `Imported ${file.name}`);
         c.viewport()?.frame(true);
       } catch (e) {
         c.store.notify(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -213,6 +230,36 @@ export const actions = {
     label: 'From Library…',
     shortcut: '⇧ L',
     run: (c) => c.openLibrary(),
+  },
+  'file.importModel': {
+    id: 'file.importModel',
+    label: 'Import 3D Model (GLB / glTF / ZIP)…',
+    shortcut: `⇧ ${MOD} I`,
+    run: async (c) => {
+      const file = await pickFile(null);
+      if (!file) return;
+      try {
+        c.store.notify(`Importing ${file.name}…`);
+        const { toGlb, saveUserModel } = await import('../engine/userModels');
+        const { glb, name } = await toGlb(file.name, new Uint8Array(await file.arrayBuffer()));
+        const meta = await saveUserModel(glb, name);
+        c.store.dispatch({ type: 'add', primitive: 'model', asset: meta.id, name: meta.name });
+        c.store.notify(`Imported “${meta.name}” (${(glb.byteLength / 1e6).toFixed(1)} MB). Saved on this device under Library > My Models.`);
+        const vp = c.viewport();
+        void vp?.settle().then(async () => {
+          vp.frame(false);
+          const { userModelMetaNow, guessUnitScale } = await import('../engine/userModels');
+          const m = userModelMetaNow(meta.id);
+          if (m?.min && m.max) {
+            const longest = Math.max(...m.max.map((v, i) => v - m.min![i]));
+            const metres = longest * guessUnitScale(longest);
+            c.store.notify(`Imported “${meta.name}”: ${metres < 1 ? `${Math.round(metres * 100)} cm` : `${metres.toFixed(2)} m`} across. If that's wrong, type the real size in Properties > Model.`);
+          }
+        });
+      } catch (e) {
+        c.store.notify(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
   },
   'file.glb': {
     id: 'file.glb',
@@ -297,7 +344,7 @@ export function shortcutFor(e: KeyboardEvent): ActionId | null {
     if (k === 's') return 'file.save';
     if (k === 'o') return 'file.load';
     if (k === 'e') return 'file.export';
-    if (k === 'i') return 'file.import';
+    if (k === 'i') return e.shiftKey ? 'file.importModel' : 'file.import';
     if (k === 'r') return 'file.script';
     if (code === 'Digit1' || code === 'Numpad1') return 'view.back';
     if (code === 'Digit3' || code === 'Numpad3') return 'view.left';
