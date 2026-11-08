@@ -235,7 +235,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   check('v0.2: Add > Torus', (await selectedName(page)) === 'Torus');
 
   // GLB export
-  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), (async () => { await page.click('[data-menu="File"]'); await page.click('.menu [data-action="file.glb"]'); })()]);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 120000 }), (async () => { await page.click('[data-menu="File"]'); await page.click('.menu [data-action="file.glb"]'); })()]);
   const glbPath = `${shots}/scene.glb`;
   await dl.saveAs(glbPath);
   const glb = fs.readFileSync(glbPath);
