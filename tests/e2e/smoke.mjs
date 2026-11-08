@@ -305,6 +305,29 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await ctx.close();
 }
 
+// ---------------------------------------------------------------- example scenes + scene camera (v0.4)
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  const failed = [];
+  page.on('response', (r) => r.status() >= 400 && failed.push(`${r.status()} ${r.url()}`));
+  await page.click('[data-testid="script-btn"]');
+  await page.click('[data-example="forest-supercar"]');
+  await page.waitForFunction(() => document.querySelector('[data-testid="script-text"]').value.length > 1000);
+  check('v0.4: example chip loads a scene script', /Supercar in the pines/.test(await page.textContent('.script-status')));
+  await page.click('[data-testid="script-run"]');
+  await page.waitForTimeout(15000);
+  check('v0.4: forest supercar builds 61 objects', (await objCount(page)) === 61, `${await objCount(page)}`);
+  await page.keyboard.press('5');
+  await page.waitForTimeout(1500);
+  await page.keyboard.press('0');
+  await page.waitForTimeout(2500);
+  const sel = await page.evaluate(() => document.querySelector('.status-notice').textContent);
+  check('v0.4: key 0 returns to the scene camera without complaint', !/no camera/.test(sel), sel);
+  check('v0.4: all forest assets loaded', failed.length === 0, failed.slice(0, 3).join(' | '));
+  check('v0.4: no console/page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // ---------------------------------------------------------------- iPad (landscape + portrait), touch
 for (const [label, vp] of [['ipad-landscape', { width: 1180, height: 820 }], ['ipad-portrait', { width: 820, height: 1180 }]]) {
   const { ctx, page, errors } = await open(vp, { touch: true, dpr: 2 });

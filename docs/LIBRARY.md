@@ -38,6 +38,7 @@ Size is the real-world bounding box in metres (X × Y × Z, Z up) at scale 1. Mo
 | `marble_bust_01` | Marble Bust 01 | decorative | 0.27 × 0.30 × 0.52 | 0 |
 | `fancy_picture_frame_01` | Fancy Picture Frame 01 | decorative, wall decoration | 0.60 × 0.02 × 0.46 | -0.232 |
 | `Lantern_01` | Lantern 01 | props, lighting | 0.12 × 0.10 × 0.29 | 0 |
+| `brass_candleholders` | Brass Candleholders | decorative, lighting | 1.05 × 0.36 × 0.83 | 0 |
 | `jug_01` | Jug 01 | props, decorative | 0.28 × 0.17 × 0.21 | 0 |
 | `chess_set` | Chess Set | decorative, props | 0.55 × 0.55 × 0.11 | 0 |
 | `wine_bottles_01` | Wine Bottles 01 | props, containers | 0.68 × 0.08 × 0.33 | 0 |
@@ -68,6 +69,17 @@ Size is the real-world bounding box in metres (X × Y × Z, Z up) at scale 1. Mo
 | `garden_gnome` | Garden Gnome | decorative, collection: the_shed | 0.26 × 0.21 × 0.60 | 0 |
 | `fire_hydrant` | Fire Hydrant | industrial, structures | 0.88 × 0.32 × 0.80 | 0 |
 | `covered_car` | Covered Car | props, industrial | 1.79 × 4.38 × 1.41 | 0 |
+| `moss_01` | Moss 01 | nature, plants | 0.21 × 0.03 × 0.04 | -0.004 |
+| `dead_tree_trunk_02` | Dead Tree Trunk 02 | nature, plants | 4.05 × 1.06 × 1.05 | -0.328 |
+| `celandine_01` | Celandine 01 | nature, plants | 2.24 × 0.31 × 0.19 | -0.007 |
+| `nettle_plant` | Nettle Plant | nature, plants | 1.08 × 0.10 × 0.22 | -0.006 |
+| `grass_medium_02` | Grass Medium 02 | nature, ground cover | 1.31 × 0.43 × 0.41 | -0.006 |
+| `rock_moss_set_02` | Rock Moss Set 02 | rocks, nature | 8.28 × 3.41 × 1.37 | -0.315 |
+| `tree_stump_02` | Tree Stump 02 | nature, plants | 1.52 × 1.39 × 0.52 | -0.233 |
+| `dry_branches_medium_01` | Dry Branches Medium 01 | props, nature | 1.06 × 1.30 × 0.34 | -0.017 |
+| `root_cluster_01` | Root Cluster 01 | nature, collection: verdant_trail | 4.12 × 2.68 × 1.51 | -0.045 |
+| `pine_sapling_small` | Pine Sapling Small | nature, plants | 2.64 × 0.77 × 1.30 | -0.015 |
+| `fir_sapling` | Fir Sapling | nature, plants | 2.74 × 0.82 × 1.30 | -0.008 |
 
 ## HDRI skies (world lighting)
 
@@ -146,6 +158,7 @@ Size is the real-world bounding box in metres (X × Y × Z, Z up) at scale 1. Mo
 - Rob Tuytel
 - Sergej Majboroda
 - Thomas Paul Mouilleron
+- Tina
 - Ulan Cabanilla
 - Vibrant Nordic
 - Yann Kervran

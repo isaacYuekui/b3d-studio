@@ -656,6 +656,26 @@ export class Viewport {
     return this.pickAt(clientX - rect.left, clientY - rect.top);
   }
 
+  /** Move to the scene camera (if the scene has one). Returns false when there is none. */
+  viewCamera(): boolean {
+    const c = this.store.getState().doc.camera;
+    if (!c) return false;
+    const pos = new Vector3(...toBabylonVec(c.position));
+    const target = new Vector3(...toBabylonVec(c.target));
+    const d = pos.subtract(target);
+    const radius = Math.max(d.length(), 0.6);
+    const alpha = Math.atan2(d.z, d.x);
+    const beta = Math.acos(Math.min(1, Math.max(-1, d.y / radius)));
+    this.animateCamera(alpha, beta, radius, target);
+    return true;
+  }
+
+  /** The current viewpoint in Blender coordinates, for "Set Scene Camera to View". */
+  currentView(): { position: Vec3; target: Vec3 } {
+    const r = (v: Vector3): Vec3 => fromBabylonVec([clean(v.x, 3), clean(v.y, 3), clean(v.z, 3)]);
+    return { position: r(this.camera.position), target: r(this.camera.target) };
+  }
+
   /** Resolves when every library model currently loading has finished (or failed). */
   async settle(): Promise<void> {
     while (this.pending.size) await Promise.all([...this.pending]);

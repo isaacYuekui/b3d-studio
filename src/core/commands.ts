@@ -41,6 +41,7 @@ export type Command =
   | { type: 'setLight'; id: string; light: Partial<LightData> }
   | { type: 'setVisible'; id: string; visible: boolean }
   | { type: 'setWorld'; world: Partial<World> }
+  | { type: 'setCamera'; position: Vec3; target: Vec3 }
   | { type: 'batch'; commands: Command[] }
   | { type: 'replaceScene'; doc: SceneDoc };
 
@@ -233,6 +234,9 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
     case 'setWorld':
       return { doc: { ...doc, world: { ...DEFAULT_WORLD, ...doc.world, ...cmd.world } }, created: [] };
 
+    case 'setCamera':
+      return { doc: { ...doc, camera: { position: [...cmd.position], target: [...cmd.target] } }, created: [] };
+
     case 'batch': {
       // Atomic: any failure throws and the original doc is untouched (we never mutate).
       let next = doc;
@@ -398,6 +402,11 @@ export function validateSceneDoc(v: unknown): SceneDoc {
   }
   const doc: SceneDoc = { objects, order };
   if (v.world !== undefined) doc.world = { ...DEFAULT_WORLD, ...validateWorld(v.world) };
+  if (v.camera !== undefined) {
+    const c = v.camera;
+    if (!isRecord(c) || !isVec3(c.position) || !isVec3(c.target)) fail('camera needs position and target [x,y,z]');
+    doc.camera = { position: [...c.position], target: [...c.target] };
+  }
   return doc;
 }
 
@@ -466,6 +475,9 @@ export function validateCommand(v: unknown, depth = 0): Command {
       return { type: 'setVisible', id: v.id, visible: v.visible };
     case 'setWorld':
       return { type: 'setWorld', world: validateWorld(v.world) };
+    case 'setCamera':
+      if (!isVec3(v.position) || !isVec3(v.target)) fail('setCamera needs position and target as [x,y,z]');
+      return { type: 'setCamera', position: [...v.position], target: [...v.target] };
     case 'batch':
       if (depth > 0) fail('batches cannot be nested');
       if (!Array.isArray(v.commands) || v.commands.length > LIMITS.commands) fail(`batch needs a commands list (max ${LIMITS.commands})`);

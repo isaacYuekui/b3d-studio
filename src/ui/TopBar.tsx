@@ -14,7 +14,7 @@ const MENUS: { label: string; items: MenuItem[] }[] = [
   { label: 'Add', items: ADD_ITEMS },
   {
     label: 'View',
-    items: ['view.shading', '-', 'view.frameSelected', 'view.frameAll', '-', 'view.persp', 'view.front', 'view.back', 'view.right', 'view.left', 'view.top', 'view.bottom'],
+    items: ['view.shading', '-', 'view.camera', 'view.setCamera', '-', 'view.frameSelected', 'view.frameAll', '-', 'view.persp', 'view.front', 'view.back', 'view.right', 'view.left', 'view.top', 'view.bottom'],
   },
 ];
 

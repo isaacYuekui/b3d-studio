@@ -101,12 +101,19 @@ export interface World {
   ao: boolean;
 }
 
+/** The scene's composed viewpoint (Blender's camera view, key 0). Blender coordinates. */
+export interface SceneCamera {
+  position: Vec3;
+  target: Vec3;
+}
+
 export interface SceneDoc {
   /** Object storage keyed by id. */
   objects: Record<string, SceneObject>;
   /** Creation order — gives the Outliner a stable ordering. */
   order: string[];
   world?: World;
+  camera?: SceneCamera;
 }
 
 export const DEFAULT_WORLD: World = {
