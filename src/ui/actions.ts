@@ -7,6 +7,8 @@ import { createDefaultDoc } from '../core/store';
 import { loadLocal, parseProject, saveLocal, serializeProject } from '../core/serialize';
 import type { LightType, ObjectType } from '../core/types';
 import { animationOf, keyFrames } from '../core/animation';
+import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit } from './editing';
+import type { MeshOpId } from './editing';
 
 export interface Ctx {
   store: Store;
@@ -31,6 +33,27 @@ export interface Action {
 }
 
 const hasSel = (c: Ctx) => c.store.getState().selection !== null;
+const editing = (c: Ctx) => c.store.getState().edit !== null;
+const editable = (c: Ctx) => {
+  const st = c.store.getState();
+  return !!st.edit || canEdit(st.selection ? st.doc.objects[st.selection] : null);
+};
+
+const meshOp = (op: MeshOpId, label: string, shortcut?: string): Action => ({
+  id: `mesh.${op}`,
+  label,
+  shortcut,
+  enabled: editing,
+  run: (c) => void runMeshOp(c.store, op),
+});
+
+const subdiv = (n: number): Action => ({
+  id: `mod.subdiv${n}`,
+  label: n ? `Subdivision Level ${n}` : 'Remove Subdivision',
+  shortcut: `${MOD} ${n}`,
+  enabled: editable,
+  run: (c) => setSubdivision(c.store, n),
+});
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 export const MOD = isMac ? '⌘' : 'Ctrl';
 
@@ -171,8 +194,9 @@ export const actions = {
     id: 'edit.duplicate',
     label: 'Duplicate',
     shortcut: '⇧ D',
-    enabled: hasSel,
+    enabled: (c) => hasSel(c) || editing(c),
     run: (c) => {
+      if (editing(c)) return void runMeshOp(c.store, 'duplicate');
       const s = c.store.getState().selection;
       if (s) c.store.dispatch({ type: 'duplicate', ids: [s] });
     },
@@ -181,18 +205,83 @@ export const actions = {
     id: 'edit.delete',
     label: 'Delete',
     shortcut: 'X',
-    enabled: hasSel,
+    enabled: (c) => hasSel(c) || editing(c),
     run: (c) => {
+      if (editing(c)) return void runMeshOp(c.store, 'delete');
       const s = c.store.getState().selection;
       if (s) c.store.dispatch({ type: 'delete', ids: [s] });
     },
   },
-  'edit.deselect': { id: 'edit.deselect', label: 'Select None', shortcut: 'Esc', run: (c) => c.store.select(null) },
+  'edit.deselect': { id: 'edit.deselect', label: 'Select None', shortcut: 'Esc', run: (c) => (editing(c) ? selectCmd(c.store, 'none') : c.store.select(null)) },
+
+  // ---- edit mode (Tab) ----
+  'mode.edit': {
+    id: 'mode.edit',
+    label: 'Toggle Edit Mode',
+    shortcut: 'Tab',
+    enabled: editable,
+    run: (c) => toggleEdit(c.store),
+  },
+  'mode.enterEdit': { id: 'mode.enterEdit', label: 'Edit Mode', enabled: editable, run: (c) => void (!editing(c) && enterEdit(c.store)) },
+  'mode.object': { id: 'mode.object', label: 'Object Mode', run: (c) => exitEdit(c.store) },
+  'select.vert': { id: 'select.vert', label: 'Vertex Select', shortcut: '1', enabled: editing, run: (c) => setSelectMode(c.store, 'vert') },
+  'select.edge': { id: 'select.edge', label: 'Edge Select', shortcut: '2', enabled: editing, run: (c) => setSelectMode(c.store, 'edge') },
+  'select.face': { id: 'select.face', label: 'Face Select', shortcut: '3', enabled: editing, run: (c) => setSelectMode(c.store, 'face') },
+  'select.all': { id: 'select.all', label: 'Select All', shortcut: 'A', enabled: editing, run: (c) => selectCmd(c.store, 'all') },
+  'select.none': { id: 'select.none', label: 'Select None', shortcut: '⌥ A', enabled: editing, run: (c) => selectCmd(c.store, 'none') },
+  'select.invert': { id: 'select.invert', label: 'Invert Selection', shortcut: `${MOD} I`, enabled: editing, run: (c) => selectCmd(c.store, 'invert') },
+  'select.linked': { id: 'select.linked', label: 'Select Linked', shortcut: `${MOD} L`, enabled: editing, run: (c) => selectCmd(c.store, 'linked') },
+  'select.loop': { id: 'select.loop', label: 'Select Edge Loop', shortcut: '⌥ click', enabled: editing, run: (c) => selectCmd(c.store, 'loop') },
+  'select.box': { id: 'select.box', label: 'Box Select', shortcut: 'B', enabled: editing, run: (c) => c.store.setBoxMode(!c.store.getState().boxMode) },
+  'view.xray': { id: 'view.xray', label: 'Toggle X-Ray', shortcut: '⌥ Z', run: (c) => c.store.setXray(!c.store.getState().xray) },
+  'mesh.extrude': meshOp('extrude', 'Extrude', 'E'),
+  'mesh.inset': meshOp('inset', 'Inset Faces', 'I'),
+  'mesh.bevel': meshOp('bevel', 'Bevel', `${MOD} B`),
+  'mesh.loopcut': meshOp('loopcut', 'Loop Cut', `${MOD} R`),
+  'mesh.subdivide': meshOp('subdivide', 'Subdivide'),
+  'mesh.merge': meshOp('merge', 'Merge at Center', 'M'),
+  'mesh.mergeDistance': meshOp('mergeDistance', 'Merge by Distance'),
+  'mesh.fill': meshOp('fill', 'Fill (Make Face)', 'F'),
+  'mesh.flip': meshOp('flip', 'Flip Normals', '⌥ N'),
+  'mesh.recalc': meshOp('recalc', 'Recalculate Normals', '⇧ N'),
+  'mesh.smooth': { id: 'mesh.smooth', label: 'Shade Smooth', enabled: editable, run: (c) => setSmooth(c.store, true) },
+  'mesh.flat': { id: 'mesh.flat', label: 'Shade Flat', enabled: editable, run: (c) => setSmooth(c.store, false) },
+  'mod.subdiv0': subdiv(0),
+  'mod.subdiv1': subdiv(1),
+  'mod.subdiv2': subdiv(2),
+  'mod.subdiv3': subdiv(3),
+  'mod.mirrorX': {
+    id: 'mod.mirrorX',
+    label: 'Mirror X (symmetry)',
+    enabled: editable,
+    run: (c) => {
+      const st = c.store.getState();
+      const id = st.edit?.id ?? st.selection;
+      if (!id) return;
+      const on = !st.doc.objects[id].modifiers?.mirror?.x;
+      c.store.dispatch({ type: 'setModifiers', id, modifiers: { mirror: on ? { x: true, y: false, z: false, clip: true } : null } }, { select: false });
+      c.store.notify(on ? 'Mirror X on: edit one side, the other follows' : 'Mirror removed');
+    },
+  },
+  'mod.apply': {
+    id: 'mod.apply',
+    label: 'Apply Modifiers',
+    enabled: (c) => {
+      const st = c.store.getState();
+      const id = st.edit?.id ?? st.selection;
+      return !!id && !!st.doc.objects[id]?.modifiers;
+    },
+    run: (c) => {
+      const st = c.store.getState();
+      const id = st.edit?.id ?? st.selection;
+      if (id) c.store.dispatch({ type: 'applyModifiers', id }, { select: false });
+    },
+  },
   'edit.hide': {
     id: 'edit.hide',
     label: 'Hide Selected',
     shortcut: 'H',
-    enabled: hasSel,
+    enabled: (c) => hasSel(c) && !editing(c),
     run: (c) => {
       const s = c.store.getState().selection;
       if (s) c.store.dispatch({ type: 'setVisible', id: s, visible: false });
@@ -293,9 +382,9 @@ export const actions = {
   },
 
   'view.front': view('front', 'Front', '1'),
-  'view.back': view('back', 'Back', `${MOD} 1`),
+  'view.back': view('back', 'Back', `${MOD} Numpad 1`),
   'view.right': view('right', 'Right', '3'),
-  'view.left': view('left', 'Left', `${MOD} 3`),
+  'view.left': view('left', 'Left', `${MOD} Numpad 3`),
   'view.top': view('top', 'Top', '7'),
   'view.bottom': view('bottom', 'Bottom', `${MOD} 7`),
   'view.persp': view('persp', 'Perspective (default)', '5'),
@@ -416,10 +505,41 @@ export function runAction(c: Ctx, id: ActionId) {
 }
 
 /** Map a keyboard event to an action id (null if unbound). */
-export function shortcutFor(e: KeyboardEvent): ActionId | null {
+export function shortcutFor(e: KeyboardEvent, editMode = false): ActionId | null {
   const mod = e.metaKey || e.ctrlKey;
   const k = e.key.toLowerCase();
   const code = e.code;
+  if (code === 'Tab' && !mod && !e.altKey) return 'mode.edit';
+  if (mod && !e.shiftKey && !e.altKey && /^Digit[0-3]$/.test(code)) return `mod.subdiv${code.slice(5)}` as ActionId;
+  if (e.altKey && !mod && code === 'KeyZ') return 'view.xray';
+  if (editMode) {
+    if (mod && !e.shiftKey) {
+      if (k === 'b') return 'mesh.bevel';
+      if (k === 'r') return 'mesh.loopcut';
+      if (k === 'i') return 'select.invert';
+      if (k === 'l') return 'select.linked';
+    }
+    if (e.altKey && !mod) {
+      if (code === 'KeyA') return 'select.none';
+      if (code === 'KeyN') return 'mesh.flip';
+    }
+    if (e.shiftKey && !mod && !e.altKey && code === 'KeyN') return 'mesh.recalc';
+    if (!mod && !e.altKey && !e.shiftKey) {
+      switch (code) {
+        case 'Digit1': return 'select.vert';
+        case 'Digit2': return 'select.edge';
+        case 'Digit3': return 'select.face';
+        case 'KeyA': return 'select.all';
+        case 'KeyE': return 'mesh.extrude';
+        case 'KeyI': return 'mesh.inset';
+        case 'KeyM': return 'mesh.merge';
+        case 'KeyF': return 'mesh.fill';
+        case 'KeyB': return 'select.box';
+        case 'KeyL': return 'select.linked';
+        case 'KeyH': return null;
+      }
+    }
+  }
   if (mod) {
     if (k === 'z') return e.shiftKey ? 'edit.redo' : 'edit.undo';
     if (k === 'y') return 'edit.redo';
@@ -429,8 +549,8 @@ export function shortcutFor(e: KeyboardEvent): ActionId | null {
     if (k === 'i') return e.shiftKey ? 'file.importModel' : 'file.import';
     if (k === 'r') return 'file.script';
     if (code === 'F12') return 'file.video';
-    if (code === 'Digit1' || code === 'Numpad1') return 'view.back';
-    if (code === 'Digit3' || code === 'Numpad3') return 'view.left';
+    if (code === 'Numpad1') return 'view.back';
+    if (code === 'Numpad3') return 'view.left';
     if (code === 'Digit7' || code === 'Numpad7') return 'view.bottom';
     if (e.altKey && (code === 'Digit0' || code === 'Numpad0')) return 'view.setCamera';
     return null;

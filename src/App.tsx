@@ -100,7 +100,7 @@ function StatusBar() {
   return (
     <footer className="statusbar" aria-live="polite">
       <span className="status-notice">{notice ?? `Tool: ${tool[0].toUpperCase()}${tool.slice(1)}`}</span>
-      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v0.6</span>
+      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v0.7</span>
     </footer>
   );
 }
@@ -198,7 +198,7 @@ export function App() {
         setHelp(false);
         return;
       }
-      const id = shortcutFor(e);
+      const id = shortcutFor(e, !!store.getState().edit);
       if (!id) return;
       e.preventDefault();
       runAction(ctx, id);

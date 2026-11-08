@@ -513,6 +513,166 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await fresh.ctx.close();
 }
 
+// ---------------------------------------------------------------- edit mode / modelling (v0.7)
+// Screen position (client px) of a point given in Blender local coordinates of the edited object.
+const screenOf = (page, p) =>
+  page.evaluate((p) => {
+    const vp = window.__b3d.viewport();
+    const st = window.__b3d.store.getState();
+    const id = st.edit?.id ?? st.selection;
+    const e = vp.entries.get(id);
+    const V = vp.camera.position.constructor;
+    const eng = vp.engine;
+    const s = V.Project(new V(p[0], p[2], p[1]), e.node.computeWorldMatrix(true), vp.scene.getTransformMatrix(), vp.camera.viewport.toGlobal(eng.getRenderWidth(), eng.getRenderHeight()));
+    const r = document.querySelector('canvas').getBoundingClientRect();
+    const k = eng.getHardwareScalingLevel();
+    return { x: r.left + s.x * k, y: r.top + s.y * k };
+  }, p);
+const meshInfo = (page) =>
+  page.evaluate(() => {
+    const st = window.__b3d.store.getState();
+    const o = st.doc.objects[st.edit?.id ?? st.selection];
+    return { type: o?.type, nv: o?.mesh?.vertices.length, nf: o?.mesh?.faces.length, edit: st.edit && { mode: st.edit.mode, v: st.edit.sel.verts.length, f: st.edit.sel.faces.length, e: st.edit.sel.edges.length }, mods: o?.modifiers ?? null, smooth: o?.mesh?.smooth, maxZ: o?.mesh ? Math.max(...o.mesh.vertices.map((v) => v[2])) : null };
+  });
+const setNumber = async (page, scope, label, value) => {
+  await page.click(`${scope} [role="spinbutton"][aria-label="${label}"]`);
+  await page.fill(`${scope} .num-input`, String(value));
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(250);
+};
+
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.click('[data-testid="mode-toggle"]');
+  await page.waitForTimeout(300);
+  let m = await meshInfo(page);
+  check('v0.7: Edit Mode turns the cube into an editable mesh, all selected', m.type === 'mesh' && m.nv === 8 && m.edit?.v === 8, JSON.stringify(m));
+  check('v0.7: Modeling workspace tab is active', (await page.getAttribute('[data-ws="modeling"]', 'aria-selected')) === 'true');
+  check('v0.7: Mesh and Select menus replace Add/Object', (await page.$$('[data-menu="Mesh"], [data-menu="Select"]')).length === 2 && !(await page.$('[data-menu="Add"]')));
+  await page.click('[data-select-mode="face"]');
+  const top = await screenOf(page, [0.7, -0.7, 1]);
+  await page.mouse.click(top.x, top.y);
+  await page.waitForTimeout(300);
+  m = await meshInfo(page);
+  check('v0.7: clicking the top face selects just that face', m.edit?.mode === 'face' && m.edit.f === 1 && m.edit.v === 4, JSON.stringify(m.edit));
+  await page.screenshot({ path: `${shots}/edit-face-selected.png` });
+  await page.click('[data-edit-tool="mesh.extrude"]');
+  await page.waitForTimeout(400);
+  m = await meshInfo(page);
+  check('v0.7: Extrude adds a block on top (10 faces)', m.nf === 10 && m.maxZ > 1.5, JSON.stringify(m));
+  check('v0.7: Adjust Last Operation panel appears', await page.isVisible('[data-testid="lastop"]'));
+  await setNumber(page, '[data-testid="lastop"]', 'Offset', 2);
+  m = await meshInfo(page);
+  check('v0.7: changing Offset re-runs the extrude (top at z = 3)', Math.abs(m.maxZ - 3) < 1e-6 && m.nf === 10, String(m.maxZ));
+  await page.keyboard.press('KeyI');
+  await page.waitForTimeout(300);
+  m = await meshInfo(page);
+  check('v0.7: Inset (I) on the new top face', m.nf === 14 && m.edit.f === 1, JSON.stringify(m));
+  await page.keyboard.press('Control+KeyZ');
+  await page.keyboard.press('Control+KeyZ');
+  await page.waitForTimeout(300);
+  m = await meshInfo(page);
+  check('v0.7: two undos return to the plain cube, still in Edit Mode with the face selected', m.nf === 6 && m.edit?.f === 1, JSON.stringify(m));
+  // Move the selected face with the gizmo's median field (Properties).
+  await setNumber(page, '[data-testid="properties"]', 'Z', 1.5);
+  m = await meshInfo(page);
+  check('v0.7: typing the median Z moves the selected face', Math.abs(m.maxZ - 1.5) < 1e-6, String(m.maxZ));
+  await page.keyboard.press('Control+KeyZ');
+  // Edges: select all, bevel, more segments.
+  await page.keyboard.press('Digit2');
+  await page.keyboard.press('KeyA');
+  await page.keyboard.press('Control+KeyB');
+  await page.waitForTimeout(400);
+  m = await meshInfo(page);
+  check('v0.7: Bevel all 12 edges (26 faces)', m.nf === 26, JSON.stringify(m));
+  await setNumber(page, '[data-testid="lastop"]', 'Segments', 3);
+  m = await meshInfo(page);
+  check('v0.7: Bevel segments 3 rounds the edges', m.nf > 26, String(m.nf));
+  await page.screenshot({ path: `${shots}/edit-bevel.png` });
+  await page.keyboard.press('Control+KeyZ');
+  await page.waitForTimeout(200);
+  // Loop cut through a vertical edge: select one edge via the Select menu flow (box select on a side edge is fiddly), use store.
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const e = s.getState().edit;
+    s.setEdit({ ...e, mode: 'edge', sel: { verts: [0, 4], edges: ['0_4'], faces: [] } });
+  });
+  await page.keyboard.press('Control+KeyR');
+  await page.waitForTimeout(300);
+  m = await meshInfo(page);
+  check('v0.7: Loop Cut (Ctrl R) adds a ring of 4 edges', m.nf === 10 && m.edit?.e === 4, JSON.stringify(m));
+  await page.keyboard.press('Control+KeyZ');
+  // Box select everything in vertex mode.
+  await page.keyboard.press('Digit1');
+  await page.keyboard.press('Alt+KeyA');
+  await page.click('[data-testid="box-select"]');
+  const r = await page.$eval('canvas', (c) => c.getBoundingClientRect().toJSON());
+  await page.mouse.move(r.left + 120, r.top + 80);
+  await page.mouse.down();
+  await page.mouse.move(r.right - 60, r.bottom - 40, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  m = await meshInfo(page);
+  check('v0.7: Box select picks the visible vertices (7 of 8 without X-ray)', m.edit?.v === 7, JSON.stringify(m.edit));
+  await page.click('[data-testid="xray"]');
+  await page.click('[data-testid="box-select"]');
+  await page.mouse.move(r.left + 120, r.top + 80);
+  await page.mouse.down();
+  await page.mouse.move(r.right - 60, r.bottom - 40, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  m = await meshInfo(page);
+  check('v0.7: with X-ray, box select reaches the hidden vertex too', m.edit?.v === 8, JSON.stringify(m.edit));
+  await page.click('[data-testid="xray"]');
+  // Back to object mode; subdivision + mirror from Properties.
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(200);
+  check('v0.7: Tab returns to Object Mode', !(await meshInfo(page)).edit);
+  await page.click('[data-subdiv="2"]');
+  await page.click('[data-mirror="x"]');
+  await page.waitForTimeout(400);
+  m = await meshInfo(page);
+  const rendered = await page.evaluate(() => window.__b3d.viewport().entries.get(window.__b3d.store.getState().selection).node.getTotalIndices() / 3);
+  check('v0.7: Subdivision 2 + Mirror X modifiers, shaded smooth, cage untouched', m.mods?.subdivision?.levels === 2 && m.mods?.mirror?.x === true && m.smooth && m.nf === 6 && rendered > 100, `${JSON.stringify(m.mods)} · ${rendered} triangles`);
+  await page.screenshot({ path: `${shots}/edit-subdiv.png` });
+  await page.waitForTimeout(1200); // autosave is debounced
+  await page.reload();
+  await page.waitForSelector('[data-testid="viewport-canvas"]');
+  await page.waitForTimeout(2000);
+  m = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; const o = d.objects[d.order[0]]; return { type: o.type, mods: o.modifiers }; });
+  check('v0.7: edited mesh and modifiers survive a reload', m.type === 'mesh' && m.mods?.subdivision?.levels === 2);
+  check('v0.7: no console/page errors (edit mode)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// iPad: edit mode by touch.
+{
+  const { ctx, page, errors } = await open({ width: 820, height: 1180 }, { touch: true, dpr: 2 });
+  await page.tap('[data-testid="mode-toggle"]');
+  await page.waitForTimeout(300);
+  await page.tap('[data-select-mode="face"]');
+  const top = await screenOf(page, [0.7, -0.7, 1]);
+  await page.touchscreen.tap(top.x, top.y);
+  await page.waitForTimeout(300);
+  let m = await meshInfo(page);
+  check('ipad: tap selects a face in Edit Mode', m.edit?.f === 1, JSON.stringify(m.edit));
+  await page.tap('[data-testid="add-select"]');
+  const side = await screenOf(page, [0.5, -1, 0.3]);
+  await page.touchscreen.tap(side.x, side.y);
+  await page.waitForTimeout(300);
+  m = await meshInfo(page);
+  check('ipad: "add to selection" toggle lets a second tap add a face', m.edit?.f === 2, JSON.stringify(m.edit));
+  await page.tap('[data-edit-tool="mesh.extrude"]');
+  await page.waitForTimeout(300);
+  m = await meshInfo(page);
+  check('ipad: Extrude from the toolbar', m.nf === 6 + 2 + 6 - 1 || m.nf > 6, JSON.stringify(m));
+  const noHScroll = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+  check('ipad: edit header fits without horizontal overflow', noHScroll);
+  await page.screenshot({ path: `${shots}/ipad-edit.png` });
+  check('ipad: no errors (edit mode)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // ---------------------------------------------------------------- iPad (landscape + portrait), touch
 for (const [label, vp] of [['ipad-landscape', { width: 1180, height: 820 }], ['ipad-portrait', { width: 820, height: 1180 }]]) {
   const { ctx, page, errors } = await open(vp, { touch: true, dpr: 2 });

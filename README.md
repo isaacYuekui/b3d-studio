@@ -5,6 +5,16 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Modelling: Edit Mode (v0.7)
+
+- `Tab` (or the Edit Mode button / Modeling tab) edits the selected shape as a polygon mesh with Blender's topology (8-vertex cube, 32 × 16 UV sphere…)
+- Vertex / edge / face select (`1` `2` `3`), tap or click to select, Shift or the ⊞ button to add, `⌥`-click for edge loops, `B` box select, `A` all, `⌥A` none, `Ctrl/⌘ I` invert, `L` linked, `⌥Z` X-ray
+- Move / rotate / scale the selection with the gizmo, or type its median point in Properties
+- Extrude `E`, Inset `I`, Bevel `Ctrl/⌘ B` (with segments for rounded edges), Loop Cut `Ctrl/⌘ R`, Subdivide, Merge `M`, Merge by Distance, Fill `F`, Delete `X`, Duplicate `⇧D`, Recalculate / Flip Normals (`⇧N` / `⌥N`)
+- Adjust Last Operation panel: change the extrude distance, bevel width and segments, number of cuts… after the fact (still one undo step)
+- Modifiers: Subdivision Surface (`Ctrl/⌘ 1…3`) and Mirror X/Y/Z with clipping, non-destructive, with Apply
+- Shade Smooth / Flat; undo restores your selection too
+
 ## Animation, video and FilmCraft (v0.6)
 
 - Keyframes: select an object, press `I` (or ◆ Key on the timeline); move to another frame, change it, press `I` again. Once an object is animated, edits at a new frame add a key automatically. `⌥I` deletes a key, `↑ ↓` jump between keys

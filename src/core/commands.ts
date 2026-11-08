@@ -10,7 +10,9 @@
 import { BACKGROUNDS, DEFAULT_LIGHT, DEFAULT_MATERIAL, DEFAULT_WORLD, IDENTITY, LIGHT_TYPES, OBJECT_TYPES, PRIMITIVES } from './types';
 import { DEFAULT_ANIMATION, EASINGS, animationOf, transformAt, upsertKey } from './animation';
 import type { Animation, Easing } from './animation';
-import type { Background, LightData, LightType, Material, MeshData, ObjectType, PrimitiveParams, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
+import type { Background, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
+import { primitiveMesh } from './mesh/primitives';
+import { applyModifiers } from './mesh/modifiers';
 
 export interface AddCommand {
   type: 'add';
@@ -42,6 +44,14 @@ export type Command =
   | { type: 'setMaterial'; id: string; material: Partial<Material> }
   | { type: 'setLight'; id: string; light: Partial<LightData> }
   | { type: 'setVisible'; id: string; visible: boolean }
+  /** Replace an object's geometry. A primitive becomes an editable 'mesh' object. */
+  | { type: 'setMesh'; id: string; mesh: MeshData }
+  /** Turn a primitive into an editable polygon mesh (Blender topology). */
+  | { type: 'convertToMesh'; id: string }
+  /** Set modifiers (merged per modifier; null removes one). Mesh objects only; primitives are converted. */
+  | { type: 'setModifiers'; id: string; modifiers: { mirror?: Modifiers['mirror'] | null; subdivision?: Modifiers['subdivision'] | null } }
+  /** Bake the modifiers into the mesh. */
+  | { type: 'applyModifiers'; id: string }
   | { type: 'setWorld'; world: Partial<World> }
   | { type: 'setCamera'; position: Vec3; target: Vec3 }
   | { type: 'setKeyframe'; id: string; frame: number; transform?: Transform; easing?: Easing }
@@ -115,6 +125,15 @@ function withObject(doc: SceneDoc, obj: SceneObject): SceneDoc {
 
 function withAnimation(doc: SceneDoc, animation: Animation): SceneDoc {
   return { ...doc, animation };
+}
+
+/** A mesh-object version of o: primitives are converted to their polygon mesh. */
+function asMesh(o: SceneObject): SceneObject {
+  if (o.type === 'mesh') return o;
+  if (!(PRIMITIVES as readonly string[]).includes(o.type)) throw new CommandError(`${o.name} cannot be edited as a mesh`);
+  const next: SceneObject = { ...o, type: 'mesh', mesh: primitiveMesh(o.type as PrimitiveType, o.params) };
+  delete next.params;
+  return next;
 }
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -254,6 +273,38 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
     case 'setVisible': {
       const o = requireObj(doc, cmd.id);
       return { doc: withObject(doc, { ...o, visible: cmd.visible }), created: [] };
+    }
+
+    case 'setMesh': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      return { doc: withObject(doc, { ...o, mesh: clone(cmd.mesh) }), created: [] };
+    }
+
+    case 'convertToMesh': {
+      const o = requireObj(doc, cmd.id);
+      if (o.type === 'mesh') return { doc, created: [] };
+      return { doc: withObject(doc, asMesh(o)), created: [] };
+    }
+
+    case 'setModifiers': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      const mods: Modifiers = { ...o.modifiers };
+      for (const k of ['mirror', 'subdivision'] as const) {
+        const v = cmd.modifiers[k];
+        if (v === null) delete mods[k];
+        else if (v !== undefined) (mods as Record<string, unknown>)[k] = { ...(mods[k] ?? {}), ...v };
+      }
+      const next: SceneObject = { ...o, modifiers: mods };
+      if (!Object.keys(mods).length) delete next.modifiers;
+      return { doc: withObject(doc, next), created: [] };
+    }
+
+    case 'applyModifiers': {
+      const o = requireObj(doc, cmd.id);
+      if (o.type !== 'mesh' || !o.modifiers) return { doc, created: [] };
+      const next: SceneObject = { ...o, mesh: applyModifiers(o.mesh!, o.modifiers) };
+      delete next.modifiers;
+      return { doc: withObject(doc, next), created: [] };
     }
 
     case 'setWorld':
@@ -413,10 +464,29 @@ export function validateMeshData(v: unknown): MeshData {
   const n = v.vertices.length;
   const vertices = v.vertices.map((p, i) => (isVec3(p) ? ([p[0], p[1], p[2]] as Vec3) : fail(`mesh vertex ${i} must be [x,y,z]`)));
   const faces = v.faces.map((f, i) => {
-    if (!Array.isArray(f) || f.length < 3 || f.length > 64) fail(`mesh face ${i} must list 3..64 vertex indices`);
+    if (!Array.isArray(f) || f.length < 3 || f.length > 1024) fail(`mesh face ${i} must list 3..1024 vertex indices`);
     return f.map((idx) => (Number.isInteger(idx) && idx >= 0 && idx < n ? (idx as number) : fail(`mesh face ${i} has invalid index ${String(idx)}`)));
   });
   return { vertices, faces, smooth: v.smooth === true };
+}
+
+export function validateModifiers(v: unknown): Modifiers {
+  if (!isRecord(v)) fail('modifiers must be an object');
+  const out: Modifiers = {};
+  if (v.mirror !== undefined) {
+    const m = v.mirror;
+    if (!isRecord(m)) fail('modifiers.mirror must be an object');
+    const b = (k: string) => (m[k] === undefined ? false : typeof m[k] === 'boolean' ? (m[k] as boolean) : fail(`modifiers.mirror.${k} must be true/false`));
+    out.mirror = { x: b('x'), y: b('y'), z: b('z') };
+    if (m.clip !== undefined) out.mirror.clip = b('clip');
+    if (m.merge !== undefined) out.mirror.merge = inRange(m.merge, 0, 1) ? (m.merge as number) : fail('modifiers.mirror.merge must be 0..1');
+  }
+  if (v.subdivision !== undefined) {
+    const s = v.subdivision;
+    if (!isRecord(s) || !(Number.isInteger(s.levels) && inRange(s.levels, 0, 4))) fail('modifiers.subdivision.levels must be 0..4');
+    out.subdivision = { levels: s.levels as number };
+  }
+  return out;
 }
 
 /** Upgrade a v1 object (single `color` field) to the current shape before validation. */
@@ -449,6 +519,7 @@ export function validateSceneObject(raw: unknown): SceneObject {
   };
   if (v.params !== undefined) obj.params = validateParams(v.params);
   if (obj.type === 'mesh') obj.mesh = validateMeshData(v.mesh);
+  if (obj.type === 'mesh' && v.modifiers !== undefined) obj.modifiers = validateModifiers(v.modifiers);
   if (obj.type === 'light') obj.light = { ...DEFAULT_LIGHT.point, ...validateLight(v.light, false) } as LightData;
   if (obj.type === 'model') obj.asset = typeof v.asset === 'string' && ASSET_ID.test(v.asset) ? v.asset : fail(`object ${v.id}: asset invalid`);
   return obj;
@@ -584,6 +655,25 @@ export function validateCommand(v: unknown, depth = 0): Command {
     case 'setVisible':
       if (!isId(v.id) || typeof v.visible !== 'boolean') fail('setVisible needs id and boolean');
       return { type: 'setVisible', id: v.id, visible: v.visible };
+    case 'setMesh':
+      if (!isId(v.id)) fail('setMesh needs id');
+      return { type: 'setMesh', id: v.id, mesh: validateMeshData(v.mesh) };
+    case 'convertToMesh':
+      if (!isId(v.id)) fail('convertToMesh needs id');
+      return { type: 'convertToMesh', id: v.id };
+    case 'setModifiers': {
+      if (!isId(v.id) || !isRecord(v.modifiers)) fail('setModifiers needs id and modifiers');
+      const m = v.modifiers;
+      const out: { mirror?: Modifiers['mirror'] | null; subdivision?: Modifiers['subdivision'] | null } = {};
+      if (m.mirror === null) out.mirror = null;
+      else if (m.mirror !== undefined) out.mirror = validateModifiers({ mirror: m.mirror }).mirror;
+      if (m.subdivision === null) out.subdivision = null;
+      else if (m.subdivision !== undefined) out.subdivision = validateModifiers({ subdivision: m.subdivision }).subdivision;
+      return { type: 'setModifiers', id: v.id, modifiers: out };
+    }
+    case 'applyModifiers':
+      if (!isId(v.id)) fail('applyModifiers needs id');
+      return { type: 'applyModifiers', id: v.id };
     case 'setWorld':
       return { type: 'setWorld', world: validateWorld(v.world) };
     case 'setCamera':

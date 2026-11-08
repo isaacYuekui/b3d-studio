@@ -12,7 +12,7 @@ import { PointLight } from '@babylonjs/core/Lights/pointLight';
 import { SpotLight } from '@babylonjs/core/Lights/spotLight';
 import type { Light } from '@babylonjs/core/Lights/light';
 import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
-import { Vector3, Quaternion } from '@babylonjs/core/Maths/math.vector';
+import { Vector3, Quaternion, Matrix } from '@babylonjs/core/Maths/math.vector';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
@@ -53,6 +53,12 @@ class MissingModel extends Error {}
 import { babylonQuatToEulerDeg, clean, eulerDegToBabylonQuat, fromBabylonVec, toBabylonVec } from './coords';
 import { buildVertexData } from './geometry';
 import { subtree } from '../core/commands';
+import { EditOverlay } from './EditOverlay';
+import { applyModifiers } from '../core/mesh/modifiers';
+import { transformVerts } from '../core/mesh/ops';
+import { flush, pickElement, selectLoop } from '../core/mesh/select';
+import type { MeshSelection } from '../core/mesh/select';
+import type { MeshData } from '../core/types';
 
 export type ViewName = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom' | 'persp';
 
@@ -105,6 +111,10 @@ export class Viewport {
   private loadersReady: Promise<unknown> | null = null;
   private pending = new Set<Promise<void>>();
   private helperMat: StandardMaterial;
+  private overlay: EditOverlay;
+  private editPivot: TransformNode;
+  private editDrag: { id: string; mesh: MeshData; verts: number[]; startInv: Matrix; world: Matrix; worldInv: Matrix } | null = null;
+  private lastEditKey = '';
 
   constructor(private canvas: HTMLCanvasElement, private store: Store) {
     this.engine = new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: true, powerPreference: 'high-performance', adaptToDeviceRatio: false });
@@ -151,6 +161,9 @@ export class Viewport {
     this.helperMat.emissiveColor = new Color3(0.05, 0.05, 0.05);
 
     this.buildGrid();
+    this.overlay = new EditOverlay(scene);
+    this.editPivot = new TransformNode('edit-pivot', scene);
+    this.editPivot.rotationQuaternion = Quaternion.Identity();
 
     // Gizmos
     const gm = (this.gizmos = new GizmoManager(scene, 1.6));
@@ -161,10 +174,18 @@ export class Viewport {
     if (g.rotationGizmo) g.rotationGizmo.updateGizmoRotationToMatchAttachedMesh = false;
     for (const gizmo of [g.positionGizmo, g.rotationGizmo, g.scaleGizmo]) {
       if (!gizmo) continue;
-      gizmo.onDragStartObservable.add(() => (this.dragging = true));
+      gizmo.onDragStartObservable.add(() => {
+        this.dragging = true;
+        this.startEditDrag();
+      });
+      gizmo.onDragObservable.add(() => this.stepEditDrag());
       gizmo.onDragEndObservable.add(() => {
         this.dragging = false;
-        this.commitGizmo();
+        if (this.editDrag) {
+          this.editDrag = null;
+          this.store.commitPreview();
+          this.placePivot(this.store.getState());
+        } else this.commitGizmo();
       });
     }
     gm.positionGizmoEnabled = gm.rotationGizmoEnabled = gm.scaleGizmoEnabled = false;
@@ -178,8 +199,10 @@ export class Viewport {
     // Tap to select
     scene.onPointerObservable.add((info) => {
       if (info.type !== PointerEventTypes.POINTERTAP) return;
-      if ((info.event as PointerEvent).button !== 0) return;
-      this.store.select(this.pickAt(scene.pointerX, scene.pointerY));
+      const ev = info.event as PointerEvent;
+      if (ev.button !== 0) return;
+      if (this.store.getState().edit) this.editTap(scene.pointerX, scene.pointerY, ev.shiftKey || this.store.getState().addSelect, ev.altKey, ev.pointerType !== 'mouse');
+      else this.store.select(this.pickAt(scene.pointerX, scene.pointerY));
     });
 
     scene.onBeforeRenderObservable.add(() => this.stepTween());
@@ -253,11 +276,150 @@ export class Viewport {
       this.applyShading();
       this.applyWorld(world, state.shading === 'rendered');
     }
-    if (state.selection !== this.lastSel || state.tool !== this.lastTool) {
+    const editKey = state.edit ? `${state.edit.id}|${state.edit.mode}|${state.xray}` : '';
+    const editChanged = editKey !== this.lastEditKey || state.edit !== this.lastEdit || (state.edit && docChanged);
+    if (editChanged) this.syncEdit(state, editKey !== this.lastEditKey);
+    if (state.selection !== this.lastSel || state.tool !== this.lastTool || editChanged) {
       this.syncSelection(state.selection, state.tool);
       this.lastSel = state.selection;
       this.lastTool = state.tool;
     }
+    this.lastEditKey = editKey;
+    this.lastEdit = state.edit;
+  }
+
+  private lastEdit: AppState['edit'] = null;
+  private editedId: string | null = null;
+
+  /** Edit-mode overlay, see-through display and the pivot the gizmo drives. */
+  private syncEdit(state: AppState, modeChanged: boolean) {
+    const ed = state.edit;
+    // Restore the previously edited object's look.
+    if (this.editedId && (!ed || ed.id !== this.editedId || modeChanged)) {
+      const prev = this.entries.get(this.editedId)?.material;
+      if (prev) {
+        prev.zOffset = 0;
+        const m = state.doc.objects[this.editedId]?.material;
+        prev.alpha = m?.alpha ?? 1;
+        prev.transparencyMode = (m?.alpha ?? 1) < 1 ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
+      }
+      this.editedId = null;
+    }
+    const o = ed ? state.doc.objects[ed.id] : null;
+    const e = ed ? this.entries.get(ed.id) : undefined;
+    if (!ed || !o?.mesh || !e) {
+      this.overlay.clear();
+      return;
+    }
+    this.editedId = ed.id;
+    if (e.material) {
+      // Push the surface back a little so wires and dots on it win the depth test.
+      e.material.zOffset = 1;
+      if (state.xray) {
+        e.material.alpha = 0.35;
+        e.material.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
+      } else {
+        e.material.alpha = o.material.alpha;
+        e.material.transparencyMode = o.material.alpha < 1 ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
+      }
+    }
+    if (this.editDrag) {
+      // While dragging only the geometry changes; redraw the wires without touching the pivot.
+      this.overlay.update(e.node, o.mesh, ed.mode, ed.sel, state.xray, this.pointPx());
+      return;
+    }
+    this.overlay.update(e.node, o.mesh, ed.mode, ed.sel, state.xray, this.pointPx());
+    this.placePivot(state);
+  }
+
+  private pointPx() {
+    return Math.round(7 / this.engine.getHardwareScalingLevel());
+  }
+
+  /** Put the gizmo pivot at the selection's median, in world space. */
+  private placePivot(state: AppState) {
+    const ed = state.edit;
+    const o = ed ? state.doc.objects[ed.id] : null;
+    const e = ed ? this.entries.get(ed.id) : undefined;
+    if (!ed || !o?.mesh || !e || !ed.sel.verts.length) return;
+    let x = 0, y = 0, z = 0;
+    for (const v of ed.sel.verts) {
+      const p = o.mesh.vertices[v];
+      x += p[0];
+      y += p[1];
+      z += p[2];
+    }
+    const n = ed.sel.verts.length;
+    const local = new Vector3(...toBabylonVec([x / n, y / n, z / n]));
+    const world = Vector3.TransformCoordinates(local, e.node.computeWorldMatrix(true));
+    this.editPivot.position.copyFrom(world);
+    this.editPivot.rotationQuaternion = Quaternion.Identity();
+    this.editPivot.scaling.setAll(1);
+    this.editPivot.computeWorldMatrix(true);
+  }
+
+  private startEditDrag() {
+    const st = this.store.getState();
+    const ed = st.edit;
+    const o = ed ? st.doc.objects[ed.id] : null;
+    const e = ed ? this.entries.get(ed.id) : undefined;
+    if (!ed || !o?.mesh || !e || !ed.sel.verts.length) return;
+    const world = e.node.computeWorldMatrix(true).clone();
+    this.editDrag = { id: ed.id, mesh: o.mesh, verts: [...ed.sel.verts], startInv: this.editPivot.computeWorldMatrix(true).clone().invert(), world, worldInv: world.clone().invert() };
+  }
+
+  private stepEditDrag() {
+    const d = this.editDrag;
+    if (!d) return;
+    const cur = this.editPivot.computeWorldMatrix(true);
+    // local → world → undo pivot start → apply pivot now → back to local
+    const m = d.world.multiply(d.startInv).multiply(cur).multiply(d.worldInv);
+    const mods = this.store.getState().doc.objects[d.id]?.modifiers;
+    const clip = mods?.mirror?.clip ? mods.mirror : null;
+    const mesh = transformVerts(d.mesh, d.verts, (p) => {
+      const b = Vector3.TransformCoordinates(new Vector3(...toBabylonVec(p)), m);
+      const out = fromBabylonVec([b.x, b.y, b.z]);
+      if (clip) {
+        const merge = clip.merge ?? 0.001;
+        ([clip.x, clip.y, clip.z] as boolean[]).forEach((on, ax) => {
+          if (!on) return;
+          if (Math.abs(p[ax]) <= merge || Math.sign(out[ax]) !== Math.sign(p[ax])) out[ax] = 0;
+        });
+      }
+      return out;
+    });
+    this.store.preview({ type: 'setMesh', id: d.id, mesh });
+  }
+
+  /** Tap in edit mode: select the vertex / edge / face under the finger or cursor. */
+  private editTap(x: number, y: number, extend: boolean, loop: boolean, touch: boolean) {
+    const st = this.store.getState();
+    const ed = st.edit!;
+    const o = st.doc.objects[ed.id];
+    const e = this.entries.get(ed.id);
+    if (!o?.mesh || !e) return;
+    const world = e.node.computeWorldMatrix(true);
+    const hit = this.overlay.pick(o.mesh, ed.mode, world, this.camera, x, y, touch ? 26 : 14, st.xray);
+    let sel: MeshSelection;
+    if (loop && typeof hit === 'string') sel = selectLoop(o.mesh, ed.mode, extend ? ed.sel : flush(o.mesh, ed.mode, { verts: [], edges: [], faces: [] }), hit);
+    else sel = pickElement(o.mesh, ed.mode, ed.sel, hit, extend);
+    this.store.setEdit({ ...ed, sel });
+  }
+
+  /** Box select in edit mode (client coordinates). */
+  boxSelect(rect: { x0: number; y0: number; x1: number; y1: number }, extend: boolean) {
+    const st = this.store.getState();
+    const ed = st.edit;
+    const o = ed ? st.doc.objects[ed.id] : null;
+    const e = ed ? this.entries.get(ed.id) : undefined;
+    if (!ed || !o?.mesh || !e) return;
+    const r = this.canvas.getBoundingClientRect();
+    const box = { x0: Math.min(rect.x0, rect.x1) - r.left, x1: Math.max(rect.x0, rect.x1) - r.left, y0: Math.min(rect.y0, rect.y1) - r.top, y1: Math.max(rect.y0, rect.y1) - r.top };
+    const hits = this.overlay.boxSelect(o.mesh, ed.mode, e.node.computeWorldMatrix(true), this.camera, box, st.xray);
+    const prim = extend ? ed.sel : { verts: [], edges: [], faces: [] };
+    const next: MeshSelection =
+      ed.mode === 'vert' ? { ...prim, verts: [...prim.verts, ...(hits as number[])] } : ed.mode === 'edge' ? { ...prim, edges: [...prim.edges, ...(hits as string[])] } : { ...prim, faces: [...prim.faces, ...(hits as number[])] };
+    this.store.setEdit({ ...ed, sel: flush(o.mesh, ed.mode, next) });
   }
 
   /** Pose animated objects (and the camera, when looking through it) at the current frame. */
@@ -323,10 +485,14 @@ export class Viewport {
     for (const id of doc.order) {
       const o = doc.objects[id];
       let e = this.entries.get(id);
-      // Recreate when the type, shape parameters or mesh data changed.
-      if (e && (e.key !== this.keyFor(o) || (o.mesh && e.last?.mesh !== o.mesh))) {
+      // Recreate when the type or shape parameters changed; mesh edits update in place.
+      if (e && e.key !== this.keyFor(o)) {
         this.disposeEntry(e);
         e = undefined;
+      }
+      if (e && o.mesh && (e.last?.mesh !== o.mesh || e.last?.modifiers !== o.modifiers) && e.node instanceof Mesh) {
+        buildVertexData(applyModifiers(o.mesh, o.modifiers)).applyToMesh(e.node, true);
+        e.node.refreshBoundingInfo();
       }
       if (!e) {
         e = this.createEntry(o);
@@ -537,8 +703,7 @@ export class Viewport {
         return MeshBuilder.CreateGround(o.name, { width: 2, height: 2 }, s);
       case 'mesh': {
         const mesh = new Mesh(o.name, s);
-        buildVertexData(o.mesh!).applyToMesh(mesh, false);
-        if (!o.mesh!.smooth) mesh.convertToFlatShadedMesh();
+        buildVertexData(applyModifiers(o.mesh!, o.modifiers)).applyToMesh(mesh, true);
         return mesh;
       }
       default:
@@ -689,6 +854,17 @@ export class Viewport {
       if (e.pick?.getClassName() === 'LinesMesh') (e.pick as LinesMesh).color = on ? SELECT_COLOR : HELPER_COLOR;
     }
     const gm = this.gizmos;
+    const st = this.store.getState();
+    if (st.edit) {
+      // Edit mode: the gizmo moves the selected vertices (through the pivot), not the object.
+      for (const m of this.entries.get(st.edit.id)?.meshes ?? []) m.renderOutline = false;
+      const has = st.edit.sel.verts.length > 0;
+      gm.positionGizmoEnabled = tool === 'move' && has;
+      gm.rotationGizmoEnabled = tool === 'rotate' && has;
+      gm.scaleGizmoEnabled = tool === 'scale' && has;
+      gm.attachToNode(has ? this.editPivot : null);
+      return;
+    }
     const node = sel ? this.entries.get(sel)?.node ?? null : null;
     gm.positionGizmoEnabled = tool === 'move' && !!node;
     gm.rotationGizmoEnabled = tool === 'rotate' && !!node;
@@ -940,6 +1116,7 @@ export class Viewport {
 
   dispose() {
     this.unsub();
+    this.overlay.dispose();
     this.resizeObs.disconnect();
     this.gizmos.dispose();
     this.scene.dispose();
