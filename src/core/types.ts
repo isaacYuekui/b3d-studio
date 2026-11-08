@@ -67,6 +67,21 @@ export interface LightData {
   shadows: boolean;
 }
 
+/** Non-destructive modifiers on a mesh object (evaluated Mirror → Subdivision, like Blender's stack). */
+export interface Modifiers {
+  mirror?: {
+    x: boolean;
+    y: boolean;
+    z: boolean;
+    /** Keep vertices on the mirror plane from crossing it while editing. */
+    clip?: boolean;
+    /** Weld distance on the mirror plane, metres. */
+    merge?: number;
+  };
+  /** Catmull–Clark subdivision surface. */
+  subdivision?: { levels: number };
+}
+
 export interface SceneObject {
   id: string;
   name: string;
@@ -77,6 +92,8 @@ export interface SceneObject {
   material: Material;
   params?: PrimitiveParams;
   mesh?: MeshData;
+  /** Mesh objects only. */
+  modifiers?: Modifiers;
   light?: LightData;
   /** Library model id, for type 'model'. */
   asset?: string;

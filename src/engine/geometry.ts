@@ -2,30 +2,62 @@
 // Kept free of scene/engine state so it can be unit-tested in Node.
 
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
-import type { MeshData } from '../core/types';
+import type { MeshData, Vec3 } from '../core/types';
+import { faceNormal, triangulate } from '../core/mesh/topology';
 import { toBabylonVec } from './coords';
 
 /**
  * Swapping Y/Z mirrors the geometry and Babylon is left-handed; the two flips cancel,
  * so Blender's counter-clockwise face order is kept as-is.
  * tests/geometry.test.ts verifies normals point outwards against Babylon's own box.
+ *
+ * Smooth meshes share vertices (averaged normals); flat meshes get their own vertices per
+ * face with the face normal. Concave polygons are ear-clipped.
  */
 export function buildVertexData(mesh: MeshData): VertexData {
   const positions: number[] = [];
-  for (const v of mesh.vertices) positions.push(...toBabylonVec(v));
   const indices: number[] = [];
-  for (const face of mesh.faces) {
-    // Fan triangulation: fine for convex polygons (what scripts emit).
-    for (let i = 1; i < face.length - 1; i++) indices.push(face[0], face[i], face[i + 1]);
-  }
   const vd = new VertexData();
+  if (mesh.smooth) {
+    for (const v of mesh.vertices) positions.push(...toBabylonVec(v));
+    for (const face of mesh.faces) for (const t of triangulate(mesh.vertices, face)) indices.push(...t);
+    const normals: number[] = [];
+    VertexData.ComputeNormals(positions, indices, normals);
+    vd.positions = positions;
+    vd.indices = indices;
+    vd.normals = normals;
+    vd.uvs = boxUVs(mesh, normals);
+    return vd;
+  }
+  const normals: number[] = [];
+  const uvs: number[] = [];
+  for (const face of mesh.faces) {
+    const n = faceNormal(mesh.vertices, face);
+    const bn = toBabylonVec(n);
+    const base = positions.length / 3;
+    const local = new Map<number, number>();
+    face.forEach((v, i) => {
+      local.set(v, base + i);
+      const p = mesh.vertices[v];
+      positions.push(...toBabylonVec(p));
+      normals.push(...bn);
+      uvs.push(...boxUV(p, n));
+    });
+    for (const t of triangulate(mesh.vertices, face)) indices.push(local.get(t[0])!, local.get(t[1])!, local.get(t[2])!);
+  }
   vd.positions = positions;
   vd.indices = indices;
-  const normals: number[] = [];
-  VertexData.ComputeNormals(positions, indices, normals);
   vd.normals = normals;
-  vd.uvs = boxUVs(mesh, normals);
+  vd.uvs = uvs;
   return vd;
+}
+
+/** Box-projected UV for one point with a (Blender-space) normal. */
+function boxUV([x, y, z]: Vec3, [nx, ny, nz]: Vec3): [number, number] {
+  const ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
+  if (az >= ax && az >= ay) return [x, y];
+  if (ax >= ay) return [y, z];
+  return [x, z];
 }
 
 /**

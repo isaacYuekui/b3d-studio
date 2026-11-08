@@ -14,6 +14,9 @@ import { worldOf } from '../core/types';
 import { EASINGS, isAnimated, transformAt, transformEdit } from '../core/animation';
 import type { Easing } from '../core/animation';
 import type { Background } from '../core/types';
+import { canEdit, setSmooth, setSubdivision } from './editing';
+import { transformVerts } from '../core/mesh/ops';
+import { centroid } from '../core/mesh/topology';
 
 const AXES = ['x', 'y', 'z'] as const;
 
@@ -131,6 +134,8 @@ export function Properties() {
         />
       </div>
 
+      <EditSection />
+
       {vecField('position', 'Location', { step: 0.1, rate: 0.01, suffix: ' m' })}
       {vecField('rotation', 'Rotation', { step: 1, rate: 0.5, suffix: '°' })}
       {vecField('scale', 'Scale', { step: 0.1, rate: 0.005 })}
@@ -156,6 +161,8 @@ export function Properties() {
       </Section>
 
       {o.type === 'model' && <ModelSection id={o.id} />}
+
+      {canEdit(o) && <ModifiersSection id={o.id} />}
 
       {isRenderable(o.type) && o.type !== 'model' && (
         <Section title="Material">
@@ -419,6 +426,103 @@ function AnimationSection({ id, animated }: { id: string; animated: boolean }) {
           ? 'Moving this object now saves a key at the current frame automatically.'
           : 'Insert a key, go to another frame, move the object, and insert another key. Play (Space) to see it move.'}
       </p>
+    </Section>
+  );
+}
+
+/** Edit mode: what is selected, and its median point (editable, local coordinates like Blender). */
+function EditSection() {
+  const { store } = useCtx();
+  const edit = useApp((s) => s.edit);
+  const mesh = useApp((s) => (s.edit ? s.doc.objects[s.edit.id]?.mesh : undefined));
+  if (!edit || !mesh) return null;
+  const n = edit.sel.verts.length;
+  const median = n ? centroid(mesh.vertices, edit.sel.verts) : null;
+  // Moves the selection so its median lands on the typed value (one undo step per edit).
+  const moveTo = (axis: number, v: number, base = mesh) => {
+    const c = centroid(base.vertices, edit.sel.verts);
+    const d = v - c[axis];
+    return { type: 'setMesh' as const, id: edit.id, mesh: transformVerts(base, edit.sel.verts, (p) => p.map((x, i) => (i === axis ? x + d : x)) as Vec3) };
+  };
+  return (
+    <Section title="Edit Mode">
+      <div className="prop-row"><span>Vertices</span><b data-testid="edit-verts">{n} / {mesh.vertices.length}</b></div>
+      <div className="prop-row"><span>Edges</span><b>{edit.sel.edges.length}</b></div>
+      <div className="prop-row"><span>Faces</span><b data-testid="edit-faces">{edit.sel.faces.length} / {mesh.faces.length}</b></div>
+      {median && (
+        <div className="vec3" aria-label="Median of the selection, local coordinates">
+          <div className="prop-sub">Median (local)</div>
+          {AXES.map((ax, i) => (
+            <NumberField
+              key={ax}
+              label={ax.toUpperCase()}
+              axis={ax}
+              value={median[i]}
+              step={0.1}
+              dragRate={0.01}
+              suffix=" m"
+              onPreview={(v) => store.preview(moveTo(i, v))}
+              onCommit={(v) => {
+                store.preview(moveTo(i, v));
+                store.commitPreview();
+              }}
+              onCancel={() => store.cancelPreview()}
+            />
+          ))}
+        </div>
+      )}
+      <p className="prop-hint">Tap to select, Shift or the ⊞ button to add. Move with the gizmo, or use Extrude, Inset, Bevel, Loop Cut on the left.</p>
+    </Section>
+  );
+}
+
+/** Shading and modifiers (Mirror, Subdivision Surface) for shapes and meshes. */
+function ModifiersSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const o = useApp((s) => s.doc.objects[id]);
+  const smooth = o.mesh?.smooth ?? false;
+  const mods = o.modifiers ?? {};
+  const levels = mods.subdivision?.levels ?? 0;
+  const mirror = mods.mirror;
+  const setMirror = (axis: 'x' | 'y' | 'z', on: boolean) => {
+    const m = { x: false, y: false, z: false, clip: true, ...mirror, [axis]: on };
+    store.dispatch({ type: 'setModifiers', id, modifiers: { mirror: m.x || m.y || m.z ? m : null } }, { select: false });
+  };
+  return (
+    <Section title="Shape">
+      <div className="prop-row">
+        <span>Shading</span>
+        <div className="seg-text" role="radiogroup" aria-label="Shading">
+          <button role="radio" aria-checked={!smooth} className={!smooth ? 'active' : ''} onClick={() => setSmooth(store, false)}>Flat</button>
+          <button role="radio" aria-checked={smooth} className={smooth ? 'active' : ''} data-testid="shade-smooth" onClick={() => setSmooth(store, true)}>Smooth</button>
+        </div>
+      </div>
+      <div className="prop-row">
+        <span>Subdivision</span>
+        <div className="seg-text" role="radiogroup" aria-label="Subdivision levels">
+          {[0, 1, 2, 3].map((n) => (
+            <button key={n} role="radio" aria-checked={levels === n} className={levels === n ? 'active' : ''} data-subdiv={n} onClick={() => setSubdivision(store, n)}>
+              {n === 0 ? 'Off' : n}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="prop-row">
+        <span>Mirror</span>
+        <div className="seg-text" role="group" aria-label="Mirror axes">
+          {(['x', 'y', 'z'] as const).map((ax) => (
+            <button key={ax} aria-pressed={!!mirror?.[ax]} className={mirror?.[ax] ? 'active' : ''} data-mirror={ax} onClick={() => setMirror(ax, !mirror?.[ax])}>
+              {ax.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      </div>
+      {o.modifiers && (
+        <div className="prop-actions">
+          <button className="btn" onClick={() => store.dispatch({ type: 'applyModifiers', id }, { select: false })}>Apply modifiers</button>
+        </div>
+      )}
+      <p className="prop-hint">Subdivision rounds the shape off (smooth characters and cars). Mirror X: model one half, the other follows.</p>
     </Section>
   );
 }

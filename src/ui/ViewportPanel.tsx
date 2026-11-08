@@ -1,14 +1,31 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ReactElement } from 'react';
 import { Viewport } from '../engine/Viewport';
 import { useApp, useCtx } from './context';
 import { useOpenMenu } from './TopBar';
-import { ADD_ITEMS, EMPTY_CONTEXT, OBJECT_CONTEXT } from './Menu';
+import { ADD_ITEMS, EDIT_CONTEXT, EMPTY_CONTEXT, OBJECT_CONTEXT } from './Menu';
 import type { MenuItem } from './Menu';
 import { runAction } from './actions';
 import type { ActionId } from './actions';
 import { Icon } from './icons';
 import type { ToolMode } from '../core/store';
+import { adjustLastOp, canEdit, clearLastOp, getLastOp, subscribeLastOp } from './editing';
+import type { SelectMode } from '../core/mesh/select';
+import { NumberField } from './NumberField';
+
+const SELECT_MODES: { mode: SelectMode; label: string; key: string; icon: () => ReactElement; action: ActionId }[] = [
+  { mode: 'vert', label: 'Vertex', key: '1', icon: Icon.vert, action: 'select.vert' },
+  { mode: 'edge', label: 'Edge', key: '2', icon: Icon.edge, action: 'select.edge' },
+  { mode: 'face', label: 'Face', key: '3', icon: Icon.face, action: 'select.face' },
+];
+
+const EDIT_TOOLS: { action: ActionId; label: string; icon: () => ReactElement }[] = [
+  { action: 'mesh.extrude', label: 'Extrude (E)', icon: Icon.extrude },
+  { action: 'mesh.inset', label: 'Inset Faces (I)', icon: Icon.inset },
+  { action: 'mesh.bevel', label: 'Bevel (Ctrl/⌘ B)', icon: Icon.bevel },
+  { action: 'mesh.loopcut', label: 'Loop Cut (Ctrl/⌘ R): select an edge first', icon: Icon.loopcut },
+  { action: 'mesh.subdivide', label: 'Subdivide', icon: Icon.subdivide },
+];
 
 const TOOLS: { mode: ToolMode; label: string; key: string; icon: () => ReactElement }[] = [
   { mode: 'select', label: 'Select', key: 'W', icon: Icon.select },
@@ -28,6 +45,17 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
   const selName = useApp((s) => (s.selection ? s.doc.objects[s.selection]?.name ?? null : null));
   const count = useApp((s) => s.doc.order.length);
   const shading = useApp((s) => s.shading);
+  const edit = useApp((s) => s.edit);
+  const xray = useApp((s) => s.xray);
+  const addSelect = useApp((s) => s.addSelect);
+  const boxMode = useApp((s) => s.boxMode);
+  const selEditable = useApp((s) => canEdit(s.selection ? s.doc.objects[s.selection] : null));
+  const counts = useApp((s) => {
+    const e = s.edit;
+    const m = e ? s.doc.objects[e.id]?.mesh : null;
+    return e && m ? `${e.sel.verts.length}/${m.vertices.length} verts · ${e.sel.faces.length}/${m.faces.length} faces` : '';
+  });
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current!;
@@ -50,6 +78,10 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
   useEffect(() => {
     const canvas = canvasRef.current!;
     const openAt = (x: number, y: number) => {
+      if (ctx.store.getState().edit) {
+        openMenu(EDIT_CONTEXT, x, y, 'Mesh');
+        return;
+      }
       const id = vpRef.current?.pickClient(x, y) ?? null;
       if (id) ctx.store.select(id);
       openMenu(id ? OBJECT_CONTEXT : EMPTY_CONTEXT, x, y, id ? ctx.store.getState().doc.objects[id].name : 'Viewport');
@@ -100,16 +132,78 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
   const run = (id: ActionId) => runAction(ctx, id);
 
   return (
-    <section className="viewport" aria-label="3D Viewport">
+    <section className={`viewport${edit ? ' editing' : ''}`} aria-label="3D Viewport">
       <canvas ref={canvasRef} className="viewport-canvas" touch-action="none" tabIndex={-1} data-testid="viewport-canvas" />
 
       <div className="vp-header">
-        <span className="vp-mode">Object Mode</span>
-        <span className="vp-info">
-          {selName ? <b>{selName}</b> : <span className="muted">Nothing selected</span>}
-          <span className="muted"> · {count} object{count === 1 ? '' : 's'}</span>
-        </span>
+        <button
+          className={`vp-mode${edit ? ' editing' : ''}`}
+          data-testid="mode-toggle"
+          aria-pressed={!!edit}
+          disabled={!edit && !selEditable}
+          title={edit ? 'Back to Object Mode (Tab)' : 'Edit Mode: move vertices, edges and faces (Tab)'}
+          onClick={() => run('mode.edit')}
+        >
+          {edit ? 'Edit Mode' : 'Object Mode'}
+        </button>
+        {edit ? (
+          <>
+            <div className="seg" role="radiogroup" aria-label="Select mode">
+              {SELECT_MODES.map((m) => (
+                <button key={m.mode} role="radio" className={`tool-btn${edit.mode === m.mode ? ' active' : ''}`} aria-checked={edit.mode === m.mode} aria-label={`${m.label} select`} title={`${m.label} select (${m.key})`} data-select-mode={m.mode} onClick={() => run(m.action)}>
+                  <m.icon />
+                </button>
+              ))}
+            </div>
+            <button className={`tool-btn${addSelect ? ' active' : ''}`} aria-pressed={addSelect} aria-label="Add to selection" title="Taps add to the selection (Shift + click)" data-testid="add-select" onClick={() => ctx.store.setAddSelect(!addSelect)}>
+              <Icon.addSel />
+            </button>
+            <button className={`tool-btn${boxMode ? ' active' : ''}`} aria-pressed={boxMode} aria-label="Box select" title="Box select: drag a rectangle (B)" data-testid="box-select" onClick={() => run('select.box')}>
+              <Icon.box />
+            </button>
+            <button className={`tool-btn${xray ? ' active' : ''}`} aria-pressed={xray} aria-label="X-ray" title="X-ray: see and select through the mesh (⌥ Z)" data-testid="xray" onClick={() => run('view.xray')}>
+              <Icon.xray />
+            </button>
+            <span className="vp-info muted" data-testid="edit-counts">{counts}</span>
+          </>
+        ) : (
+          <span className="vp-info">
+            {selName ? <b>{selName}</b> : <span className="muted">Nothing selected</span>}
+            <span className="muted"> · {count} object{count === 1 ? '' : 's'}</span>
+          </span>
+        )}
       </div>
+
+      {boxMode && edit && (
+        <div
+          className="box-capture"
+          data-testid="box-capture"
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setBox({ x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY });
+          }}
+          onPointerMove={(e) => box && setBox({ ...box, x1: e.clientX, y1: e.clientY })}
+          onPointerUp={(e) => {
+            if (box) vpRef.current?.boxSelect(box, e.shiftKey || addSelect);
+            setBox(null);
+            ctx.store.setBoxMode(false);
+          }}
+          onPointerCancel={() => setBox(null)}
+        >
+          {box && (
+            <div
+              className="box-rect"
+              style={(() => {
+                const r = canvasRef.current!.getBoundingClientRect();
+                return { left: Math.min(box.x0, box.x1) - r.left, top: Math.min(box.y0, box.y1) - r.top, width: Math.abs(box.x1 - box.x0), height: Math.abs(box.y1 - box.y0) };
+              })()}
+            />
+          )}
+          {!box && <span className="box-hint">Drag to select</span>}
+        </div>
+      )}
+
+      <LastOpPanel />
 
       <div className="toolshelf" role="toolbar" aria-label="Tools" aria-orientation="vertical">
         {TOOLS.map((t) => (
@@ -125,7 +219,18 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
             <t.icon />
           </button>
         ))}
+        {edit && (
+          <>
+            <div className="tool-sep" />
+            {EDIT_TOOLS.map((t) => (
+              <button key={t.action} className="tool-btn" title={t.label} aria-label={t.label.replace(/ \(.*$/, '')} data-edit-tool={t.action} onClick={() => run(t.action)}>
+                <t.icon />
+              </button>
+            ))}
+          </>
+        )}
         <div className="tool-sep" />
+        {!edit && (
         <button
           className="tool-btn"
           title="Add object (⇧ A)"
@@ -138,19 +243,22 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
         >
           <Icon.plus />
         </button>
+        )}
         <button className="tool-btn" title="Duplicate (⇧ D)" aria-label="Duplicate" onClick={() => run('edit.duplicate')}>
           <Icon.dup />
         </button>
         <button className="tool-btn" title="Delete (X)" aria-label="Delete" onClick={() => run('edit.delete')}>
           <Icon.trash />
         </button>
-        <div className="tool-sep" />
-        <button className="tool-btn" title="Library: real models, materials, skies (⇧ L)" aria-label="Library" data-testid="library-btn" onClick={() => run('add.library')}>
+        {!edit && <div className="tool-sep" />}
+        {!edit && <button className="tool-btn" title="Library: real models, materials, skies (⇧ L)" aria-label="Library" data-testid="library-btn" onClick={() => run('add.library')}>
           <Icon.library />
-        </button>
-        <button className="tool-btn" title={'Run scene script (Ctrl/⌘ R)'} aria-label="Run scene script" data-testid="script-btn" onClick={() => run('file.script')}>
-          <Icon.script />
-        </button>
+        </button>}
+        {!edit && (
+          <button className="tool-btn" title={'Run scene script (Ctrl/⌘ R)'} aria-label="Run scene script" data-testid="script-btn" onClick={() => run('file.script')}>
+            <Icon.script />
+          </button>
+        )}
       </div>
 
       <div className="vp-nav">
@@ -198,4 +306,50 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
       </div>
     </section>
   );
+}
+
+/** Blender's "Adjust Last Operation": change the last mesh operator's settings after running it. */
+function LastOpPanel() {
+  const ctx = useCtx();
+  const lo = useSyncExternalStore(subscribeLastOp, getLastOp);
+  const doc = useApp((s) => s.doc);
+  const editing = useApp((s) => !!s.edit);
+  const [open, setOpen] = useState(true);
+  if (!lo || !editing || doc !== lo.doc || !lo.op.params.length) return null;
+  return (
+    <div className="lastop" role="group" aria-label={`Adjust ${lo.op.label}`} data-testid="lastop">
+      <button className="lastop-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon.chevron open={open} />
+        <span>{lo.op.label}</span>
+        <span className="lastop-x" role="button" aria-label="Close" onClick={(e) => (e.stopPropagation(), clearLastOp())}>✕</span>
+      </button>
+      {open &&
+        lo.op.params.map((p) =>
+          p.kind === 'bool' ? (
+            <label key={p.key} className="lastop-check">
+              <input type="checkbox" checked={!!lo.params[p.key]} data-param={p.key} onChange={(e) => adjustLastOp(ctx.store, { [p.key]: e.target.checked })} />
+              {p.label}
+            </label>
+          ) : (
+            <NumberField
+              key={p.key}
+              label={p.label}
+              value={Number(lo.params[p.key])}
+              step={p.step}
+              dragRate={(p.step ?? 0.01) / (p.kind === 'int' ? 8 : 2)}
+              suffix={p.suffix}
+              onPreview={(v) => adjustLastOp(ctx.store, { [p.key]: clampParam(p, v) })}
+              onCommit={(v) => adjustLastOp(ctx.store, { [p.key]: clampParam(p, v) })}
+              onCancel={() => {}}
+            />
+          ),
+        )}
+    </div>
+  );
+}
+
+function clampParam(p: { kind: string; min?: number; max?: number }, v: number) {
+  let x = Math.min(p.max ?? Infinity, Math.max(p.min ?? -Infinity, v));
+  if (p.kind === 'int') x = Math.round(x);
+  return x;
 }

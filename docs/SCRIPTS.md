@@ -28,6 +28,10 @@ Conventions: metres, **Z up**, rotations in degrees (Blender's).
 | `setLight` | `id`, `light` {…} |
 | `setWorld` | `world` {hdri, strength, rotation, background: color/hdri/blurred, color, exposure, bloom, ao} |
 | `setCamera` | `position`, `target` (Blender coordinates). The scene opens at this shot after a script runs; key 0 returns to it |
+| `setMesh` | `id`, `mesh` {vertices, faces, smooth}. A primitive becomes an editable mesh |
+| `convertToMesh` | `id`: turn a primitive into its polygon mesh |
+| `setModifiers` | `id`, `modifiers` {`mirror`: {x, y, z, clip, merge} or null, `subdivision`: {levels 0..4} or null} |
+| `applyModifiers` | `id`: bake the modifiers into the mesh |
 | `setAnimation` | `fps`, `start`, `end` (frames; end > start) |
 | `setKeyframe` | `id`, `frame`, `transform` {position, rotation°, scale} (omit to key the current pose), `easing`: linear / ease / easeIn / easeOut / constant (applies from this key to the next) |
 | `deleteKeyframe` | `id`, `frame` |

@@ -44,6 +44,19 @@ export const Icon = {
     </svg>
   ),
   menu: () => <S><path d="M3 5h14M3 10h14M3 15h14" /></S>,
+  // Edit mode (original drawings)
+  vert: () => <S><path d="M4 15 10 4l6 11z" strokeOpacity=".45" /><circle cx="10" cy="4" r="2.2" fill="currentColor" /><circle cx="4" cy="15" r="1.4" /><circle cx="16" cy="15" r="1.4" /></S>,
+  edge: () => <S><path d="M4 15 10 4l6 11z" strokeOpacity=".45" /><path d="M4 15 10 4" strokeWidth="3" /></S>,
+  face: () => <S><path d="M4 15 10 4l6 11z" fill="currentColor" fillOpacity=".55" /></S>,
+  xray: () => <S><rect x="4" y="4" width="9" height="9" /><rect x="7" y="7" width="9" height="9" strokeDasharray="2 1.6" /></S>,
+  addSel: () => <S><rect x="3" y="3" width="8" height="8" strokeDasharray="2 1.6" /><path d="M14 10v7M10.5 13.5h7" /></S>,
+  box: () => <S><rect x="3" y="4" width="14" height="11" strokeDasharray="2.4 1.8" /><path d="M12 12l5 5" /></S>,
+  extrude: () => <S><path d="M3 15h9l5-4H8z" strokeOpacity=".5" /><path d="M3 9h9l5-4H8zM3 9v6M12 9v6M17 5v6" /><path d="M10 13V3" strokeOpacity="0" /></S>,
+  inset: () => <S><rect x="3" y="3" width="14" height="14" /><rect x="7" y="7" width="6" height="6" /><path d="M3 3l4 4M17 3l-4 4M3 17l4-4M17 17l-4-4" /></S>,
+  bevel: () => <S><path d="M3 17V9l6-6h8" /><path d="M3 9h6V3" strokeOpacity=".45" /></S>,
+  loopcut: () => <S><rect x="3" y="4" width="14" height="12" /><path d="M10 2v16" strokeDasharray="2.5 1.6" /></S>,
+  subdivide: () => <S><rect x="3" y="3" width="14" height="14" /><path d="M10 3v14M3 10h14" /></S>,
+  mode: () => <S><path d="M10 2.5 17 6.5v7L10 17.5 3 13.5v-7z" strokeOpacity=".5" /><circle cx="10" cy="2.5" r="1.6" fill="currentColor" /><circle cx="17" cy="6.5" r="1.6" fill="currentColor" /><circle cx="3" cy="6.5" r="1.6" fill="currentColor" /><circle cx="10" cy="10.5" r="1.6" fill="currentColor" /></S>,
 };
 
 export const typeIcon: Record<import('../core/types').ObjectType, () => ReturnType<typeof Icon.cube>> = {

@@ -114,13 +114,34 @@ export const ADD_ITEMS: MenuItem[] = [
   { label: 'Light', items: ['add.pointLight', 'add.sunLight', 'add.spotLight'] },
 ];
 
+export const MESH_ITEMS: MenuItem[] = [
+  'mesh.extrude', 'mesh.inset', 'mesh.bevel', 'mesh.loopcut', 'mesh.subdivide',
+  '-', 'edit.duplicate', 'mesh.fill', 'mesh.merge', 'mesh.mergeDistance', 'edit.delete',
+  '-', 'mesh.recalc', 'mesh.flip', 'mesh.smooth', 'mesh.flat',
+  '-', 'mod.mirrorX', 'mod.subdiv1', 'mod.subdiv2', 'mod.subdiv0', 'mod.apply',
+];
+
+export const SELECT_ITEMS: MenuItem[] = ['select.all', 'select.none', 'select.invert', '-', 'select.linked', 'select.loop', 'select.box', '-', 'select.vert', 'select.edge', 'select.face', '-', 'view.xray'];
+
+export const EDIT_CONTEXT: MenuItem[] = [
+  'mesh.extrude', 'mesh.inset', 'mesh.bevel', 'mesh.loopcut', 'mesh.subdivide',
+  '-', 'mesh.fill', 'mesh.merge', 'edit.delete',
+  '-', { label: 'Select', items: SELECT_ITEMS }, 'mode.object',
+];
+
 export const OBJECT_CONTEXT: MenuItem[] = [
+  'mode.enterEdit',
+  '-',
   'anim.insertKey',
   'anim.deleteKey',
   '-',
   'edit.duplicate',
   'edit.delete',
   'edit.hide',
+  '-',
+  'mesh.smooth',
+  'mesh.flat',
+  { label: 'Modifiers', items: ['mod.mirrorX', 'mod.subdiv1', 'mod.subdiv2', 'mod.subdiv3', 'mod.subdiv0', 'mod.apply'] },
   '-',
   'view.frameSelected',
   '-',

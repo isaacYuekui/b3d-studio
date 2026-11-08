@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { MenuItem } from './Menu';
-import { ADD_ITEMS } from './Menu';
+import { ADD_ITEMS, MESH_ITEMS, SELECT_ITEMS } from './Menu';
 import { useApp, useCtx } from './context';
 import { runAction } from './actions';
 
@@ -12,6 +12,7 @@ const MENUS: { label: string; items: MenuItem[] }[] = [
   { label: 'File', items: ['file.new', '-', 'file.script', '-', 'file.save', 'file.load', '-', 'file.importModel', '-', 'file.import', 'file.export', 'file.glb', 'file.video'] },
   { label: 'Edit', items: ['edit.undo', 'edit.redo', '-', 'edit.duplicate', 'edit.delete', '-', 'edit.hide', 'edit.unhideAll', 'edit.deselect'] },
   { label: 'Add', items: ADD_ITEMS },
+  { label: 'Object', items: ['mode.edit', '-', 'mesh.smooth', 'mesh.flat', '-', 'mod.mirrorX', 'mod.subdiv1', 'mod.subdiv2', 'mod.subdiv3', 'mod.subdiv0', 'mod.apply'] },
   {
     label: 'Animation',
     items: ['anim.play', '-', 'anim.insertKey', 'anim.deleteKey', 'anim.clear', '-', 'anim.cameraKey', 'view.camera', '-', 'anim.prevKey', 'anim.nextKey', '-', 'file.video'],
@@ -27,6 +28,11 @@ export function TopBar({ onHelp }: { onHelp: () => void }) {
   const ctx = useCtx();
   const canUndo = useApp((s) => s.canUndo);
   const canRedo = useApp((s) => s.canRedo);
+  const editing = useApp((s) => !!s.edit);
+  // Edit mode swaps Add / Object for Blender's Select and Mesh menus.
+  const menus = editing
+    ? MENUS.flatMap((m) => (m.label === 'Add' ? [{ label: 'Select', items: SELECT_ITEMS }] : m.label === 'Object' ? [{ label: 'Mesh', items: MESH_ITEMS }] : [m]))
+    : MENUS;
   return (
     <header className="topbar">
       <div className="brand" title="B3D Studio — independent project, not affiliated with Blender">
@@ -39,7 +45,7 @@ export function TopBar({ onHelp }: { onHelp: () => void }) {
         <span className="brand-name">B3D</span>
       </div>
       <nav className="menubar">
-        {MENUS.map((m) => (
+        {menus.map((m) => (
           <button
             key={m.label}
             className="menubar-btn"
@@ -54,8 +60,11 @@ export function TopBar({ onHelp }: { onHelp: () => void }) {
         ))}
       </nav>
       <div className="workspaces" role="tablist" aria-label="Workspaces">
-        <button className="ws-tab active" role="tab" aria-selected="true">
+        <button className={`ws-tab${editing ? '' : ' active'}`} role="tab" aria-selected={!editing} data-ws="layout" onClick={() => editing && runAction(ctx, 'mode.object')}>
           Layout
+        </button>
+        <button className={`ws-tab${editing ? ' active' : ''}`} role="tab" aria-selected={editing} data-ws="modeling" onClick={() => !editing && runAction(ctx, 'mode.enterEdit')}>
+          Modeling
         </button>
       </div>
       <div className="topbar-right">
