@@ -4,3 +4,9 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=()
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+/film/*
+  ! Permissions-Policy
+  Permissions-Policy: camera=(), microphone=(self), geolocation=()
+/film/wasm/*
+  Content-Type: application/wasm
+  Cache-Control: public, max-age=31536000, immutable

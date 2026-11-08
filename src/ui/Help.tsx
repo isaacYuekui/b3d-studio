@@ -56,7 +56,7 @@ export function Help({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <p className="help-foot">
-          B3D Studio v0.1 is an independent project inspired by professional desktop 3D tools. It is not affiliated with or endorsed by the Blender Foundation.
+          B3D Studio is an independent project inspired by professional desktop 3D tools. It is not affiliated with or endorsed by the Blender Foundation.
           Coordinates use metres with Z up. Your scene autosaves in this browser.
         </p>
       </div>

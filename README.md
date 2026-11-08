@@ -5,6 +5,15 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Animation, video and FilmCraft (v0.6)
+
+- Keyframes: select an object, press `I` (or ◆ Key on the timeline); move to another frame, change it, press `I` again. Once an object is animated, edits at a new frame add a key automatically. `⌥I` deletes a key, `↑ ↓` jump between keys
+- Easing per key (linear, ease, ease in, ease out, constant); rotations interpolate per channel like Blender, so a wheel keyed 0° → 3600° spins ten times
+- Camera keyframes (◆ Camera) and Camera view playback; scene scripts can key objects and the camera too ([docs/SCRIPTS.md](docs/SCRIPTS.md))
+- File > Render Video: MP4 in 16:9, 9:16 or 1:1, rendered frame by frame in the browser (no server, no cost)
+- The forest example now drives: the car follows the track, the wheels roll at the matching speed, a tracking camera follows
+- [FilmCraft](https://github.com/isaacYuekui/filmcraft), the open-source video editor, is hosted unmodified at `/film/` to cut renders together with music and titles. It is MIT / Apache-2.0 (licences in `public/film/`); refresh it with `node scripts/vendor-film.mjs <filmcraft-repo>` after `cargo xtask web`
+
 ## Import your own models (v0.5)
 
 **File > Import 3D Model** (⇧⌘I) takes a `.glb`, a `.gltf`, or a `.zip` of glTF + files (e.g. a Sketchfab download).
@@ -39,7 +48,7 @@ Describe a scene to Claude, paste the script it writes into **File > Run Scene S
 - Context menu (right-click or long-press), Blender-style keyboard shortcuts (press `?` in the app)
 - Autosave in the browser, plus export / import of `.b3d.json` project files
 - Collapsible, resizable panels on tablet/desktop; bottom-sheet panels on phones
-- Timeline with playhead and playback (keyframes arrive with the animation milestone)
+- Timeline with playhead and playback
 
 ## Commands
 

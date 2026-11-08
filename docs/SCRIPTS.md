@@ -28,6 +28,14 @@ Conventions: metres, **Z up**, rotations in degrees (Blender's).
 | `setLight` | `id`, `light` {…} |
 | `setWorld` | `world` {hdri, strength, rotation, background: color/hdri/blurred, color, exposure, bloom, ao} |
 | `setCamera` | `position`, `target` (Blender coordinates). The scene opens at this shot after a script runs; key 0 returns to it |
+| `setAnimation` | `fps`, `start`, `end` (frames; end > start) |
+| `setKeyframe` | `id`, `frame`, `transform` {position, rotation°, scale} (omit to key the current pose), `easing`: linear / ease / easeIn / easeOut / constant (applies from this key to the next) |
+| `deleteKeyframe` | `id`, `frame` |
+| `setCameraKey` | `frame`, `position`, `target`, `easing` |
+| `deleteCameraKey` | `frame` |
+| `clearAnimation` | `id` (or `null` for everything) |
+
+Keys hold the full transform in the object's parent space. Rotation interpolates per channel in degrees, so `[0, 3600, 0]` is ten turns. To roll a wheel, key a spin empty from 0 to `distance / radius × 57.3` degrees with linear easing (see `examples/generators/forest_supercar.py`).
 | `setParent`, `rename`, `setVisible`, `delete`, `duplicate` | as named |
 
 ## Realistic scenes (v0.3)

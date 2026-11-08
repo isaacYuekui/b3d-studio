@@ -425,6 +425,26 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await ctx.close();
 }
 
+// ---------------------------------------------------------------- FilmCraft hosted at /film (v0.6)
+{
+  const { ctx, page } = await open({ width: 1280, height: 800 });
+  const errors = [];
+  const film = await ctx.newPage();
+  film.on('pageerror', (e) => errors.push(String(e)));
+  const sizes = [];
+  film.on('response', async (r) => /\/film\/wasm\//.test(r.url()) && sizes.push([r.status(), Number(r.headers()['content-length'] ?? 0)]));
+  await film.goto(new URL('film/', url).href);
+  const started = await film.waitForFunction(() => window.filmcraftLoad && (window.filmcraftLoad.readyMs || window.filmcraftLoad.error), null, { timeout: 240000 }).then(() => film.evaluate(() => window.filmcraftLoad)).catch((e) => ({ error: String(e) }));
+  check('v0.6: FilmCraft starts at /film', !!started.readyMs, JSON.stringify(started));
+  check('v0.6: FilmCraft wasm parts load', sizes.length >= 2 && sizes.every(([st]) => st === 200), JSON.stringify(sizes));
+  const lic = await page.evaluate(async (u) => (await fetch(u)).status, new URL('film/LICENSE-MIT', url).href);
+  check('v0.6: FilmCraft licence is published with it', lic === 200);
+  await film.waitForTimeout(2000);
+  await film.screenshot({ path: `${shots}/filmcraft.png` });
+  check('v0.6: FilmCraft runs without page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // ---------------------------------------------------------------- model import (v0.5)
 {
   const fs = await import('node:fs');
