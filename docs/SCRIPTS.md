@@ -64,3 +64,45 @@ Custom meshes: `vertices` are `[x, y, z]` in metres; `faces` list vertex indices
 Lights: point/spot `power` in watts (1000 W is a good start at 4–5 m), sun `power` is strength (2–5). Lights only show in **Rendered** shading (Z). Sun and spot lights cast shadows; point lights don't yet.
 
 Examples: [`robot-studio`](../examples/robot-studio.b3d-script.json) (stylized), [`still-life`](../examples/still-life.b3d-script.json) (realistic).
+
+## Modelling with `editMesh` (v0.8)
+
+`editMesh` models the way a person does in Edit Mode: each step selects part of the mesh
+with a query, then runs an operator. A primitive becomes an editable mesh first (Blender
+topology: 8-vertex cube, 32-sided cylinder, 32 × 16 UV sphere, 48 × 12 torus). Coordinates
+are the object's local metres, Z up. Steps run in order; if one fails, the whole script is
+rejected and the error names the step.
+
+```json
+{ "type": "editMesh", "id": "mug", "steps": [
+  { "op": "scale", "select": { "all": true }, "by": [0.042, 0.042, 0.05], "about": [0, 0, 0] },
+  { "op": "inset", "select": { "normal": [0, 0, 1], "angle": 5 }, "thickness": 0.0045 },
+  { "op": "extrude", "select": { "last": true }, "offset": -0.088 },
+  { "op": "bevel", "select": { "mode": "edge", "box": { "min": [-1, -1, 0.0995], "max": [1, 1, 0.1005] } }, "width": 0.0012, "segments": 2 },
+  { "op": "smooth" }
+] }
+```
+
+**Select queries** (fields combine with AND; `mode` is vert / edge / face, defaulting to what the op needs):
+
+| Field | Picks |
+|---|---|
+| `all: true` | everything |
+| `last: true` | what the previous step produced (extrude → extrude again) |
+| `normal: [x,y,z]`, `angle` (°, default 30) | faces facing that way (edges / verts of those faces in other modes) |
+| `box: {min, max}` | elements whose vertices are all inside |
+| `sharp: degrees` | edges where faces meet at more than that angle |
+| `nearest: [x,y,z]` | the one face / edge / vertex closest to a point |
+| `loop: true` | extend selected edges to their edge loops |
+| `linked: true` | grow to whole connected pieces |
+| `indices: [...]` | raw face / vertex numbers or edge keys `"a_b"` |
+
+**Ops**: `extrude {offset}` · `inset {thickness, depth, individual}` · `bevel {width, segments}` ·
+`loopcut {cuts, factor}` (through the first selected edge) · `subdivide` · `delete` · `merge` ·
+`mergeDistance {distance}` · `fill` · `flip` · `recalc` · `duplicate` · `move {by | along: "normal", distance}` ·
+`scale {by: number | [x,y,z], about}` · `rotate {by: [x°,y°,z°], about}` · `smooth {smooth}` · `select`.
+`move`, `scale` and `rotate` take `radius` for proportional editing (nearby vertices follow with a smooth falloff).
+
+Add `setModifiers` with `subdivision: {levels: 2}` after modelling for smooth, rounded results;
+bevels and loop cuts near edges keep them crisp. `examples/generators/coffee_mug.py` is a full example.
+Check models with `node scripts/render-check.mjs <script.json> <sheet.png> --focus id1,id2`.

@@ -6,6 +6,7 @@ import { pickFile } from './actions';
 
 /** Bundled example scenes, loaded on demand (each is its own small chunk). */
 const EXAMPLES: { id: string; label: string; load: () => Promise<{ default: string }> }[] = [
+  { id: 'coffee-mug', label: 'Coffee mug (modelled)', load: () => import('../../examples/coffee-mug.b3d-script.json?raw') },
   { id: 'forest-supercar', label: 'Supercar in the pines', load: () => import('../../examples/forest-supercar.b3d-script.json?raw') },
   { id: 'car-studio', label: 'Supercar studio', load: () => import('../../examples/car-studio.b3d-script.json?raw') },
   { id: 'still-life', label: 'Morning still life', load: () => import('../../examples/still-life.b3d-script.json?raw') },

@@ -645,6 +645,25 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Scripted modelling example (editMesh).
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.click('[data-testid="script-btn"]');
+  await page.click('[data-example="coffee-mug"]');
+  await page.waitForFunction(() => document.querySelector('[data-testid="script-text"]').value.length > 500);
+  await page.click('[data-testid="script-run"]');
+  await page.waitForTimeout(6000);
+  const mug = await page.evaluate(() => {
+    const d = window.__b3d.store.getState().doc;
+    const o = Object.values(d.objects).find((x) => x.name === 'Mug');
+    return o && { type: o.type, faces: o.mesh.faces.length, subdiv: o.modifiers?.subdivision?.levels };
+  });
+  check('v0.8: coffee mug example is modelled with editMesh (hollow, bevelled, subdivided)', mug?.type === 'mesh' && mug.faces > 150 && mug.subdiv === 2, JSON.stringify(mug));
+  await page.screenshot({ path: `${shots}/coffee-mug.png` });
+  check('v0.8: no errors (coffee mug)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // iPad: edit mode by touch.
 {
   const { ctx, page, errors } = await open({ width: 820, height: 1180 }, { touch: true, dpr: 2 });

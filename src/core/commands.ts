@@ -13,6 +13,9 @@ import type { Animation, Easing } from './animation';
 import type { Background, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
+import { EDIT_OPS, runEditSteps } from './mesh/script';
+import type { EditStep } from './mesh/script';
+import { MeshOpError } from './mesh/ops';
 
 export interface AddCommand {
   type: 'add';
@@ -52,6 +55,8 @@ export type Command =
   | { type: 'setModifiers'; id: string; modifiers: { mirror?: Modifiers['mirror'] | null; subdivision?: Modifiers['subdivision'] | null } }
   /** Bake the modifiers into the mesh. */
   | { type: 'applyModifiers'; id: string }
+  /** Model with Edit Mode operators: each step selects elements by a query and applies an op. */
+  | { type: 'editMesh'; id: string; steps: EditStep[] }
   | { type: 'setWorld'; world: Partial<World> }
   | { type: 'setCamera'; position: Vec3; target: Vec3 }
   | { type: 'setKeyframe'; id: string; frame: number; transform?: Transform; easing?: Easing }
@@ -299,6 +304,18 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       return { doc: withObject(doc, next), created: [] };
     }
 
+    case 'editMesh': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      let mesh: MeshData;
+      try {
+        mesh = runEditSteps(o.mesh!, cmd.steps);
+      } catch (e) {
+        throw new CommandError(`editMesh ${o.name}: ${e instanceof MeshOpError || e instanceof Error ? e.message : String(e)}`);
+      }
+      if (mesh.vertices.length > LIMITS.vertices || mesh.faces.length > LIMITS.faces) throw new CommandError(`editMesh ${o.name}: mesh too large`);
+      return { doc: withObject(doc, { ...o, mesh }), created: [] };
+    }
+
     case 'applyModifiers': {
       const o = requireObj(doc, cmd.id);
       if (o.type !== 'mesh' || !o.modifiers) return { doc, created: [] };
@@ -468,6 +485,56 @@ export function validateMeshData(v: unknown): MeshData {
     return f.map((idx) => (Number.isInteger(idx) && idx >= 0 && idx < n ? (idx as number) : fail(`mesh face ${i} has invalid index ${String(idx)}`)));
   });
   return { vertices, faces, smooth: v.smooth === true };
+}
+
+const SELECT_MODES_ = ['vert', 'edge', 'face'];
+
+function validateEditStep(raw: unknown, i: number): EditStep {
+  const at = `step ${i + 1}`;
+  if (!isRecord(raw) || typeof raw.op !== 'string' || !(EDIT_OPS as readonly string[]).includes(raw.op)) fail(`${at}: op must be one of ${EDIT_OPS.join(', ')}`);
+  const step: EditStep = { op: raw.op };
+  for (const [k, val] of Object.entries(raw)) {
+    if (k === 'op') continue;
+    if (k === 'select') {
+      if (!isRecord(val)) fail(`${at}: select must be an object`);
+      const q: Record<string, unknown> = {};
+      for (const [qk, qv] of Object.entries(val)) {
+        switch (qk) {
+          case 'mode':
+            if (!SELECT_MODES_.includes(qv as string)) fail(`${at}: select.mode must be vert, edge or face`);
+            break;
+          case 'last': case 'all': case 'loop': case 'linked':
+            if (typeof qv !== 'boolean') fail(`${at}: select.${qk} must be true/false`);
+            break;
+          case 'normal': case 'nearest':
+            if (!isVec3(qv)) fail(`${at}: select.${qk} must be [x,y,z]`);
+            break;
+          case 'angle': case 'sharp':
+            if (!inRange(qv, 0, 180)) fail(`${at}: select.${qk} must be 0..180 degrees`);
+            break;
+          case 'box':
+            if (!isRecord(qv) || !isVec3(qv.min) || !isVec3(qv.max)) fail(`${at}: select.box needs min and max [x,y,z]`);
+            break;
+          case 'indices':
+            if (!Array.isArray(qv) || qv.length > 100000 || !qv.every((x) => (Number.isInteger(x) && (x as number) >= 0) || (typeof x === 'string' && /^\d+_\d+$/.test(x)))) fail(`${at}: select.indices must be vertex/face numbers or edge keys "a_b"`);
+            break;
+          default:
+            fail(`${at}: unknown select field "${qk}"`);
+        }
+        q[qk] = qv;
+      }
+      step.select = q;
+      continue;
+    }
+    if (typeof val === 'number') {
+      if (!Number.isFinite(val) || Math.abs(val) > 1e5) fail(`${at}: ${k} out of range`);
+    } else if (isVec3(val)) {
+      if (val.some((x) => Math.abs(x) > 1e5)) fail(`${at}: ${k} out of range`);
+    } else if (typeof val !== 'boolean' && !(k === 'along' && val === 'normal')) fail(`${at}: ${k} must be a number, [x,y,z] or true/false`);
+    step[k] = val;
+  }
+  for (const k of ['cuts', 'segments'] as const) if (step[k] !== undefined && !inRange(step[k], 1, 32)) fail(`${at}: ${k} must be 1..32`);
+  return step;
 }
 
 export function validateModifiers(v: unknown): Modifiers {
@@ -670,6 +737,11 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (m.subdivision === null) out.subdivision = null;
       else if (m.subdivision !== undefined) out.subdivision = validateModifiers({ subdivision: m.subdivision }).subdivision;
       return { type: 'setModifiers', id: v.id, modifiers: out };
+    }
+    case 'editMesh': {
+      if (!isId(v.id) || !Array.isArray(v.steps) || !v.steps.length || v.steps.length > 500) fail('editMesh needs id and 1..500 steps');
+      const steps = v.steps.map((raw, i) => validateEditStep(raw, i));
+      return { type: 'editMesh', id: v.id, steps };
     }
     case 'applyModifiers':
       if (!isId(v.id)) fail('applyModifiers needs id');
