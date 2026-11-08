@@ -5,6 +5,15 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Environments and Roblox export (v1.1)
+
+- `addTerrain`: hills with levelled clearings and paths, blending grass, path and rock textures
+- `addPlant` (pine, broadleaf tree, bush, rock, grass tuft) and `scatter` thousands of copies on a terrain, avoiding paths, steep slopes and clearings
+- `addBuilding`: houses with gable, hip or flat roofs, windows, doors, chimneys; plaster, brick or wood walls
+- **File → Export for Roblox (.zip)**: models in studs, ≤ 20,000 triangles per mesh, scatter copies as real parts, texture tiling baked into UVs; each terrain as a Roblox Terrain heightmap + colormap; a README with the exact Studio settings. See [docs/ROBLOX.md](docs/ROBLOX.md)
+- Export GLB now faces the same way in Blender as in B3D (it was turned half a turn)
+- New example: *Village valley (Roblox-ready)*
+
 ## Realistic people (v1.0)
 
 - `addHuman`: realistic men and women from the MakeHuman CC0 base mesh, morphed to young adults, with its 163-bone skeleton and artist weights, clothes (shirt, trousers, shoes), hair and eyes; colours per outfit

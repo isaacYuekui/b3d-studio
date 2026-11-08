@@ -56,11 +56,12 @@ export const Icon = {
   bevel: () => <S><path d="M3 17V9l6-6h8" /><path d="M3 9h6V3" strokeOpacity=".45" /></S>,
   loopcut: () => <S><rect x="3" y="4" width="14" height="12" /><path d="M10 2v16" strokeDasharray="2.5 1.6" /></S>,
   subdivide: () => <S><rect x="3" y="3" width="14" height="14" /><path d="M10 3v14M3 10h14" /></S>,
+  scatter: () => <S><path d="M5 15l2-5 2 5zM11 13l2-6 2 6zM3 9l1.5-4L6 9z" /></S>,
   bone: () => <S><path d="M10 2.5 13 6.5 10 17.5 7 6.5z" /><circle cx="10" cy="2.5" r="1.3" /><path d="M7 6.5h6" /></S>,
   mode: () => <S><path d="M10 2.5 17 6.5v7L10 17.5 3 13.5v-7z" strokeOpacity=".5" /><circle cx="10" cy="2.5" r="1.6" fill="currentColor" /><circle cx="17" cy="6.5" r="1.6" fill="currentColor" /><circle cx="3" cy="6.5" r="1.6" fill="currentColor" /><circle cx="10" cy="10.5" r="1.6" fill="currentColor" /></S>,
 };
 
 export const typeIcon: Record<import('../core/types').ObjectType, () => ReturnType<typeof Icon.cube>> = {
   cube: Icon.cube, sphere: Icon.sphere, cylinder: Icon.cylinder, cone: Icon.cone, torus: Icon.torus, capsule: Icon.capsule,
-  plane: Icon.plane, mesh: Icon.mesh, model: Icon.model, light: Icon.light, empty: Icon.empty, armature: Icon.bone,
+  plane: Icon.plane, mesh: Icon.mesh, model: Icon.model, light: Icon.light, empty: Icon.empty, armature: Icon.bone, scatter: Icon.scatter,
 };

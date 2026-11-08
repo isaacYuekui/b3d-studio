@@ -9,6 +9,7 @@ import type { LightType, ObjectType } from '../core/types';
 import { animationOf, keyFrames } from '../core/animation';
 import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit, togglePose } from './editing';
 import { poseAt } from '../core/rig';
+import { subtree } from '../core/commands';
 import type { MeshOpId } from './editing';
 
 export interface Ctx {
@@ -388,10 +389,34 @@ export const actions = {
       if (!vp) return;
       try {
         c.store.notify('Exporting GLB… scenes with photo textures can take up to a minute');
-        downloadBlob(`b3d-scene-${stamp()}.glb`, await vp.exportGLB());
+        const raw = new Uint8Array(await (await vp.exportGLB()).arrayBuffer());
+        const { orientGlb } = await import('../engine/robloxExport');
+        downloadBlob(`b3d-scene-${stamp()}.glb`, new Blob([(await orientGlb(raw)) as BlobPart], { type: 'model/gltf-binary' }));
         c.store.notify('GLB exported');
       } catch (e) {
         c.store.notify(`GLB export failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  },
+  'file.roblox': {
+    id: 'file.roblox',
+    label: 'Export for Roblox (.zip)…',
+    run: async (c) => {
+      const vp = c.viewport();
+      if (!vp) return;
+      const st = c.store.getState();
+      const ids = st.selection ? new Set(subtree(st.doc, st.selection)) : undefined;
+      try {
+        c.store.notify(`Preparing ${ids ? 'the selection' : 'the scene'} for Roblox… this can take a minute`);
+        const { blob, report, terrains } = await vp.exportRoblox(ids);
+        downloadBlob(`b3d-${ids ? 'model' : 'scene'}-roblox-${stamp()}.zip`, blob);
+        const parts = [
+          report ? `${report.parts} parts, ${report.triangles.toLocaleString()} triangles (largest mesh ${report.maxTriangles.toLocaleString()} ≤ 20,000)` : '',
+          terrains ? `${terrains} terrain heightmap${terrains > 1 ? 's' : ''}` : '',
+        ].filter(Boolean);
+        c.store.notify(`Roblox pack ready: ${parts.join(' + ')}, ${(blob.size / 1048576).toFixed(1)} MB. Open README.txt in the zip for the Studio steps.`);
+      } catch (e) {
+        c.store.notify(`Roblox export failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   },

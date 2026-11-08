@@ -750,6 +750,47 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Environments + Roblox export (v1.1).
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.click('[data-testid="script-btn"]');
+  await page.click('[data-example="village-valley"]');
+  await page.waitForFunction(() => document.querySelector('[data-testid="script-text"]').value.length > 500);
+  await page.click('[data-testid="script-run"]');
+  await page.waitForFunction(() => Object.values(window.__b3d.store.getState().doc.objects).some((o) => o.terrain), null, { timeout: 60000 });
+  await page.evaluate(() => window.__b3d.viewport().settle());
+  const info = await page.evaluate(() => {
+    const d = window.__b3d.store.getState().doc;
+    const os = Object.values(d.objects);
+    return { terrain: os.filter((o) => o.terrain).length, scatter: os.filter((o) => o.scatter).reduce((s, o) => s + o.scatter.items.length, 0), houses: os.filter((o) => /^h\d$/.test(o.id)).length };
+  });
+  check('v1.1: village has terrain, 5 houses and hundreds of scattered plants', info.terrain === 1 && info.houses === 5 && info.scatter > 400, JSON.stringify(info));
+  await page.evaluate(() => window.__b3d.store.select(null));
+  const t0 = Date.now();
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 400000 }), (async () => { await page.click('[data-menu="File"]'); await page.click('.menu [data-action="file.roblox"]'); })()]);
+  const zipPath = `${shots}/village-roblox.zip`;
+  await dl.saveAs(zipPath);
+  const fs = await import('node:fs');
+  const { unzipSync } = await import('fflate');
+  const files = unzipSync(new Uint8Array(fs.readFileSync(zipPath)));
+  const names = Object.keys(files).sort();
+  check('v1.1: Roblox zip has models, terrain heightmap + colormap and README', ['README.txt', 'models.glb', 'terrain_colormap.png', 'terrain_heightmap.png', 'terrain_mesh_optional.glb'].every((n) => names.includes(n)), `${names.join(', ')} in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  const glb = Buffer.from(files['models.glb']);
+  const json = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString('utf8'));
+  const triCount = (m) => m.primitives.reduce((s, p) => s + (p.indices !== undefined ? json.accessors[p.indices].count : json.accessors[p.attributes.POSITION].count) / 3, 0);
+  const maxTris = Math.max(...json.meshes.map(triCount));
+  const parts = json.nodes.filter((n) => n.mesh !== undefined).length;
+  const exts = json.extensionsUsed ?? [];
+  check('v1.1: Roblox GLB: every mesh ≤ 20k triangles, scatter expanded into parts, no unsupported extensions', glb.subarray(0, 4).toString() === 'glTF' && maxTris <= 20000 && parts > 400 && !exts.some((e) => /instancing|webp|texture_transform/.test(e)), `${parts} parts, largest ${maxTris} tris, ext [${exts}]`);
+  const readme = Buffer.from(files['README.txt']).toString();
+  check('v1.1: README gives the terrain size in studs', /Size \(studs\):\s+X 571\.4/.test(readme), readme.split('\n').find((l) => l.includes('Size')));
+  await page.evaluate(() => window.__b3d.viewport().viewCamera());
+  await page.waitForTimeout(2500);
+  await page.screenshot({ path: `${shots}/village.png` });
+  check('v1.1: no errors (environments)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // iPad: edit mode by touch.
 {
   const { ctx, page, errors } = await open({ width: 820, height: 1180 }, { touch: true, dpr: 2 });

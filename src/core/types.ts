@@ -11,8 +11,8 @@ export const LIGHT_TYPES = ['point', 'sun', 'spot'] as const;
 export type LightType = (typeof LIGHT_TYPES)[number];
 
 /** Every object type the scene can hold. */
-export type ObjectType = PrimitiveType | 'mesh' | 'model' | 'light' | 'empty' | 'armature';
-export const OBJECT_TYPES: readonly ObjectType[] = [...PRIMITIVES, 'mesh', 'model', 'light', 'empty', 'armature'];
+export type ObjectType = PrimitiveType | 'mesh' | 'model' | 'light' | 'empty' | 'armature' | 'scatter';
+export const OBJECT_TYPES: readonly ObjectType[] = [...PRIMITIVES, 'mesh', 'model', 'light', 'empty', 'armature', 'scatter'];
 
 export interface Transform {
   position: Vec3;
@@ -128,6 +128,10 @@ export interface SceneObject {
    * "humans/male#body") is given.
    */
   skin?: { armature: string; bone?: string; weights?: string };
+  /** Terrain meshes: grid layout and texture layers (grass / path / rock blend). */
+  terrain?: import('./terrain').TerrainData;
+  /** Scatter objects: many copies of one library model, each [x, y, z, yaw°, scale] in world space. */
+  scatter?: { asset?: string; source?: string; items: import('./terrain').ScatterItem[] };
 }
 
 export const BACKGROUNDS = ['color', 'hdri', 'blurred'] as const;
@@ -201,4 +205,4 @@ export const DEFAULT_LIGHT: Record<LightType, LightData> = {
   spot: { type: 'spot', color: '#ffffff', power: 1000, spotAngle: 45, shadows: true },
 };
 
-export const isRenderable = (t: ObjectType) => t !== 'light' && t !== 'empty' && t !== 'armature';
+export const isRenderable = (t: ObjectType) => t !== 'light' && t !== 'empty' && t !== 'armature' && t !== 'scatter';

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Store } from './core/store';
-import { loadLocal, saveLocal } from './core/serialize';
+import { loadLocal, parseScript, saveLocal } from './core/serialize';
 import type { Viewport } from './engine/Viewport';
 import { AppCtx, useApp } from './ui/context';
 import { TopBar, MenuCtx } from './ui/TopBar';
@@ -101,7 +101,7 @@ function StatusBar() {
   return (
     <footer className="statusbar" aria-live="polite">
       <span className="status-notice">{notice ?? `Tool: ${tool[0].toUpperCase()}${tool.slice(1)}`}</span>
-      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v1.0</span>
+      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v1.1</span>
     </footer>
   );
 }
@@ -135,7 +135,7 @@ export function App() {
   );
   // Test/debug hook, only with ?debug in the URL.
   useEffect(() => {
-    if (new URLSearchParams(location.search).has('debug')) (window as unknown as Record<string, unknown>).__b3d = { ...ctx, prepare: prepareCommands };
+    if (new URLSearchParams(location.search).has('debug')) (window as unknown as Record<string, unknown>).__b3d = { ...ctx, prepare: prepareCommands, parseScript };
   }, [ctx]);
   const answer = (v: boolean) => {
     ask?.resolve(v);

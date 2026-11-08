@@ -15,6 +15,12 @@ import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
 import { EDIT_OPS, runEditSteps } from './mesh/script';
 import { DEFAULT_OUTFIT, HUMAN_PRESETS, humanPreset } from './humans';
+import { generateTerrain, scatterOn } from './terrain';
+import { PLANT_KINDS, makePlant } from './plants';
+import { ROOFS, makeBuilding } from './buildings';
+import type { RoofKind } from './buildings';
+import type { PlantKind } from './plants';
+import type { ScatterParams, TerrainParams } from './terrain';
 import type { Outfit } from './humans';
 import { ACTIONS, playAction, standPose } from './motion';
 import type { ActionName } from './motion';
@@ -74,6 +80,14 @@ export type Command =
   | { type: 'setSkin'; id: string; armature: string | null; bone?: string; weights?: string }
   /** A realistic, rigged person (MakeHuman CC0 preset): armature + body + clothes + hair + eyes. */
   | { type: 'addHuman'; id: string; preset: string; name?: string; transform?: Partial<Transform>; outfit?: Outfit; parentId?: string | null }
+  /** Procedural landscape: hills, flats, carved paths, grass/path/rock texture blend. */
+  | { type: 'addTerrain'; id: string; name?: string; params: TerrainParams; layers?: [string, string, string]; scales?: [number, number, number]; position?: Vec3; tint?: string }
+  /** Many copies of a library model spread over a terrain (trees, rocks, grass…), drawn efficiently. */
+  | { type: 'scatter'; id: string; name?: string; asset?: string; source?: string; on: string; params: ScatterParams; hideSource?: boolean }
+  /** A procedural house: walls, roof, windows, door, chimney, stone base (each its own material). */
+  | { type: 'addBuilding'; id: string; name?: string; width: number; depth: number; floors: number; roof?: RoofKind; seed?: number; style?: BuildingStyle; transform?: Partial<Transform> }
+  /** A procedural low-poly plant or rock (pine, tree, bush, rock, grass): an empty with wood / leaves meshes. */
+  | { type: 'addPlant'; id: string; name?: string; kind: PlantKind; seed: number; height?: number; colors?: { wood?: string; leaves?: string }; transform?: Partial<Transform> }
   /** Animate an armature with a built-in action (walk, run, idle, wave, jump, sit…). */
   | { type: 'playAction'; id: string; action: ActionName; start: number; cycles?: number; speed?: number; travel?: boolean }
   /** Model with Edit Mode operators: each step selects elements by a query and applies an op. */
@@ -152,6 +166,15 @@ function withObject(doc: SceneDoc, obj: SceneObject): SceneDoc {
 function withAnimation(doc: SceneDoc, animation: Animation): SceneDoc {
   return { ...doc, animation };
 }
+
+export interface BuildingStyle {
+  walls?: 'plaster' | 'brick' | 'wood';
+  wallColor?: string;
+  roofColor?: string;
+  trimColor?: string;
+  doorColor?: string;
+}
+const DEFAULT_STYLE: Required<BuildingStyle> = { walls: 'plaster', wallColor: '#f1e7d6', roofColor: '#ffffff', trimColor: '#f4f2ec', doorColor: '#5a3b26' };
 
 function requireArmature(doc: SceneDoc, id: string): SceneObject {
   const o = requireObj(doc, id);
@@ -437,6 +460,66 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       });
       // Start relaxed (arms down) instead of the modelling A-pose.
       sub.push({ type: 'setPose', id: cmd.id, pose: standPose(data.bones), reset: true });
+      return applyCommand(doc, { type: 'batch', commands: sub }, idGen);
+    }
+
+    case 'addTerrain': {
+      if (doc.objects[cmd.id]) throw new CommandError(`Id already in use: ${cmd.id}`);
+      const { mesh, terrain } = generateTerrain(cmd.params, cmd.layers);
+      if (cmd.scales) terrain.scales = cmd.scales;
+      const r = applyCommand(doc, { type: 'add', primitive: 'mesh', id: cmd.id, name: cmd.name ?? 'Terrain', mesh, material: { texture: terrain.layers[0], textureScale: terrain.scales[0], roughness: 1, baseColor: cmd.tint ?? '#c8f08c' }, ...(cmd.position ? { transform: { position: cmd.position } } : {}) }, idGen);
+      const o = r.doc.objects[cmd.id];
+      return { doc: withObject(r.doc, { ...o, terrain }), created: r.created };
+    }
+
+    case 'scatter': {
+      if (doc.objects[cmd.id]) throw new CommandError(`Id already in use: ${cmd.id}`);
+      const ground = requireObj(doc, cmd.on);
+      if (!ground.terrain) throw new CommandError(`${ground.name} is not a terrain (make one with addTerrain)`);
+      if (!cmd.asset && !cmd.source) throw new CommandError('scatter needs an asset (library model) or a source (object id)');
+      if (cmd.source) requireObj(doc, cmd.source);
+      const items = scatterOn(ground, cmd.params);
+      const label = cmd.asset ?? doc.objects[cmd.source!].name;
+      const r = applyCommand(doc, { type: 'add', primitive: 'scatter', id: cmd.id, name: cmd.name ?? `${label} ×${items.length}` }, idGen);
+      let next = withObject(r.doc, { ...r.doc.objects[cmd.id], scatter: { ...(cmd.asset ? { asset: cmd.asset } : { source: cmd.source }), items } });
+      // The template stays in the scene (edit it, re-run) but is hidden by default.
+      if (cmd.source && cmd.hideSource !== false) for (const id of subtree(next, cmd.source)) next = withObject(next, { ...next.objects[id], visible: false });
+      return { doc: next, created: r.created };
+    }
+
+    case 'addBuilding': {
+      if (doc.objects[cmd.id]) throw new CommandError(`Id already in use: ${cmd.id}`);
+      const b = makeBuilding({ width: cmd.width, depth: cmd.depth, floors: cmd.floors, roof: cmd.roof, seed: cmd.seed });
+      const st: Required<BuildingStyle> = { ...DEFAULT_STYLE, ...cmd.style };
+      const wallTex = { plaster: 'white_rough_plaster', brick: 'castle_brick_01', wood: 'brown_planks_07' }[st.walls];
+      const sub: Command[] = [{ type: 'add', primitive: 'empty', id: cmd.id, name: cmd.name ?? 'House', ...(cmd.transform ? { transform: cmd.transform } : {}) }];
+      const part = (k: string, mesh: MeshData | undefined, material: Partial<Material>) => {
+        if (mesh && mesh.faces.length) sub.push({ type: 'add', primitive: 'mesh', id: `${cmd.id}-${k}`, name: capitalize(k), parentId: cmd.id, mesh, material });
+      };
+      part('walls', b.walls, { texture: wallTex, textureScale: st.walls === 'brick' ? 0.7 : 0.5, baseColor: st.wallColor });
+      part('roof', b.roof, cmd.roof === 'flat' ? { baseColor: '#8f8b85', roughness: 0.9 } : { texture: 'clay_roof_tiles_02', textureScale: 0.7, baseColor: st.roofColor });
+      part('frames', b.frames, { baseColor: st.trimColor, roughness: 0.6 });
+      part('glass', b.glass, { baseColor: '#1b2731', roughness: 0.05, metallic: 0.2 });
+      part('door', b.door, { baseColor: st.doorColor, roughness: 0.55 });
+      part('base', b.base, { texture: 'rock_face', textureScale: 0.6, baseColor: '#c9c3b8' });
+      part('chimney', b.chimney, { texture: 'castle_brick_01', textureScale: 0.8, baseColor: '#ffffff' });
+      return applyCommand(doc, { type: 'batch', commands: sub }, idGen);
+    }
+
+    case 'addPlant': {
+      if (doc.objects[cmd.id]) throw new CommandError(`Id already in use: ${cmd.id}`);
+      const p = makePlant(cmd.kind, cmd.seed, cmd.height);
+      const defaults: Record<PlantKind, { wood: string; leaves: string }> = {
+        pine: { wood: '#5a4030', leaves: '#2f5a32' },
+        tree: { wood: '#5e4433', leaves: '#5d8c3a' },
+        bush: { wood: '#5e4433', leaves: '#4f7d34' },
+        rock: { wood: '#8a8780', leaves: '#5d8c3a' },
+        grass: { wood: '#5e4433', leaves: '#6a9a3e' },
+      };
+      const col = { ...defaults[cmd.kind], ...cmd.colors };
+      const sub: Command[] = [{ type: 'add', primitive: 'empty', id: cmd.id, name: cmd.name ?? capitalize(cmd.kind), ...(cmd.transform ? { transform: cmd.transform } : {}) }];
+      if (p.wood) sub.push({ type: 'add', primitive: 'mesh', id: `${cmd.id}-wood`, name: cmd.kind === 'rock' ? 'Stone' : 'Wood', parentId: cmd.id, mesh: p.wood, material: { baseColor: col.wood, roughness: cmd.kind === 'rock' ? 0.85 : 0.9 } });
+      if (p.leaves) sub.push({ type: 'add', primitive: 'mesh', id: `${cmd.id}-leaves`, name: 'Leaves', parentId: cmd.id, mesh: p.leaves, material: { baseColor: col.leaves, roughness: 0.75 } });
       return applyCommand(doc, { type: 'batch', commands: sub }, idGen);
     }
 
@@ -788,6 +871,17 @@ export function validateSceneObject(raw: unknown): SceneObject {
     obj.armature = validateArmature(v.armature);
     if (v.pose !== undefined) obj.pose = validatePose(v.pose);
   }
+  if (obj.type === 'mesh' && v.terrain !== undefined) {
+    const t = v.terrain;
+    if (!isRecord(t) || !Number.isInteger(t.nx) || !Number.isInteger(t.ny) || !Array.isArray(t.splat) || !Array.isArray(t.layers) || !Array.isArray(t.scales) || !Array.isArray(t.size)) fail(`object ${v.id}: terrain invalid`);
+    if ((t.nx as number) * (t.ny as number) !== obj.mesh!.vertices.length || (t.splat as unknown[]).length !== obj.mesh!.vertices.length * 3) fail(`object ${v.id}: terrain does not match its mesh`);
+    obj.terrain = { nx: t.nx as number, ny: t.ny as number, size: t.size as [number, number], splat: (t.splat as unknown[]).map(Number), layers: t.layers as [string, string, string], scales: t.scales as [number, number, number] };
+  }
+  if (obj.type === 'scatter') {
+    const sc = v.scatter;
+    if (!isRecord(sc) || !((typeof sc.asset === 'string' && ASSET_ID.test(sc.asset)) || isId(sc.source)) || !Array.isArray(sc.items) || sc.items.length > 20000) fail(`object ${v.id}: scatter invalid`);
+    obj.scatter = { ...(typeof sc.asset === 'string' ? { asset: sc.asset } : { source: sc.source as string }), items: (sc.items as unknown[]).map((it) => (Array.isArray(it) && it.length === 5 && it.every((x) => typeof x === 'number' && Number.isFinite(x)) ? (it as [number, number, number, number, number]) : fail(`object ${v.id}: scatter item invalid`))) };
+  }
   if (obj.type === 'mesh' && v.skin !== undefined) {
     obj.skin = validateSkin(v.skin, `object ${v.id}`);
   }
@@ -1004,6 +1098,106 @@ export function validateCommand(v: unknown, depth = 0): Command {
           else fail(`addHuman outfit.${k} must be #rrggbb${['skin', 'eyes'].includes(k) ? '' : ' or null'}`);
         }
         cmd.outfit = o;
+      }
+      return cmd;
+    }
+    case 'addTerrain': {
+      if (typeof v.id !== 'string' || !REF_ID.test(v.id)) fail('addTerrain needs an id');
+      const P = v;
+      const size = Array.isArray(P.size) && P.size.length === 2 && P.size.every((x) => inRange(x, 2, 4000)) ? (P.size as [number, number]) : fail('addTerrain size must be [width, depth] metres (2..4000)');
+      const params: TerrainParams = {
+        size,
+        resolution: P.resolution === undefined ? 128 : Number.isInteger(P.resolution) && inRange(P.resolution, 4, 256) ? (P.resolution as number) : fail('addTerrain resolution must be 4..256'),
+        height: P.height === undefined ? 8 : inRange(P.height, 0, 500) ? (P.height as number) : fail('addTerrain height must be 0..500 m'),
+        seed: P.seed === undefined ? 1 : Number.isInteger(P.seed) ? (P.seed as number) : fail('addTerrain seed must be an integer'),
+      };
+      for (const k of ['scale', 'roughness', 'ridges', 'rim', 'rockSlope'] as const) if (P[k] !== undefined) params[k] = inRange(P[k], 0, 4000) ? (P[k] as number) : fail(`addTerrain ${k} out of range`);
+      const xy = (q: unknown) => Array.isArray(q) && q.length === 2 && q.every((x) => typeof x === 'number' && Number.isFinite(x));
+      if (P.flats !== undefined) {
+        if (!Array.isArray(P.flats) || P.flats.length > 64) fail('addTerrain flats must be a list');
+        params.flats = P.flats.map((f, i) => (isRecord(f) && xy(f.center) && inRange(f.radius, 0.1, 4000) && (f.height === undefined || inRange(f.height, -500, 500)) ? { center: f.center as [number, number], radius: f.radius as number, ...(f.height !== undefined ? { height: f.height as number } : {}) } : fail(`addTerrain flats[${i}] needs center [x,y] and radius`)));
+      }
+      if (P.paths !== undefined) {
+        if (!Array.isArray(P.paths) || P.paths.length > 32) fail('addTerrain paths must be a list');
+        params.paths = P.paths.map((q, i) => (isRecord(q) && Array.isArray(q.points) && q.points.length >= 2 && q.points.length <= 256 && q.points.every(xy) && inRange(q.width, 0.2, 100) ? { points: q.points as [number, number][], width: q.width as number } : fail(`addTerrain paths[${i}] needs points [[x,y],…] and width`)));
+      }
+      const tex = (q: unknown) => typeof q === 'string' && ASSET_ID.test(q);
+      const cmd: Extract<Command, { type: 'addTerrain' }> = { type: 'addTerrain', id: v.id, params };
+      if (v.name !== undefined) cmd.name = isStr(v.name, 100) ? v.name : fail('addTerrain name invalid');
+      if (v.layers !== undefined) cmd.layers = Array.isArray(v.layers) && v.layers.length === 3 && v.layers.every(tex) ? (v.layers as [string, string, string]) : fail('addTerrain layers must be 3 texture ids [grass, path, rock]');
+      if (v.scales !== undefined) cmd.scales = Array.isArray(v.scales) && v.scales.length === 3 && v.scales.every((x) => inRange(x, 0.01, 100)) ? (v.scales as [number, number, number]) : fail('addTerrain scales must be 3 numbers (repeats per metre)');
+      if (v.position !== undefined) cmd.position = isVec3(v.position) ? (v.position as Vec3) : fail('addTerrain position must be [x,y,z]');
+      if (v.tint !== undefined) cmd.tint = isColor(v.tint) ? (v.tint as string) : fail('addTerrain tint must be #rrggbb (colours the grass)');
+      return cmd;
+    }
+    case 'scatter': {
+      if (typeof v.id !== 'string' || !REF_ID.test(v.id)) fail('scatter needs an id');
+      if (v.asset !== undefined && (typeof v.asset !== 'string' || !ASSET_ID.test(v.asset))) fail('scatter asset must be a library model id');
+      if (v.source !== undefined && !isId(v.source)) fail('scatter source must be an object id');
+      if ((v.asset === undefined) === (v.source === undefined)) fail('scatter needs either "asset" (library model) or "source" (an object in the scene, e.g. from addPlant)');
+      if (!isId(v.on)) fail('scatter needs "on": the terrain id');
+      if (!(Number.isInteger(v.count) && inRange(v.count, 1, 20000))) fail('scatter count must be 1..20000');
+      const params: ScatterParams = { count: v.count as number, seed: Number.isInteger(v.seed) ? (v.seed as number) : 1 };
+      const xy = (q: unknown) => Array.isArray(q) && q.length === 2 && q.every((x) => typeof x === 'number' && Number.isFinite(x));
+      if (v.area !== undefined) {
+        const a = v.area;
+        if (isRecord(a) && xy(a.min) && xy(a.max)) params.area = { min: a.min as [number, number], max: a.max as [number, number] };
+        else if (isRecord(a) && xy(a.center) && inRange(a.radius, 0.1, 10000)) params.area = { center: a.center as [number, number], radius: a.radius as number };
+        else fail('scatter area must be {min,max} or {center,radius}');
+      }
+      if (v.scale !== undefined) params.scale = Array.isArray(v.scale) && v.scale.length === 2 && v.scale.every((x) => inRange(x, 0.01, 100)) ? (v.scale as [number, number]) : fail('scatter scale must be [min, max]');
+      for (const k of ['spacing', 'maxSlope', 'sink', 'clump'] as const) if (v[k] !== undefined) params[k] = inRange(v[k], 0, 1000) ? (v[k] as number) : fail(`scatter ${k} out of range`);
+      if (v.avoidPaths !== undefined) params.avoidPaths = v.avoidPaths === true;
+      if (v.avoid !== undefined) {
+        if (!Array.isArray(v.avoid) || v.avoid.length > 256) fail('scatter avoid must be a list of {center, radius}');
+        params.avoid = v.avoid.map((q, i) => (isRecord(q) && xy(q.center) && inRange(q.radius, 0, 10000) ? { center: q.center as [number, number], radius: q.radius as number } : fail(`scatter avoid[${i}] invalid`)));
+      }
+      const cmd: Extract<Command, { type: 'scatter' }> = { type: 'scatter', id: v.id, on: v.on, params, ...(v.asset ? { asset: v.asset as string } : { source: v.source as string }) };
+      if (v.hideSource === false) cmd.hideSource = false;
+      if (v.name !== undefined) cmd.name = isStr(v.name, 100) ? v.name : fail('scatter name invalid');
+      return cmd;
+    }
+    case 'addBuilding': {
+      if (typeof v.id !== 'string' || !REF_ID.test(v.id)) fail('addBuilding needs an id');
+      const num = (k: string, lo: number, hi: number, d?: number) => (v[k] === undefined && d !== undefined ? d : inRange(v[k], lo, hi) ? (v[k] as number) : fail(`addBuilding ${k} must be ${lo}..${hi}`));
+      const cmd: Extract<Command, { type: 'addBuilding' }> = { type: 'addBuilding', id: v.id, width: num('width', 2, 60, 8), depth: num('depth', 2, 60, 6), floors: Math.round(num('floors', 1, 12, 1)) };
+      if (v.roof !== undefined) cmd.roof = (ROOFS as readonly string[]).includes(v.roof as string) ? (v.roof as RoofKind) : fail(`addBuilding roof must be ${ROOFS.join(', ')}`);
+      if (v.seed !== undefined) cmd.seed = Number.isInteger(v.seed) ? (v.seed as number) : fail('addBuilding seed must be an integer');
+      if (v.name !== undefined) cmd.name = isStr(v.name, 100) ? v.name : fail('addBuilding name invalid');
+      if (v.style !== undefined) {
+        if (!isRecord(v.style)) fail('addBuilding style must be an object');
+        const st: BuildingStyle = {};
+        for (const [k, c] of Object.entries(v.style)) {
+          if (k === 'walls') st.walls = ['plaster', 'brick', 'wood'].includes(c as string) ? (c as BuildingStyle['walls']) : fail('addBuilding style.walls must be plaster, brick or wood');
+          else if (['wallColor', 'roofColor', 'trimColor', 'doorColor'].includes(k)) (st as Record<string, unknown>)[k] = isColor(c) ? c : fail(`addBuilding style.${k} must be #rrggbb`);
+          else fail(`addBuilding style.${k} unknown`);
+        }
+        cmd.style = st;
+      }
+      if (v.transform !== undefined) {
+        if (!isRecord(v.transform)) fail('addBuilding transform invalid');
+        const t: Partial<Transform> = {};
+        for (const k of ['position', 'rotation', 'scale'] as const) if (v.transform[k] !== undefined) t[k] = isVec3(v.transform[k]) ? (v.transform[k] as Vec3) : fail(`addBuilding transform.${k} must be [x,y,z]`);
+        cmd.transform = t;
+      }
+      return cmd;
+    }
+    case 'addPlant': {
+      if (typeof v.id !== 'string' || !REF_ID.test(v.id)) fail('addPlant needs an id');
+      if (!(PLANT_KINDS as readonly string[]).includes(v.kind as string)) fail(`addPlant kind must be ${PLANT_KINDS.join(', ')}`);
+      const cmd: Extract<Command, { type: 'addPlant' }> = { type: 'addPlant', id: v.id, kind: v.kind as PlantKind, seed: Number.isInteger(v.seed) ? (v.seed as number) : 1 };
+      if (v.name !== undefined) cmd.name = isStr(v.name, 100) ? v.name : fail('addPlant name invalid');
+      if (v.height !== undefined) cmd.height = inRange(v.height, 0.05, 200) ? (v.height as number) : fail('addPlant height must be 0.05..200 m');
+      if (v.colors !== undefined) {
+        if (!isRecord(v.colors)) fail('addPlant colors must be {wood, leaves}');
+        cmd.colors = {};
+        for (const k of ['wood', 'leaves'] as const) if (v.colors[k] !== undefined) cmd.colors[k] = isColor(v.colors[k]) ? (v.colors[k] as string) : fail(`addPlant colors.${k} must be #rrggbb`);
+      }
+      if (v.transform !== undefined) {
+        if (!isRecord(v.transform)) fail('addPlant transform invalid');
+        const t: Partial<Transform> = {};
+        for (const k of ['position', 'rotation', 'scale'] as const) if (v.transform[k] !== undefined) t[k] = isVec3(v.transform[k]) ? (v.transform[k] as Vec3) : fail(`addPlant transform.${k} must be [x,y,z]`);
+        cmd.transform = t;
       }
       return cmd;
     }
