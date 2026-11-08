@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Scripted modelling (v0.8)
+
+- Scene scripts can model with Edit Mode operators: `editMesh` selects parts of a mesh by direction, box, sharp edges, nearest point or edge loop, then extrudes, insets, bevels, loop-cuts, moves (with proportional falloff)… ([docs/SCRIPTS.md](docs/SCRIPTS.md))
+- New example: a real-size coffee mug and saucer, hollowed, bevelled and subdivided
+- `scripts/render-check.mjs` renders any script from the scene camera and four views into one sheet, for checking models
+- Close-ups of small, real-size objects no longer clip or stay zoomed out
+
 ## Modelling: Edit Mode (v0.7)
 
 - `Tab` (or the Edit Mode button / Modeling tab) edits the selected shape as a polygon mesh with Blender's topology (8-vertex cube, 32 × 16 UV sphere…)

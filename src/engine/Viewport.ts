@@ -131,9 +131,9 @@ export class Viewport {
 
     // Camera — Blender default view, Y-up internally (see coords.ts).
     const cam = (this.camera = new ArcRotateCamera('cam', -0.72, 1.08, 14, Vector3.Zero(), scene));
-    cam.minZ = 0.1;
+    cam.minZ = 0.02; // close-ups of real-size objects (a 10 cm mug) must not clip
     cam.maxZ = 2000;
-    cam.lowerRadiusLimit = 0.5;
+    cam.lowerRadiusLimit = 0.05;
     cam.upperRadiusLimit = 500;
     cam.wheelDeltaPercentage = 0.01;
     cam.pinchDeltaPercentage = 0.004;
@@ -967,9 +967,9 @@ export class Viewport {
   }
 
   /** Frame the selection (or everything) — Blender's numpad period / Home. */
-  frame(all = false) {
+  frame(all = false, only?: string[]) {
     const st = this.store.getState();
-    let ids = !all && st.selection ? subtree(st.doc, st.selection) : st.doc.order;
+    let ids = only?.length ? only.flatMap((id) => (st.doc.objects[id] ? subtree(st.doc, id) : [])) : !all && st.selection ? subtree(st.doc, st.selection) : st.doc.order;
     // Frame geometry; lights and empties only count when there is nothing else to frame.
     const geo = ids.filter((id) => (this.entries.get(id)?.meshes.length ?? 0) > 0);
     if (geo.length) ids = geo;
@@ -1000,7 +1000,7 @@ export class Viewport {
     }
     const center = min.add(max).scale(0.5);
     const half = max.subtract(min).length() / 2;
-    const radius = Math.max((half / Math.sin(this.camera.fov / 2)) * 0.85, 2);
+    const radius = Math.max((half / Math.sin(this.camera.fov / 2)) * 0.85, 0.15);
     this.animateCamera(this.camera.alpha, this.camera.beta, radius, center);
   }
 
