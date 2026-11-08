@@ -119,3 +119,32 @@ cheat sheet: [CHARACTERS.md](CHARACTERS.md). Example: `examples/generators/chara
 `addHuman {id, preset: "male"|"female", name?, transform?, outfit?}` and
 `playAction {id, action, start, cycles?, speed?, travel?}`. Details and an example:
 [CHARACTERS.md](CHARACTERS.md#realistic-people-v10).
+
+## Environments (v1.1)
+
+```json
+{"type":"addTerrain","id":"land","size":[160,160],"resolution":160,"height":16,"seed":11,"rim":14,
+ "flats":[{"center":[0,0],"radius":20,"height":3}],
+ "paths":[{"points":[[-80,-30],[0,0],[80,44]],"width":3.4}]}
+{"type":"addPlant","id":"pine","kind":"pine","seed":2}
+{"type":"scatter","id":"pines","source":"pine","on":"land","count":260,"seed":5,"scale":[0.7,1.3],
+ "spacing":3,"maxSlope":32,"avoidPaths":true,"clump":0.6,"avoid":[{"center":[0,0],"radius":30}]}
+{"type":"addBuilding","id":"h1","width":8,"depth":6,"floors":2,"roof":"gable","seed":1,
+ "style":{"walls":"brick","roofColor":"#7b4a35"},"transform":{"position":[-10,-12,3],"rotation":[0,0,12]}}
+```
+
+- `addTerrain` — `size` [x, y] m, `resolution` (grid cells on the long side, 4–256), `height` m,
+  `seed`, optional `scale`, `roughness`, `ridges`, `rim` (raised edges), `flats` (level discs;
+  `height` sets the level, so buildings can stand at a known z), `paths` (levelled, painted),
+  `layers` (three library textures: grass, path, rock), `scales`, `position`, `tint`.
+- `addPlant` — `kind`: `pine`, `tree`, `bush`, `rock`, `grass`; `seed`, optional `height`,
+  `transform`, `colors`. Creates an empty with `-wood` / `-leaves` meshes.
+- `scatter` — copies of a library model (`asset`) or of a scene object (`source`, e.g. an
+  `addPlant`; hidden by default, `"hideSource": false` keeps it) on terrain `on`: `count`,
+  `seed`, `scale` [min, max], `spacing`, `maxSlope`°, `avoidPaths`, `avoid` discs, `area`,
+  `sink`, `clump` (0–1).
+- `addBuilding` — `width`, `depth`, `floors`, `roof` (`gable` | `hip` | `flat`), `floorHeight`,
+  `roofPitch`, `chimney`, `seed`, `style` {`walls`: plaster | brick | wood, `wallColor`,
+  `roofColor`, `trimColor`, `doorColor`}, `transform`. Stands on its z, front faces −Y.
+
+Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).

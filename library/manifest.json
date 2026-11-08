@@ -111,7 +111,18 @@
     "forest_ground_04",
     "coast_sand_01",
     "gravel",
-    "asphalt_02"
+    "asphalt_02",
+    "grass_path_2",
+    "rocky_trail",
+    "rock_face",
+    "cobblestone_floor_08",
+    "clay_roof_tiles_02",
+    "castle_brick_01",
+    "brown_planks_07",
+    "forest_floor",
+    "coast_sand_02",
+    "white_rough_plaster",
+    "aerial_grass_rock"
   ],
   "simplify": {
     "pine_sapling_small": 0.09,

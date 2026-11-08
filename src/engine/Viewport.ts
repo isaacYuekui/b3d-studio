@@ -19,6 +19,7 @@ import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import type { LinesMesh } from '@babylonjs/core/Meshes/linesMesh';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
+import type { Node } from '@babylonjs/core/node';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { RawCubeTexture } from '@babylonjs/core/Materials/Textures/rawCubeTexture';
@@ -35,6 +36,7 @@ import { PointerEventTypes } from '@babylonjs/core/Events/pointerEvents';
 import { ImageProcessingConfiguration } from '@babylonjs/core/Materials/imageProcessingConfiguration';
 // Side-effect imports required by deep-import usage:
 import '@babylonjs/core/Culling/ray'; // scene picking
+import '@babylonjs/core/Meshes/thinInstanceMesh'; // scatter
 import '@babylonjs/core/Rendering/outlineRenderer'; // selection outline
 import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent'; // shadows
 import '@babylonjs/core/Helpers/sceneHelpers'; // skybox
@@ -54,6 +56,9 @@ import { babylonQuatToEulerDeg, clean, eulerDegToBabylonQuat, fromBabylonVec, to
 import { buildVertexData } from './geometry';
 import { subtree } from '../core/commands';
 import { EditOverlay } from './EditOverlay';
+import { TerrainPlugin } from './terrainMaterial';
+import { MeshoptSimplifier } from 'meshoptimizer';
+import { Matrix as BMatrix } from '@babylonjs/core/Maths/math.vector';
 import type { M4, PosedBones, Weights } from '../core/rig';
 import { humanWeights, loadHuman } from '../core/humans';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
@@ -745,6 +750,8 @@ export class Viewport {
       }
       if (e.last === o) continue;
       this.updateEntry(e, o, e.last);
+      if (o.terrain && e.node instanceof Mesh && (e.last?.terrain !== o.terrain || e.last?.mesh !== o.mesh)) this.applyTerrain(e, o);
+      if (o.type === 'scatter' && e.last && e.last.scatter !== o.scatter) this.applyScatterItems(e, o);
       e.last = o;
     }
     for (const id of doc.order) {
@@ -759,6 +766,15 @@ export class Viewport {
   private createEntry(o: SceneObject): Entry {
     const s = this.scene;
     const key = this.keyFor(o);
+    if (o.type === 'scatter') {
+      const node = new TransformNode(o.name, s);
+      node.rotationQuaternion = new Quaternion();
+      node.metadata = { id: o.id, export: true };
+      const entry: Entry = { node, pick: null, key, meshes: [] };
+      const job = this.attachScatter(entry, o).finally(() => this.pending.delete(job));
+      this.pending.add(job);
+      return entry;
+    }
     if (o.type === 'model') {
       const node = new TransformNode(o.name, s);
       node.rotationQuaternion = new Quaternion();
@@ -856,6 +872,147 @@ export class Viewport {
     } catch (err) {
       if (err instanceof MissingModel) this.store.notify(`“${o.name}” was imported on another device. Import the model again, or open the project file that includes it.`);
       else this.store.notify(`Could not load model “${user ? o.name : asset}”.`);
+    }
+  }
+
+  // ---------------------------------------------------------------- terrain & scatter
+
+  private terrainPlugins = new WeakMap<PBRMaterial, TerrainPlugin>();
+
+  /** Splat weights as a vertex buffer, and the path / rock layers on the material. */
+  private applyTerrain(e: Entry, o: SceneObject) {
+    const t = o.terrain!;
+    const mesh = e.node as Mesh;
+    if (!o.mesh?.smooth || mesh.getTotalVertices() !== t.splat.length / 3) return;
+    mesh.setVerticesData('splat', new Float32Array(t.splat), false, 3);
+    const mat = e.material;
+    if (!mat) return;
+    let plugin = this.terrainPlugins.get(mat);
+    if (!plugin) {
+      plugin = new TerrainPlugin(mat);
+      this.terrainPlugins.set(mat, plugin);
+    }
+    const load = (id: string) => {
+      const tex = new Texture(textureUrl(id, 'diff'), this.scene, false, true, Texture.TRILINEAR_SAMPLINGMODE);
+      tex.anisotropicFilteringLevel = 8;
+      return tex;
+    };
+    if (plugin.layer1?.name !== textureUrl(t.layers[1], 'diff')) {
+      plugin.layer1?.dispose();
+      plugin.layer1 = load(t.layers[1]);
+    }
+    if (plugin.layer2?.name !== textureUrl(t.layers[2], 'diff')) {
+      plugin.layer2?.dispose();
+      plugin.layer2 = load(t.layers[2]);
+    }
+    plugin.scales = [t.scales[1], t.scales[2]];
+    plugin.enabled = true;
+  }
+
+  /** Total triangles drawn by one scatter object is capped so a forest stays smooth on a tablet. */
+  private static SCATTER_TRI_BUDGET = 400_000;
+
+  private async attachScatter(e: Entry, o: SceneObject) {
+    const asset = o.scatter?.asset;
+    if (!asset) return this.attachScatterFromSource(e, o);
+    try {
+      this.loadersReady ??= import('@babylonjs/loaders/glTF/2.0');
+      await this.loadersReady;
+      let p = this.containers.get(asset);
+      if (!p) {
+        p = LoadAssetContainerAsync(modelUrl(asset), this.scene, { pluginExtension: '.glb' });
+        this.containers.set(asset, p);
+        p.catch(() => this.containers.delete(asset));
+      }
+      const container = await p;
+      if (this.entries.get(o.id) !== e) return;
+      const inst = container.instantiateModelsToScene((n) => `${o.id}-${n}`, false, { doNotInstantiate: true });
+      const holder = new TransformNode(`${o.id}-template`, this.scene);
+      for (const root of inst.rootNodes) root.parent = holder;
+      holder.parent = e.node;
+      e.meshes = e.node.getChildMeshes(false).filter((m): m is Mesh => m instanceof Mesh && m.getTotalVertices() > 0);
+      // Simplify the template when many copies would exceed the triangle budget.
+      await MeshoptSimplifier.ready;
+      const tris = e.meshes.reduce((s, m) => s + (m.getTotalIndices() / 3), 0);
+      const count = Math.max(1, o.scatter!.items.length);
+      const ratio = Math.min(1, Viewport.SCATTER_TRI_BUDGET / (tris * count));
+      if (ratio < 0.95) for (const m of e.meshes) simplifyMesh(m as Mesh, Math.max(ratio, 0.01));
+      for (const m of e.meshes) {
+        m.metadata = { ...(m.metadata ?? {}), id: o.id, export: true, scatter: true };
+        m.isPickable = true;
+        (m as Mesh).thinInstanceEnablePicking = true;
+        m.outlineColor = SELECT_COLOR;
+        m.outlineWidth = 0.01;
+        m.alwaysSelectAsActiveMesh = false;
+      }
+      e.pick = e.meshes[0] ?? null;
+      e.last = o;
+      this.applyScatterItems(e, o);
+      this.applyShading();
+      this.syncSelection(this.store.getState().selection, this.store.getState().tool);
+    } catch {
+      this.store.notify(`Could not load “${asset}” for ${o.name}.`);
+    }
+  }
+
+  /** Scatter copies of an object already in the scene (a template such as an addPlant tree). */
+  private attachScatterFromSource(e: Entry, o: SceneObject) {
+    const src = o.scatter?.source;
+    const doc = this.store.getState().doc;
+    if (!src || !doc.objects[src]) return Promise.resolve();
+    const root = this.entries.get(src)?.node;
+    if (!root) return Promise.resolve();
+    const rootInv = root.computeWorldMatrix(true).clone().invert();
+    const holder = new TransformNode(`${o.id}-template`, this.scene);
+    holder.parent = e.node;
+    for (const id of subtree(doc, src)) {
+      const te = this.entries.get(id);
+      if (!te) continue;
+      for (const m of te.meshes) {
+        if (!(m instanceof Mesh)) continue;
+        const local = m.computeWorldMatrix(true).multiply(rootInv);
+        const c = m.clone(`${o.id}-${m.name}`, null, true)!;
+        c.setEnabled(true);
+        c.isVisible = true;
+        c.parent = holder;
+        c.setPreTransformMatrix(BMatrix.Identity());
+        const sc = new Vector3(), rq = new Quaternion(), tr = new Vector3();
+        local.decompose(sc, rq, tr);
+        c.position.copyFrom(tr);
+        c.rotationQuaternion = rq;
+        c.scaling.copyFrom(sc);
+        c.metadata = { id: o.id, export: true, scatter: true };
+        c.thinInstanceEnablePicking = true;
+        c.outlineColor = SELECT_COLOR;
+        c.outlineWidth = 0.01;
+        e.meshes.push(c);
+      }
+    }
+    e.pick = e.meshes[0] ?? null;
+    e.last = o;
+    this.applyScatterItems(e, o);
+    this.applyShading();
+    return Promise.resolve();
+  }
+
+  /** Thin instances: one GPU draw per template mesh, a matrix per item (world space, Blender → Babylon). */
+  private applyScatterItems(e: Entry, o: SceneObject) {
+    const items = o.scatter?.items ?? [];
+    const nodeInv = e.node.computeWorldMatrix(true).clone().invert();
+    for (const m of e.meshes as Mesh[]) {
+      const L = m.computeWorldMatrix(true).multiply(nodeInv); // mesh relative to the scatter node
+      const Linv = L.clone().invert();
+      const buf = new Float32Array(items.length * 16);
+      const tmp = new BMatrix();
+      items.forEach(([x, y, z, yaw, sc], i) => {
+        const q = eulerDegToBabylonQuat([0, 0, yaw]);
+        const T = BMatrix.Compose(new Vector3(sc, sc, sc), new Quaternion(q[0], q[1], q[2], q[3]), new Vector3(x, z, y));
+        L.multiplyToRef(T, tmp);
+        tmp.multiplyToRef(Linv, tmp);
+        tmp.copyToArray(buf, i * 16);
+      });
+      m.thinInstanceSetBuffer('matrix', buf, 16, true);
+      m.thinInstanceRefreshBoundingInfo(false);
     }
   }
 
@@ -1363,13 +1520,77 @@ export class Viewport {
   }
 
   /** Export the scene as binary glTF (opens in Blender via File > Import > glTF 2.0). */
-  async exportGLB(): Promise<Blob> {
-    const { GLTF2Export } = await import('@babylonjs/serializers/glTF/2.0/glTFSerializer');
+  async exportGLB(opts: { ids?: Set<string>; exclude?: Set<string>; lights?: boolean } = {}): Promise<Blob> {
+    const [{ GLTF2Export }] = await Promise.all([
+      import('@babylonjs/serializers/glTF/2.0/glTFSerializer'),
+      // Exporter plug-ins: texture tiling, scatter instancing, lights.
+      import('@babylonjs/serializers/glTF/2.0/Extensions/KHR_texture_transform'),
+      import('@babylonjs/serializers/glTF/2.0/Extensions/EXT_mesh_gpu_instancing'),
+      import('@babylonjs/serializers/glTF/2.0/Extensions/KHR_lights_punctual'),
+    ]);
+    const { ids, exclude, lights = true } = opts;
+    const owner = (node: Node | null): string | null => {
+      for (let n = node; n; n = n.parent) if (n.metadata?.id) return n.metadata.id as string;
+      return null;
+    };
     const result = await GLTF2Export.GLBAsync(this.scene, 'b3d-scene', {
-      shouldExportNode: (node) => !!node.metadata?.export && node.isEnabled(),
+      shouldExportNode: (node) => {
+        if (!node.metadata?.export || !node.isEnabled()) return false;
+        if (!lights && node.getClassName().endsWith('Light')) return false;
+        const id = owner(node);
+        if (id && exclude?.has(id)) return false;
+        return !ids || (!!id && ids.has(id));
+      },
     });
     const file = Object.values(result.files)[0];
     return file instanceof Blob ? file : new Blob([file as BlobPart], { type: 'model/gltf-binary' });
+  }
+
+  /**
+   * Export for Roblox Studio: a .zip with the models (.glb: instances expanded, ≤ 20k tris per
+   * mesh, studs, baked UV tiling), each terrain as a heightmap + colormap for Roblox Terrain,
+   * and a README with the exact import numbers.
+   */
+  async exportRoblox(ids?: Set<string>) {
+    const doc = this.store.getState().doc;
+    const terrains = Object.values(doc.objects).filter((o) => o.terrain && o.mesh && (!ids || ids.has(o.id)));
+    const exclude = new Set(terrains.map((t) => t.id));
+    const [{ toRobloxGlb }, { terrainHeightmap, encodePng }, { zipSync, zlibSync, strToU8 }] = await Promise.all([
+      import('./robloxExport'),
+      import('../core/robloxTerrain'),
+      import('fflate'),
+    ]);
+    const files: Record<string, Uint8Array> = {};
+    const notes: string[] = [];
+    const exportable = Object.values(doc.objects).some((o) => !exclude.has(o.id) && (!ids || ids.has(o.id)) && o.visible !== false && o.type !== 'light' && o.type !== 'armature');
+    let report = null;
+    if (exportable) {
+      const blob = await this.exportGLB({ ids, exclude, lights: false });
+      const r = await toRobloxGlb(new Uint8Array(await blob.arrayBuffer()));
+      files['models.glb'] = r.glb;
+      report = r.report;
+    }
+    if (terrains.length) {
+      // Fallback: the terrain as plain meshes (≤ 20k tris each), for when Roblox Terrain isn't wanted.
+      const blob = await this.exportGLB({ ids: exclude, lights: false });
+      files['terrain_mesh_optional.glb'] = (await toRobloxGlb(new Uint8Array(await blob.arrayBuffer()))).glb;
+    }
+    const heightmaps = terrains.map((t) => {
+      const hm = terrainHeightmap(t);
+      const slug = t.name.replace(/[^a-z0-9]+/gi, '_').toLowerCase() || t.id;
+      files[`${slug}_heightmap.png`] = encodePng(hm.width, hm.height, hm.heights, 1, (b) => zlibSync(b, { level: 9 }));
+      files[`${slug}_colormap.png`] = encodePng(hm.width, hm.height, hm.colors, 3, (b) => zlibSync(b, { level: 9 }));
+      notes.push(
+        `Terrain "${t.name}": ${slug}_heightmap.png + ${slug}_colormap.png`,
+        `  Size (studs):     X ${hm.sizeStuds[0]}   Y ${hm.sizeStuds[1]}   Z ${hm.sizeStuds[2]}`,
+        `  Position (studs): X ${hm.positionStuds[0]}   Y ${hm.positionStuds[1]}   Z ${hm.positionStuds[2]}`,
+        '',
+      );
+      return { name: t.name, ...hm };
+    });
+    files['README.txt'] = strToU8(robloxReadme(report, notes));
+    const zip = zipSync(files, { level: 0 });
+    return { blob: new Blob([zip as BlobPart], { type: 'application/zip' }), report, terrains: heightmaps.length, files: Object.keys(files) };
   }
 
   dispose() {
@@ -1380,4 +1601,54 @@ export class Viewport {
     this.scene.dispose();
     this.engine.dispose();
   }
+}
+
+/** Reduce a mesh's triangles in place (meshoptimizer), keeping its vertex data. */
+function simplifyMesh(m: Mesh, ratio: number) {
+  const idx = m.getIndices();
+  const pos = m.getVerticesData('position');
+  if (!idx || !pos) return;
+  const indices = Uint32Array.from(idx);
+  const target = Math.max(3, Math.floor((indices.length * ratio) / 3) * 3);
+  const [out] = MeshoptSimplifier.simplify(indices, Float32Array.from(pos), 3, target, 0.05, ['LockBorder']);
+  if (out.length >= 3) m.setIndices(Array.from(out));
+}
+
+function robloxReadme(report: { parts: number; triangles: number; maxTriangles: number } | null, terrain: string[]): string {
+  const lines = [
+    'B3D Studio → Roblox Studio',
+    '==========================',
+    '',
+    'Everything is already in studs (1 stud = 0.28 m) and lined up around the origin.',
+    '',
+  ];
+  if (report)
+    lines.push(
+      '1. MODELS (models.glb)',
+      `   ${report.parts} parts, ${report.triangles} triangles; largest mesh ${report.maxTriangles} (Roblox limit 20,000).`,
+      '   Studio: Home → Import 3D → choose models.glb. In the import window set:',
+      '     - Scale Unit: Studs (the default)',
+      '     - Insert Using Scene Position: ON   (keeps everything where it was placed)',
+      '     - Anchored: ON',
+      '   then Import.',
+      '',
+    );
+  if (terrain.length)
+    lines.push(
+      `${report ? '2' : '1'}. TERRAIN (heightmap + colormap)`,
+      '   Studio: Home → Terrain Editor → Import.',
+      '   Pick the heightmap and the colormap PNG, then type the size and position below.',
+      '   Colours map to Roblox materials: grass → Grass, paths → Ground, cliffs → Rock.',
+      '',
+      ...terrain.map((l) => '   ' + l),
+      '   Click Generate. Trees, rocks and houses in models.glb sit on this ground.',
+      '   (Prefer a plain mesh? Import terrain_mesh_optional.glb the same way as models.glb instead.)',
+      '',
+    );
+  lines.push(
+    'LOOK',
+    '   Lighting → Technology: Future, and add an Atmosphere + Sky for the B3D look.',
+    '   Terrain Editor → Settings → Decoration: ON adds swaying grass.',
+  );
+  return lines.join('\n') + '\n';
 }

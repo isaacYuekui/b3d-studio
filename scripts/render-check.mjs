@@ -14,7 +14,8 @@ if (!scriptPath || !outPath) throw new Error('usage: render-check.mjs <script.js
 const url = opt('--url', 'http://localhost:4173/');
 const solid = args.includes('--solid');
 const focus = opt('--focus', null);
-const text = fs.readFileSync(scriptPath, 'utf8');
+const raw = JSON.parse(fs.readFileSync(scriptPath, 'utf8').trim().replace(/^```\w*\n?|```$/g, ''));
+const text = JSON.stringify(Array.isArray(raw) ? raw : { format: 'b3d-studio-script', version: 1, ...raw });
 
 const browser = await chromium.launch({
   executablePath: '/usr/bin/google-chrome',
@@ -31,9 +32,8 @@ await page.addStyleTag({ content: '.topbar,.sidebar,.panel-timeline,.statusbar,.
 
 const result = await page.evaluate(async ({ text, solid }) => {
   const b = window.__b3d;
-  const json = text.trim().replace(/^```\w*\n?|```$/g, '');
-  const script = JSON.parse(json);
-  const commands = Array.isArray(script) ? script : script.commands;
+  // Validate like the app's script dialog (also maps script shorthand to commands).
+  const commands = b.parseScript(text).command.commands;
   const s = b.store;
   if (b.prepare) await b.prepare(commands);
   s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, ...commands] }, { select: false });
@@ -54,14 +54,16 @@ const hasCam = await page.evaluate(() => !!window.__b3d.store.getState().doc.cam
 if (hasCam && !focus) {
   await page.evaluate(() => window.__b3d.viewport().viewCamera());
   await page.waitForTimeout(900);
-  shots.push(['Scene camera', await page.screenshot({ type: 'png' })]);
+  shots.push(['Scene camera', await page.screenshot({ type: 'png', timeout: 180000 })]);
 }
 for (const [v, label] of views) {
   await page.evaluate((v) => window.__b3d.viewport().setView(v), v);
-  await page.waitForTimeout(1500); // camera moves are time-based; software rendering is slow
+  // Camera moves are animated per rendered frame; wait until this one has finished.
+  await page.waitForFunction(() => !window.__b3d.viewport().tween, null, { timeout: 180000 });
   await page.evaluate((focus) => window.__b3d.viewport().frame(true, focus ? focus.split(',') : undefined), focus);
-  await page.waitForTimeout(1500);
-  shots.push([label, await page.screenshot({ type: 'png' })]);
+  await page.waitForFunction(() => !window.__b3d.viewport().tween, null, { timeout: 180000 });
+  await page.waitForTimeout(300);
+  shots.push([label, await page.screenshot({ type: 'png', timeout: 180000 })]);
 }
 
 // Contact sheet: 2 columns.

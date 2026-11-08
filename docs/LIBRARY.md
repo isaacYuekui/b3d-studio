@@ -117,6 +117,17 @@ Size is the real-world bounding box in metres (X × Y × Z, Z up) at scale 1. Mo
 | `coast_sand_01` | Coast Sand 01 | 15 |
 | `gravel` | Gravel | 2 |
 | `asphalt_02` | Asphalt 02 | 3 |
+| `grass_path_2` | Grass Path 2 | 1 |
+| `rocky_trail` | Rocky Trail | 2 |
+| `rock_face` | Rock Face | 2.38 |
+| `cobblestone_floor_08` | Cobblestone Floor 08 | 2 |
+| `clay_roof_tiles_02` | Clay Roof Tiles 02 | 2.5 |
+| `castle_brick_01` | Castle Brick 01 | 1.5 |
+| `brown_planks_07` | Brown Planks 07 | 1 |
+| `forest_floor` | Forest Floor | 2.14 |
+| `coast_sand_02` | Coast Sand 02 | 15 |
+| `white_rough_plaster` | White Rough Plaster | 1 |
+| `aerial_grass_rock` | Aerial Grass Rock | 15 |
 
 ## Credits
 
@@ -162,3 +173,4 @@ Size is the real-world bounding box in metres (X × Y × Z, Z up) at scale 1. Mo
 - Ulan Cabanilla
 - Vibrant Nordic
 - Yann Kervran
+- eye-candy.xyz

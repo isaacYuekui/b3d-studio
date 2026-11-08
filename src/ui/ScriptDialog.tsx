@@ -7,6 +7,7 @@ import { pickFile } from './actions';
 
 /** Bundled example scenes, loaded on demand (each is its own small chunk). */
 const EXAMPLES: { id: string; label: string; load: () => Promise<{ default: string }> }[] = [
+  { id: 'village-valley', label: 'Village valley (Roblox-ready)', load: () => import('../../examples/village-valley.b3d-script.json?raw') },
   { id: 'living-room', label: 'Living room: two people', load: () => import('../../examples/living-room.b3d-script.json?raw') },
   { id: 'character-walk', label: 'Mannequin walk cycle', load: () => import('../../examples/character-walk.b3d-script.json?raw') },
   { id: 'coffee-mug', label: 'Coffee mug (modelled)', load: () => import('../../examples/coffee-mug.b3d-script.json?raw') },
