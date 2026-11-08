@@ -122,8 +122,12 @@ export interface SceneObject {
   /** Armature objects: bones and the current pose. */
   armature?: ArmatureData;
   pose?: Record<string, BonePose>;
-  /** Mesh objects: deformed by this armature (automatic weights from bone distance). */
-  skin?: { armature: string };
+  /**
+   * Mesh objects: deformed by this armature. Weights are automatic (bone distance) unless
+   * `bone` (follow one bone rigidly, e.g. eyes) or `weights` (a library weight set such as
+   * "humans/male#body") is given.
+   */
+  skin?: { armature: string; bone?: string; weights?: string };
 }
 
 export const BACKGROUNDS = ['color', 'hdri', 'blurred'] as const;

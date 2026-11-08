@@ -55,6 +55,8 @@ import { buildVertexData } from './geometry';
 import { subtree } from '../core/commands';
 import { EditOverlay } from './EditOverlay';
 import type { M4, PosedBones, Weights } from '../core/rig';
+import { humanWeights, loadHuman } from '../core/humans';
+import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { apply as m4apply, rotEuler as rotEulerM, boneBase, invert as m4invert, m4ToQuat, mul as m4mul, poseAt, poseBones, poseEdit, quatToM4, rotationOnly, skinMesh, toEuler, worldMatrix } from '../core/rig';
 import { applyModifiers } from '../core/mesh/modifiers';
 import { transformVerts } from '../core/mesh/ops';
@@ -349,9 +351,19 @@ export class Viewport {
         ev = { mesh: o.mesh, mods: o.modifiers, out: applyModifiers(o.mesh, o.modifiers) };
         this.evalCache.set(id, ev);
       }
-      const deformed = skinMesh(doc, id, ev.out, state.frame, this.bindCache);
-      buildVertexData(deformed).applyToMesh(e.node, true);
-      e.node.refreshBoundingInfo();
+      let explicit: Weights | null = null;
+      const ref = o.skin.weights;
+      if (ref) {
+        explicit = humanWeights(ref);
+        if (!explicit) {
+          // Library weights not loaded yet (e.g. after a reload): fetch, then redraw.
+          const preset = /^humans\/([a-z0-9_-]+)#/.exec(ref)?.[1];
+          if (preset) void loadHuman(preset).then((d) => d && this.redrawRigs());
+          continue;
+        }
+      }
+      const deformed = skinMesh(doc, id, ev.out, state.frame, this.bindCache, explicit);
+      this.updateDeformed(e.node, deformed);
     }
     // Meshes no longer skinned: back to the rest shape.
     for (const id of this.skinned) {
@@ -361,6 +373,46 @@ export class Viewport {
       if (o?.mesh && e?.node instanceof Mesh) buildVertexData(applyModifiers(o.mesh, o.modifiers)).applyToMesh(e.node, true);
     }
     this.skinned = now;
+  }
+
+  private redrawRigs() {
+    this.skinned.clear();
+    this.applyRigs(this.store.getState());
+  }
+
+  /** Topology cache per mesh face list: triangle indices for fast per-frame updates. */
+  private topo = new WeakMap<object, { indices: number[] }>();
+
+  /** Update a skinned mesh's vertices in place (smooth meshes: positions + normals only). */
+  private updateDeformed(node: Mesh, mesh: MeshData) {
+    if (!mesh.smooth) {
+      buildVertexData(mesh).applyToMesh(node, true);
+      node.refreshBoundingInfo();
+      return;
+    }
+    let t = this.topo.get(mesh.faces);
+    const n = mesh.vertices.length;
+    const fresh = !t || node.getTotalVertices() !== n || node.metadata?.topo !== mesh.faces;
+    if (fresh) {
+      buildVertexData(mesh).applyToMesh(node, true);
+      t = { indices: Array.from(node.getIndices() ?? []) };
+      this.topo.set(mesh.faces, t);
+      node.metadata = { ...node.metadata, topo: mesh.faces };
+      node.refreshBoundingInfo();
+      return;
+    }
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const v = mesh.vertices[i];
+      pos[i * 3] = v[0];
+      pos[i * 3 + 1] = v[2];
+      pos[i * 3 + 2] = v[1];
+    }
+    const normals: number[] = [];
+    VertexData.ComputeNormals(pos, t!.indices, normals);
+    node.updateVerticesData('position', pos, false, false);
+    node.updateVerticesData('normal', normals, false, false);
+    node.refreshBoundingInfo();
   }
 
   /** Octahedral bones like Blender's, in the armature's local space. */

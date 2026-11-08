@@ -267,6 +267,8 @@ export function skinMesh(
   mesh: MeshData,
   frame: number,
   bindCache?: Map<string, { key: unknown; weights: Weights; rel: string }>,
+  /** Explicit weights (library weight sets); used when they match the vertex count. */
+  explicit?: Weights | null,
 ): MeshData {
   const o = doc.objects[meshId];
   const armId = o?.skin?.armature;
@@ -278,9 +280,17 @@ export function skinMesh(
   const relInv = invert(rel);
   const restPts = mesh.vertices.map((v) => apply(rel, v));
   let cached = bindCache?.get(meshId);
-  if (!cached || cached.key !== mesh || cached.rel !== relKey || (cached as unknown as { bones: unknown }).bones !== arm.armature.bones) {
-    cached = { key: mesh, rel: relKey, weights: autoWeights(restPts, arm.armature.bones) };
+  if (!cached || cached.key !== mesh || cached.rel !== relKey || (cached as unknown as { bones: unknown }).bones !== arm.armature.bones || (cached as unknown as { ex: unknown }).ex !== explicit) {
+    const bone = o.skin!.bone;
+    const weights: Weights =
+      bone && arm.armature.bones.some((b) => b.name === bone)
+        ? { bones: [bone], w: restPts.map(() => [[0, 1]] as [number, number][]) }
+        : explicit && explicit.w.length === restPts.length
+          ? explicit
+          : autoWeights(restPts, arm.armature.bones);
+    cached = { key: mesh, rel: relKey, weights };
     (cached as unknown as { bones: unknown }).bones = arm.armature.bones;
+    (cached as unknown as { ex: unknown }).ex = explicit;
     bindCache?.set(meshId, cached);
   }
   const { skin } = poseBones(arm.armature.bones, poseAt(doc, armId!, frame));

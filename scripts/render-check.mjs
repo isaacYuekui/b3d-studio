@@ -35,6 +35,7 @@ const result = await page.evaluate(async ({ text, solid }) => {
   const script = JSON.parse(json);
   const commands = Array.isArray(script) ? script : script.commands;
   const s = b.store;
+  if (b.prepare) await b.prepare(commands);
   s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, ...commands] }, { select: false });
   s.select(null);
   s.setShading(solid ? 'solid' : 'rendered');

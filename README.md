@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Realistic people (v1.0)
+
+- `addHuman`: realistic men and women from the MakeHuman CC0 base mesh, morphed to young adults, with its 163-bone skeleton and artist weights, clothes (shirt, trousers, shoes), hair and eyes; colours per outfit
+- `playAction`: idle, walk, run, wave, jump, sit, stand; feet stay on the floor; actions chain
+- New example: a living room where one person walks in and waves while the other sits down
+- MakeHuman assets are CC0 1.0 ([makehumancommunity/makehuman](https://github.com/makehumancommunity/makehuman)); presets are built at build time by `scripts/build-humans.mjs`
+
 ## Characters (v0.9)
 
 - Armatures with Blender-style bones, automatic skin weights, Pose Mode (tap a bone, turn it with the gizmo, type rotations), bone keyframes with auto-key

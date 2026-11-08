@@ -1,5 +1,28 @@
 # Characters: armatures, skinning, Pose Mode
 
+## Realistic people (v1.0)
+
+```json
+{ "type": "addHuman", "id": "leo", "preset": "male", "name": "Leo",
+  "transform": { "position": [2, 0, 0], "rotation": [0, 0, -90] },
+  "outfit": { "skin": "#8d5a3b", "shirt": "#d8d4cb", "pants": "#3a3f47", "shoes": "#2a1d14", "hair": "#1c1410", "eyes": "#4a3020" } }
+{ "type": "playAction", "id": "leo", "action": "walk", "start": 1, "cycles": 2 }
+{ "type": "playAction", "id": "leo", "action": "wave", "start": 70, "cycles": 3, "travel": false }
+```
+
+- Presets `male` / `female`: the MakeHuman base mesh (CC0) morphed with its young-adult targets,
+  its 163-bone default skeleton with the artist-painted weights, garments (shirt, trousers, shoes)
+  made from body regions so they bend exactly with the skin, a hair cap, and eyes on the eye
+  bones. Set any garment or the hair to `null` to leave it off. Built by `scripts/build-humans.mjs`.
+- Characters face −Y; `rotation[2]` turns them (−90 faces −X, 90 faces +X).
+- `playAction` actions: `idle`, `walk` (1.45 m per cycle), `run` (3.3 m), `wave`, `jump`, `sit`
+  (sits down from standing: put a seat behind them), `stand`. Options: `cycles`, `speed`,
+  `travel: false` to stay in place. Feet are kept on the floor automatically. Actions key the
+  whole body, so they chain: play one after another and the next starts where the last ended.
+  Turn a character between actions with an ordinary `setKeyframe` on its rotation.
+- The relaxed standing pose is applied on creation.
+
+
 B3D Studio's rigging follows Blender's conventions so poses read the same way.
 
 ## Data

@@ -713,6 +713,43 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Realistic people (v1.0).
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.click('[data-testid="script-btn"]');
+  await page.click('[data-example="living-room"]');
+  await page.waitForFunction(() => document.querySelector('[data-testid="script-text"]').value.length > 500);
+  await page.click('[data-testid="script-run"]');
+  await page.waitForFunction(() => Object.values(window.__b3d.store.getState().doc.objects).some((o) => o.skin?.weights), null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(4000);
+  const info = await page.evaluate(() => {
+    const d = window.__b3d.store.getState().doc;
+    const rigs = Object.values(d.objects).filter((o) => o.type === 'armature');
+    const parts = Object.values(d.objects).filter((o) => o.skin?.weights);
+    return { rigs: rigs.length, bones: rigs[0]?.armature.bones.length, parts: parts.length, keys: Object.keys(d.animation?.poses ?? {}).length };
+  });
+  check('v1.0: living room has two realistic people (163-bone rigs, skinned clothes)', info.rigs === 2 && info.bones === 163 && info.parts >= 8 && info.keys === 2, JSON.stringify(info));
+  const t0 = Date.now();
+  const move = await page.evaluate(async () => {
+    const b = window.__b3d;
+    const node = b.viewport().entries.get('he-body').node;
+    const sample = () => Array.from(node.getVerticesData('position').slice(0, 300));
+    b.store.setFrame(10);
+    const a = sample();
+    b.store.setFrame(20);
+    const c = sample();
+    let d = 0;
+    for (let i = 0; i < a.length; i++) d = Math.max(d, Math.abs(a[i] - c[i]));
+    return d;
+  });
+  check('v1.0: the walking body deforms between frames', move > 0.01, `max vertex move ${move.toFixed(3)} m, ${Date.now() - t0} ms for 2 frames (software GPU)`);
+  await page.evaluate(() => { window.__b3d.store.setFrame(100); window.__b3d.viewport().viewCamera(); });
+  await page.waitForTimeout(2000);
+  await page.screenshot({ path: `${shots}/living-room.png` });
+  check('v1.0: no errors (people)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // iPad: edit mode by touch.
 {
   const { ctx, page, errors } = await open({ width: 820, height: 1180 }, { touch: true, dpr: 2 });
