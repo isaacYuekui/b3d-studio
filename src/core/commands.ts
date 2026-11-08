@@ -14,6 +14,10 @@ import type { ArmatureData, Bone, BonePose, Background, LightData, LightType, Ma
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
 import { EDIT_OPS, runEditSteps } from './mesh/script';
+import { DEFAULT_OUTFIT, HUMAN_PRESETS, humanPreset } from './humans';
+import type { Outfit } from './humans';
+import { ACTIONS, playAction, standPose } from './motion';
+import type { ActionName } from './motion';
 import type { EditStep } from './mesh/script';
 import { MeshOpError } from './mesh/ops';
 
@@ -67,7 +71,11 @@ export type Command =
   /** Remove a bone's keys (or all of the armature's with bone null). */
   | { type: 'clearPoseKeys'; id: string; bone: string | null }
   /** Deform a mesh (or shape, converted) with an armature, or stop (null). */
-  | { type: 'setSkin'; id: string; armature: string | null }
+  | { type: 'setSkin'; id: string; armature: string | null; bone?: string; weights?: string }
+  /** A realistic, rigged person (MakeHuman CC0 preset): armature + body + clothes + hair + eyes. */
+  | { type: 'addHuman'; id: string; preset: string; name?: string; transform?: Partial<Transform>; outfit?: Outfit; parentId?: string | null }
+  /** Animate an armature with a built-in action (walk, run, idle, wave, jump, sit…). */
+  | { type: 'playAction'; id: string; action: ActionName; start: number; cycles?: number; speed?: number; travel?: boolean }
   /** Model with Edit Mode operators: each step selects elements by a query and applies an op. */
   | { type: 'editMesh'; id: string; steps: EditStep[] }
   | { type: 'setWorld'; world: Partial<World> }
@@ -396,7 +404,48 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       }
       requireArmature(doc, cmd.armature);
       const o = asMesh(requireObj(doc, cmd.id));
-      return { doc: withObject(doc, { ...o, skin: { armature: cmd.armature } }), created: [] };
+      const skin: NonNullable<SceneObject['skin']> = { armature: cmd.armature };
+      if (cmd.bone) skin.bone = cmd.bone;
+      if (cmd.weights) skin.weights = cmd.weights;
+      return { doc: withObject(doc, { ...o, skin }), created: [] };
+    }
+
+    case 'addHuman': {
+      const data = humanPreset(cmd.preset);
+      if (!data) throw new CommandError(`Human preset "${cmd.preset}" is not loaded (presets: ${HUMAN_PRESETS.join(', ')})`);
+      const o: Required<Outfit> = { ...DEFAULT_OUTFIT, ...cmd.outfit } as Required<Outfit>;
+      const sub: Command[] = [{ type: 'add', primitive: 'armature', id: cmd.id, name: cmd.name ?? `${cmd.preset === 'female' ? 'Woman' : 'Man'}`, armature: { bones: data.bones }, ...(cmd.transform ? { transform: cmd.transform } : {}), ...(cmd.parentId ? { parentId: cmd.parentId } : {}) }];
+      const part = (p: 'body' | 'shirt' | 'pants' | 'shoes' | 'hair', color: string, rough: number, label: string) => {
+        sub.push({ type: 'add', primitive: 'mesh', id: `${cmd.id}-${p}`, name: label, parentId: cmd.id, mesh: data.parts[p].mesh, material: { baseColor: color, roughness: rough, metallic: 0 } });
+        sub.push({ type: 'setSkin', id: `${cmd.id}-${p}`, armature: cmd.id, weights: `humans/${cmd.preset}#${p}` });
+      };
+      part('body', o.skin, 0.55, 'Skin');
+      if (o.shirt) part('shirt', o.shirt, 0.8, 'Shirt');
+      if (o.pants) part('pants', o.pants, 0.85, 'Trousers');
+      if (o.shoes) part('shoes', o.shoes, 0.45, 'Shoes');
+      if (o.hair) part('hair', o.hair, 0.7, 'Hair');
+      // Eyes: eyeball, iris and pupil, following the eye bones.
+      data.eyes.forEach((e, i) => {
+        const side = i === 0 ? 'L' : 'R';
+        const f = e.forward;
+        const at = (d: number): Vec3 => [e.center[0] + f[0] * d, e.center[1] + f[1] * d, e.center[2] + f[2] * d];
+        const ball = `${cmd.id}-eye${side}`;
+        sub.push({ type: 'add', primitive: 'sphere', id: ball, name: `Eye.${side}`, parentId: cmd.id, transform: { position: e.center, scale: [0.0118, 0.0118, 0.0118] }, params: { segments: 24 }, material: { baseColor: '#f2efe9', roughness: 0.15 } });
+        sub.push({ type: 'add', primitive: 'sphere', id: `${ball}-iris`, name: `Iris.${side}`, parentId: cmd.id, transform: { position: at(0.0098), scale: [0.0058, 0.0024, 0.0058] }, params: { segments: 24 }, material: { baseColor: o.eyes, roughness: 0.2 } });
+        sub.push({ type: 'add', primitive: 'sphere', id: `${ball}-pupil`, name: `Pupil.${side}`, parentId: cmd.id, transform: { position: at(0.0112), scale: [0.0025, 0.0012, 0.0025] }, params: { segments: 16 }, material: { baseColor: '#050505', roughness: 0.1 } });
+        for (const id of [ball, `${ball}-iris`, `${ball}-pupil`]) sub.push({ type: 'setSkin', id, armature: cmd.id, bone: e.bone });
+      });
+      // Start relaxed (arms down) instead of the modelling A-pose.
+      sub.push({ type: 'setPose', id: cmd.id, pose: standPose(data.bones), reset: true });
+      return applyCommand(doc, { type: 'batch', commands: sub }, idGen);
+    }
+
+    case 'playAction': {
+      const o = requireArmature(doc, cmd.id);
+      const res = playAction(doc, o, cmd.action, cmd.start, { cycles: cmd.cycles, speed: cmd.speed, travel: cmd.travel });
+      let next = doc;
+      for (const c of res) next = applyCommand(next, c, idGen).doc;
+      return { doc: next, created: [] };
     }
 
     case 'editMesh': {
@@ -582,6 +631,14 @@ export function validateMeshData(v: unknown): MeshData {
   return { vertices, faces, smooth: v.smooth === true };
 }
 
+function validateSkin(v: unknown, at: string): NonNullable<SceneObject['skin']> {
+  if (!isRecord(v) || !isId(v.armature)) fail(`${at}: skin needs an armature id`);
+  const out: NonNullable<SceneObject['skin']> = { armature: v.armature as string };
+  if (v.bone !== undefined) out.bone = typeof v.bone === 'string' && BONE_NAME.test(v.bone) ? v.bone : fail(`${at}: skin.bone invalid`);
+  if (v.weights !== undefined) out.weights = typeof v.weights === 'string' && /^[a-z0-9_-]+\/[a-z0-9_-]+#[a-z0-9_-]+$/.test(v.weights) ? v.weights : fail(`${at}: skin.weights must look like "humans/male#body"`);
+  return out;
+}
+
 const BONE_NAME = /^[A-Za-z0-9 _.\-]{1,64}$/;
 
 export function validateArmature(v: unknown): ArmatureData {
@@ -732,8 +789,7 @@ export function validateSceneObject(raw: unknown): SceneObject {
     if (v.pose !== undefined) obj.pose = validatePose(v.pose);
   }
   if (obj.type === 'mesh' && v.skin !== undefined) {
-    if (!isRecord(v.skin) || !isId(v.skin.armature)) fail(`object ${v.id}: skin invalid`);
-    obj.skin = { armature: v.skin.armature as string };
+    obj.skin = validateSkin(v.skin, `object ${v.id}`);
   }
   return obj;
 }
@@ -920,9 +976,45 @@ export function validateCommand(v: unknown, depth = 0): Command {
     case 'clearPoseKeys':
       if (!isId(v.id) || !(v.bone === null || v.bone === undefined || typeof v.bone === 'string')) fail('clearPoseKeys needs id');
       return { type: 'clearPoseKeys', id: v.id, bone: (v.bone as string | undefined) ?? null };
-    case 'setSkin':
+    case 'setSkin': {
       if (!isId(v.id) || !(v.armature === null || isId(v.armature))) fail('setSkin needs id and armature (or null)');
-      return { type: 'setSkin', id: v.id, armature: v.armature as string | null };
+      if (v.armature === null) return { type: 'setSkin', id: v.id, armature: null };
+      const sk = validateSkin({ armature: v.armature, bone: v.bone, weights: v.weights }, 'setSkin');
+      return { type: 'setSkin', id: v.id, armature: sk.armature, ...(sk.bone ? { bone: sk.bone } : {}), ...(sk.weights ? { weights: sk.weights } : {}) };
+    }
+    case 'addHuman': {
+      if (typeof v.id !== 'string' || !REF_ID.test(v.id)) fail('addHuman needs an id (letters, digits, _ . -)');
+      if (!(HUMAN_PRESETS as readonly string[]).includes(v.preset as string)) fail(`addHuman preset must be ${HUMAN_PRESETS.join(' or ')}`);
+      const cmd: Extract<Command, { type: 'addHuman' }> = { type: 'addHuman', id: v.id, preset: v.preset as string };
+      if (v.name !== undefined) cmd.name = isStr(v.name, 100) ? v.name : fail('addHuman name invalid');
+      if (v.parentId !== undefined && v.parentId !== null) cmd.parentId = isId(v.parentId) ? v.parentId : fail('addHuman parentId invalid');
+      if (v.transform !== undefined) {
+        if (!isRecord(v.transform)) fail('addHuman transform invalid');
+        const t: Partial<Transform> = {};
+        for (const k of ['position', 'rotation', 'scale'] as const) if (v.transform[k] !== undefined) t[k] = isVec3(v.transform[k]) ? (v.transform[k] as Vec3) : fail(`addHuman transform.${k} must be [x,y,z]`);
+        cmd.transform = t;
+      }
+      if (v.outfit !== undefined) {
+        if (!isRecord(v.outfit)) fail('addHuman outfit must be an object of colours');
+        const o: Outfit = {};
+        for (const [k, c] of Object.entries(v.outfit)) {
+          if (!['skin', 'shirt', 'pants', 'shoes', 'hair', 'eyes'].includes(k)) fail(`addHuman outfit.${k} unknown (skin, shirt, pants, shoes, hair, eyes)`);
+          if (c === null && !['skin', 'eyes'].includes(k)) (o as Record<string, unknown>)[k] = null;
+          else if (isColor(c)) (o as Record<string, unknown>)[k] = c;
+          else fail(`addHuman outfit.${k} must be #rrggbb${['skin', 'eyes'].includes(k) ? '' : ' or null'}`);
+        }
+        cmd.outfit = o;
+      }
+      return cmd;
+    }
+    case 'playAction': {
+      if (!isId(v.id) || !(ACTIONS as readonly string[]).includes(v.action as string) || !isFrame(v.start)) fail(`playAction needs id, start frame and action (${ACTIONS.join(', ')})`);
+      const cmd: Extract<Command, { type: 'playAction' }> = { type: 'playAction', id: v.id, action: v.action as ActionName, start: v.start as number };
+      if (v.cycles !== undefined) cmd.cycles = inRange(v.cycles, 0.25, 200) ? (v.cycles as number) : fail('playAction cycles must be 0.25..200');
+      if (v.speed !== undefined) cmd.speed = inRange(v.speed, 0.1, 5) ? (v.speed as number) : fail('playAction speed must be 0.1..5');
+      if (v.travel !== undefined) cmd.travel = typeof v.travel === 'boolean' ? v.travel : fail('playAction travel must be true/false');
+      return cmd;
+    }
     case 'editMesh': {
       if (!isId(v.id) || !Array.isArray(v.steps) || !v.steps.length || v.steps.length > 500) fail('editMesh needs id and 1..500 steps');
       const steps = v.steps.map((raw, i) => validateEditStep(raw, i));

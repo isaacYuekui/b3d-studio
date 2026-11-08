@@ -17,6 +17,7 @@ import { ScriptDialog } from './ui/ScriptDialog';
 import { LibraryDialog } from './ui/LibraryDialog';
 import { VideoDialog } from './ui/VideoDialog';
 import { Icon } from './ui/icons';
+import { prepareCommands } from './ui/prepare';
 import { runAction, shortcutFor } from './ui/actions';
 import type { Ctx } from './ui/actions';
 
@@ -100,7 +101,7 @@ function StatusBar() {
   return (
     <footer className="statusbar" aria-live="polite">
       <span className="status-notice">{notice ?? `Tool: ${tool[0].toUpperCase()}${tool.slice(1)}`}</span>
-      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v0.9</span>
+      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v1.0</span>
     </footer>
   );
 }
@@ -134,7 +135,7 @@ export function App() {
   );
   // Test/debug hook, only with ?debug in the URL.
   useEffect(() => {
-    if (new URLSearchParams(location.search).has('debug')) (window as unknown as Record<string, unknown>).__b3d = ctx;
+    if (new URLSearchParams(location.search).has('debug')) (window as unknown as Record<string, unknown>).__b3d = { ...ctx, prepare: prepareCommands };
   }, [ctx]);
   const answer = (v: boolean) => {
     ask?.resolve(v);

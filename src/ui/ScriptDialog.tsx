@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react';
 import { parseScript } from '../core/serialize';
 import type { Command } from '../core/commands';
+import { prepareCommands } from './prepare';
 import { useCtx } from './context';
 import { pickFile } from './actions';
 
 /** Bundled example scenes, loaded on demand (each is its own small chunk). */
 const EXAMPLES: { id: string; label: string; load: () => Promise<{ default: string }> }[] = [
-  { id: 'character-walk', label: 'Character walk cycle', load: () => import('../../examples/character-walk.b3d-script.json?raw') },
+  { id: 'living-room', label: 'Living room: two people', load: () => import('../../examples/living-room.b3d-script.json?raw') },
+  { id: 'character-walk', label: 'Mannequin walk cycle', load: () => import('../../examples/character-walk.b3d-script.json?raw') },
   { id: 'coffee-mug', label: 'Coffee mug (modelled)', load: () => import('../../examples/coffee-mug.b3d-script.json?raw') },
   { id: 'forest-supercar', label: 'Supercar in the pines', load: () => import('../../examples/forest-supercar.b3d-script.json?raw') },
   { id: 'car-studio', label: 'Supercar studio', load: () => import('../../examples/car-studio.b3d-script.json?raw') },
@@ -33,10 +35,11 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
     }
   }, [text]);
 
-  const run = () => {
+  const run = async () => {
     if (!parsed?.ok) return;
     const { store } = ctx;
     const script = parsed.value.command as { type: 'batch'; commands: Command[] };
+    await prepareCommands(script.commands);
     const commands: Command[] = clear && store.getState().doc.order.length ? [{ type: 'delete', ids: [...store.getState().doc.order] }, ...script.commands] : script.commands;
     const before = store.getState().doc;
     store.dispatch({ type: 'batch', commands }, { select: false });
@@ -105,7 +108,7 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
           >
             Open file…
           </button>
-          <button className="btn primary" data-testid="script-run" disabled={!parsed?.ok} onClick={run}>
+          <button className="btn primary" data-testid="script-run" disabled={!parsed?.ok} onClick={() => void run()}>
             Run script
           </button>
         </div>

@@ -7,3 +7,4 @@ test-results
 public/library
 tests/fixtures
 __pycache__
+.cache

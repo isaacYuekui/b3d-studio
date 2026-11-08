@@ -113,3 +113,9 @@ Check models with `node scripts/render-check.mjs <script.json> <sheet.png> --foc
 `setPose`, `setPoseKey`, `deletePoseKey`, `clearPoseKeys`, `setArmature`. Bone axes and a full
 cheat sheet: [CHARACTERS.md](CHARACTERS.md). Example: `examples/generators/character.py`
 (box-modelled body + 19-bone rig + walk cycle).
+
+## Realistic people (v1.0)
+
+`addHuman {id, preset: "male"|"female", name?, transform?, outfit?}` and
+`playAction {id, action, start, cycles?, speed?, travel?}`. Details and an example:
+[CHARACTERS.md](CHARACTERS.md#realistic-people-v10).

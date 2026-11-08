@@ -10,7 +10,7 @@
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "build:single": "vite build --mode single",
     "preview": "vite preview",
-    "prebuild": "node scripts/fetch-assets.mjs",
+    "prebuild": "node scripts/fetch-assets.mjs && node scripts/build-humans.mjs",
     "fetch-assets": "node scripts/fetch-assets.mjs"
   },
   "dependencies": {
