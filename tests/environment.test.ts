@@ -194,3 +194,14 @@ describe('Roblox GLB post-processing', () => {
     expect(trees[1].getTranslation()[0]).toBeCloseTo(5 / STUD);
   });
 });
+
+describe('pasting scripts', () => {
+  it('accepts scripts without the header, single commands, and explains glTF files', async () => {
+    const { parseScript } = await import('../src/core/serialize');
+    expect(parseScript('{"commands":[{"type":"add","primitive":"cube"}]}').count).toBe(1);
+    expect(parseScript('{"type":"addPlant","id":"p","kind":"pine","seed":1}').count).toBe(1);
+    expect(parseScript('```json\n[{"type":"add","primitive":"sphere"}]\n```').count).toBe(1);
+    expect(() => parseScript('{"asset":{"version":"2.0"},"nodes":[]}')).toThrow(/Import Model/);
+    expect(() => parseScript('{"hello":1}')).toThrow(/No commands found/);
+  });
+});
