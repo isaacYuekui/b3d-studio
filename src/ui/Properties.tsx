@@ -11,6 +11,8 @@ import { runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
 import { guessUnitScale, isUserAsset } from '../engine/userModels';
 import { worldOf } from '../core/types';
+import { EASINGS, isAnimated, transformAt, transformEdit } from '../core/animation';
+import type { Easing } from '../core/animation';
 import type { Background } from '../core/types';
 
 const AXES = ['x', 'y', 'z'] as const;
@@ -33,6 +35,7 @@ export function Properties() {
   const { store } = ctx;
   const doc = useApp((s) => s.doc);
   const sel = useApp((s) => s.selection);
+  const frame = useApp((s) => s.frame);
   const o = sel ? doc.objects[sel] : null;
   const catalog = useCatalog();
 
@@ -59,21 +62,25 @@ export function Properties() {
     );
   }
 
+  // Animated objects show (and edit, via auto-key) their pose at the current frame.
+  const shown = transformAt(doc, o.id, frame) ?? o.transform;
+  const animated = isAnimated(doc, o.id);
+
   const vecField = (key: 'position' | 'rotation' | 'scale', label: string, opts: { step: number; rate: number; suffix?: string }) => (
     <Section title={label}>
       <div className="vec3">
         {AXES.map((ax, i) => {
           const make = (v: number): Command => {
-            const next = [...o.transform[key]] as Vec3;
+            const next = [...shown[key]] as Vec3;
             next[i] = v;
-            return { type: 'transform', id: o.id, [key]: next };
+            return transformEdit(doc, frame, o.id, { [key]: next });
           };
           return (
             <NumberField
               key={ax}
               axis={ax}
               label={ax.toUpperCase()}
-              value={o.transform[key][i]}
+              value={+shown[key][i].toFixed(4)}
               step={opts.step}
               dragRate={opts.rate}
               suffix={opts.suffix}
@@ -127,6 +134,8 @@ export function Properties() {
       {vecField('position', 'Location', { step: 0.1, rate: 0.01, suffix: ' m' })}
       {vecField('rotation', 'Rotation', { step: 1, rate: 0.5, suffix: '°' })}
       {vecField('scale', 'Scale', { step: 0.1, rate: 0.005 })}
+
+      <AnimationSection id={o.id} animated={animated} />
 
       <Section title="Relations">
         <label className="prop-row">
@@ -366,6 +375,49 @@ function ModelSection({ id }: { id: string }) {
         {user
           ? 'Imported on this device. Units are converted to metres automatically; type a size above to match the real object (a supercar is about 4.5 m long).'
           : 'A scanned model from the library, with its own photo materials. CC0 from Poly Haven.'}
+      </p>
+    </Section>
+  );
+}
+
+const EASING_LABEL: Record<Easing, string> = { linear: 'Linear', ease: 'Ease in & out', easeIn: 'Ease in', easeOut: 'Ease out', constant: 'Hold (jump)' };
+
+/** Keyframes of the selected object: insert/delete at the current frame, and the easing into the next key. */
+function AnimationSection({ id, animated }: { id: string; animated: boolean }) {
+  const { store } = useCtx();
+  const frame = useApp((s) => s.frame);
+  const keys = useApp((s) => s.doc.animation?.tracks[id]);
+  const key = keys?.find((k) => k.frame === frame);
+  return (
+    <Section title="Animation" defaultOpen={animated}>
+      <div className="prop-row">
+        <span>Keyframes</span>
+        <b>{keys?.length ? `${keys.length} (frames ${keys[0].frame}–${keys[keys.length - 1].frame})` : 'None'}</b>
+      </div>
+      {key && (
+        <label className="prop-row">
+          <span>Easing to next key</span>
+          <select id="key-easing" aria-label="Easing to next key" value={key.easing} onChange={(e) => store.dispatch({ type: 'setKeyframe', id, frame, transform: key.transform, easing: e.target.value as Easing }, { select: false })}>
+            {EASINGS.map((e) => (
+              <option key={e} value={e}>{EASING_LABEL[e]}</option>
+            ))}
+          </select>
+        </label>
+      )}
+      <div className="prop-actions" style={{ padding: 0 }}>
+        <button className="btn" data-testid="insert-key" onClick={() => store.dispatch({ type: 'setKeyframe', id, frame }, { select: false })}>
+          ◆ {key ? 'Update' : 'Insert'} key at {frame}
+        </button>
+        {key && (
+          <button className="btn danger" onClick={() => store.dispatch({ type: 'deleteKeyframe', id, frame }, { select: false })}>
+            Delete key
+          </button>
+        )}
+      </div>
+      <p className="prop-hint">
+        {animated
+          ? 'Moving this object now saves a key at the current frame automatically.'
+          : 'Insert a key, go to another frame, move the object, and insert another key. Play (Space) to see it move.'}
       </p>
     </Section>
   );

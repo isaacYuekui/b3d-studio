@@ -6,6 +6,7 @@ import type { Viewport, ViewName } from '../engine/Viewport';
 import { createDefaultDoc } from '../core/store';
 import { loadLocal, parseProject, saveLocal, serializeProject } from '../core/serialize';
 import type { LightType, ObjectType } from '../core/types';
+import { animationOf, keyFrames } from '../core/animation';
 
 export interface Ctx {
   store: Store;
@@ -16,6 +17,8 @@ export interface Ctx {
   openScript: () => void;
   /** Opens the asset library browser. */
   openLibrary: () => void;
+  /** Opens the Render Video dialog. */
+  openVideo: () => void;
 }
 
 export interface Action {
@@ -261,6 +264,12 @@ export const actions = {
       }
     },
   },
+  'file.video': {
+    id: 'file.video',
+    label: 'Render Video (MP4)…',
+    shortcut: `${MOD} F12`,
+    run: (c) => c.openVideo(),
+  },
   'file.glb': {
     id: 'file.glb',
     label: 'Export GLB (for Blender)…',
@@ -317,6 +326,79 @@ export const actions = {
   'tool.rotate': tool('rotate', 'Rotate', 'R'),
   'tool.scale': tool('scale', 'Scale', 'S'),
 
+  'anim.insertKey': {
+    id: 'anim.insertKey',
+    label: 'Insert Keyframe',
+    shortcut: 'I',
+    enabled: hasSel,
+    run: (c) => {
+      const { selection, frame, doc } = c.store.getState();
+      if (!selection) return;
+      c.store.dispatch({ type: 'setKeyframe', id: selection, frame }, { select: false });
+      c.store.notify(`Keyframe for ${doc.objects[selection].name} at frame ${frame}`);
+    },
+  },
+  'anim.deleteKey': {
+    id: 'anim.deleteKey',
+    label: 'Delete Keyframe',
+    shortcut: '⌥ I',
+    enabled: hasSel,
+    run: (c) => {
+      const { selection, frame } = c.store.getState();
+      if (selection) c.store.dispatch({ type: 'deleteKeyframe', id: selection, frame }, { select: false });
+    },
+  },
+  'anim.clear': {
+    id: 'anim.clear',
+    label: 'Clear Animation of Selected',
+    enabled: (c) => {
+      const { selection, doc } = c.store.getState();
+      return !!selection && !!doc.animation?.tracks[selection];
+    },
+    run: (c) => {
+      const { selection } = c.store.getState();
+      if (selection) c.store.dispatch({ type: 'clearAnimation', id: selection }, { select: false });
+    },
+  },
+  'anim.cameraKey': {
+    id: 'anim.cameraKey',
+    label: 'Key Camera at Current View',
+    run: (c) => {
+      const v = c.viewport()?.currentView();
+      if (!v) return;
+      const { frame, doc } = c.store.getState();
+      c.store.dispatch({ type: 'batch', commands: [{ type: 'setCameraKey', frame, ...v }, ...(doc.camera ? [] : [{ type: 'setCamera' as const, ...v }])] }, { select: false });
+      c.store.notify(`Camera keyframe at frame ${frame}`);
+    },
+  },
+  'anim.nextKey': {
+    id: 'anim.nextKey',
+    label: 'Jump to Next Keyframe',
+    shortcut: '↑',
+    run: (c) => {
+      const { doc, frame, selection } = c.store.getState();
+      const anim = animationOf(doc);
+      const frames = keyFrames(anim, selection && anim.tracks[selection] ? [selection] : null);
+      const f = frames.find((x) => x > frame);
+      if (f !== undefined) c.store.setFrame(f);
+    },
+  },
+  'anim.prevKey': {
+    id: 'anim.prevKey',
+    label: 'Jump to Previous Keyframe',
+    shortcut: '↓',
+    run: (c) => {
+      const { doc, frame, selection } = c.store.getState();
+      const anim = animationOf(doc);
+      const frames = keyFrames(anim, selection && anim.tracks[selection] ? [selection] : null);
+      const f = [...frames].reverse().find((x) => x < frame);
+      if (f !== undefined) c.store.setFrame(f);
+    },
+  },
+  'anim.nextFrame': { id: 'anim.nextFrame', label: 'Next Frame', shortcut: '→', run: (c) => c.store.setFrame(Math.min(animationOf(c.store.getState().doc).end, c.store.getState().frame + 1)) },
+  'anim.prevFrame': { id: 'anim.prevFrame', label: 'Previous Frame', shortcut: '←', run: (c) => c.store.setFrame(Math.max(animationOf(c.store.getState().doc).start, c.store.getState().frame - 1)) },
+  'anim.toStart': { id: 'anim.toStart', label: 'Jump to Start', shortcut: '⇧ ←', run: (c) => c.store.setFrame(animationOf(c.store.getState().doc).start) },
+  'anim.toEnd': { id: 'anim.toEnd', label: 'Jump to End', shortcut: '⇧ →', run: (c) => c.store.setFrame(animationOf(c.store.getState().doc).end) },
   'anim.play': {
     id: 'anim.play',
     label: 'Play / Pause',
@@ -346,6 +428,7 @@ export function shortcutFor(e: KeyboardEvent): ActionId | null {
     if (k === 'e') return 'file.export';
     if (k === 'i') return e.shiftKey ? 'file.importModel' : 'file.import';
     if (k === 'r') return 'file.script';
+    if (code === 'F12') return 'file.video';
     if (code === 'Digit1' || code === 'Numpad1') return 'view.back';
     if (code === 'Digit3' || code === 'Numpad3') return 'view.left';
     if (code === 'Digit7' || code === 'Numpad7') return 'view.bottom';
@@ -353,6 +436,7 @@ export function shortcutFor(e: KeyboardEvent): ActionId | null {
     return null;
   }
   if (e.altKey) {
+    if (code === 'KeyI') return 'anim.deleteKey';
     if (code === 'KeyH') return 'edit.unhideAll';
     if (code === 'KeyA') return 'edit.deselect';
     return null;
@@ -360,6 +444,8 @@ export function shortcutFor(e: KeyboardEvent): ActionId | null {
   if (e.shiftKey) {
     if (code === 'KeyD') return 'edit.duplicate';
     if (code === 'KeyL') return 'add.library';
+    if (code === 'ArrowLeft') return 'anim.toStart';
+    if (code === 'ArrowRight') return 'anim.toEnd';
     return null;
   }
   switch (code) {
@@ -387,6 +473,11 @@ export function shortcutFor(e: KeyboardEvent): ActionId | null {
     case 'Home': return 'view.frameAll';
     case 'Space': return 'anim.play';
     case 'KeyZ': return 'view.shading';
+    case 'KeyI': return 'anim.insertKey';
+    case 'ArrowRight': return 'anim.nextFrame';
+    case 'ArrowLeft': return 'anim.prevFrame';
+    case 'ArrowUp': return 'anim.nextKey';
+    case 'ArrowDown': return 'anim.prevKey';
   }
   return null;
 }

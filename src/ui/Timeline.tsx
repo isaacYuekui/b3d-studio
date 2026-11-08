@@ -1,19 +1,24 @@
 import { useEffect } from 'react';
 import { useApp, useCtx } from './context';
 import { Icon } from './icons';
-
-export const FRAME_START = 1;
-export const FRAME_END = 250;
-const FPS = 24;
+import { NumberField } from './NumberField';
+import { animationOf, keyFrames } from '../core/animation';
+import { runAction } from './actions';
 
 /**
- * Timeline: frame cursor + playback transport. The scene has no keyframes yet
- * (animation system is a later milestone), so playback moves the playhead only.
+ * Timeline: playhead, transport, frame range, and keyframe markers for the selected
+ * object (orange) and the scene camera (blue). Playback runs at the scene's fps.
  */
 export function Timeline() {
-  const { store } = useCtx();
+  const ctx = useCtx();
+  const { store } = ctx;
   const frame = useApp((s) => s.frame);
   const playing = useApp((s) => s.playing);
+  const anim = useApp((s) => s.doc.animation);
+  const sel = useApp((s) => s.selection);
+  const selName = useApp((s) => (s.selection ? s.doc.objects[s.selection]?.name : null));
+  const cameraView = useApp((s) => s.cameraView);
+  const { fps, start, end, tracks, camera } = animationOf({ animation: anim });
 
   useEffect(() => {
     if (!playing) return;
@@ -23,59 +28,88 @@ export function Timeline() {
     const tick = (now: number) => {
       acc += now - last;
       last = now;
-      const steps = Math.floor(acc / (1000 / FPS));
+      const steps = Math.floor(acc / (1000 / fps));
       if (steps > 0) {
-        acc -= steps * (1000 / FPS);
+        acc -= steps * (1000 / fps);
         const f = store.getState().frame + steps;
-        store.setFrame(f > FRAME_END ? FRAME_START + ((f - FRAME_START) % (FRAME_END - FRAME_START + 1)) : f);
+        store.setFrame(f > end ? start + ((f - start) % (end - start + 1)) : Math.max(f, start));
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, store]);
+  }, [playing, store, fps, start, end]);
 
-  const pct = ((frame - FRAME_START) / (FRAME_END - FRAME_START)) * 100;
-  const ticks = [];
-  for (let f = 0; f <= FRAME_END; f += 25) if (f >= FRAME_START - 1) ticks.push(Math.max(f, FRAME_START));
+  const span = Math.max(1, end - start);
+  const pct = (f: number) => `${((Math.min(end, Math.max(start, f)) - start) / span) * 100}%`;
+  const step = Math.max(1, Math.round(span / 10 / 5) * 5);
+  const ticks: number[] = [];
+  for (let f = Math.ceil(start / step) * step; f <= end; f += step) ticks.push(f);
+  const objKeys = sel ? tracks[sel] ?? [] : [];
+  const setRange = (patch: { start?: number; end?: number; fps?: number }) => store.dispatch({ type: 'setAnimation', ...patch }, { select: false });
 
   return (
     <div className="timeline">
       <div className="tl-transport">
-        <button className="icon-btn" aria-label="Jump to start" onClick={() => store.setFrame(FRAME_START)}>
+        <button className="icon-btn" aria-label="Jump to start" onClick={() => store.setFrame(start)}>
           <Icon.first />
         </button>
+        <button className="icon-btn" aria-label="Previous keyframe" title="Previous keyframe (↓)" onClick={() => runAction(ctx, 'anim.prevKey')}>◆‹</button>
         <button className="icon-btn" aria-label={playing ? 'Pause' : 'Play'} data-testid="play" onClick={() => store.setPlaying(!playing)}>
           {playing ? <Icon.pause /> : <Icon.play />}
         </button>
-        <button className="icon-btn" aria-label="Jump to end" onClick={() => store.setFrame(FRAME_END)}>
+        <button className="icon-btn" aria-label="Next keyframe" title="Next keyframe (↑)" onClick={() => runAction(ctx, 'anim.nextKey')}>›◆</button>
+        <button className="icon-btn" aria-label="Jump to end" onClick={() => store.setFrame(end)}>
           <Icon.last />
         </button>
         <span className="tl-frame" aria-live="off">
           <span className="muted">Frame</span> <b>{frame}</b>
         </span>
-        <span className="tl-range muted">
-          {FRAME_START}–{FRAME_END} · {FPS} fps
-        </span>
+        <div className="tl-keybtns">
+          <button className="tl-btn" disabled={!sel} data-testid="tl-key" title="Insert keyframe for the selected object (I)" onClick={() => runAction(ctx, 'anim.insertKey')}>
+            ◆ Key{selName ? ` ${selName}` : ''}
+          </button>
+          <button className="tl-btn cam" data-testid="tl-camkey" title="Save the current view as a camera keyframe" onClick={() => runAction(ctx, 'anim.cameraKey')}>
+            ◆ Camera
+          </button>
+          <button className={`tl-btn${cameraView ? ' on' : ''}`} aria-pressed={cameraView} data-testid="tl-camview" title="Look through the scene camera (0)" onClick={() => (cameraView ? store.setCameraView(false) : runAction(ctx, 'view.camera'))}>
+            🎥 Camera view
+          </button>
+        </div>
+        <div className="tl-range">
+          <NumberField label="Start" value={start} step={1} dragRate={0.5} onPreview={() => {}} onCommit={(v) => setRange({ start: Math.round(v) })} onCancel={() => {}} />
+          <NumberField label="End" value={end} step={1} dragRate={0.5} onPreview={() => {}} onCommit={(v) => setRange({ end: Math.round(v) })} onCancel={() => {}} />
+          <NumberField label="fps" value={fps} step={1} dragRate={0.1} onPreview={() => {}} onCommit={(v) => setRange({ fps: Math.min(240, Math.max(1, Math.round(v))) })} onCancel={() => {}} />
+        </div>
       </div>
       <div className="tl-track">
         <div className="tl-ticks" aria-hidden>
           {ticks.map((f) => (
-            <span key={f} style={{ left: `${((f - FRAME_START) / (FRAME_END - FRAME_START)) * 100}%` }}>
-              {f}
-            </span>
+            <span key={f} style={{ left: pct(f) }}>{f}</span>
+          ))}
+        </div>
+        <div className="tl-keys" aria-label="Keyframes">
+          {camera.map((k) => (
+            <button key={`c${k.frame}`} className="tl-diamond cam" style={{ left: pct(k.frame) }} title={`Camera key, frame ${k.frame}`} onClick={() => store.setFrame(k.frame)} />
+          ))}
+          {objKeys.map((k) => (
+            <button key={`o${k.frame}`} className={`tl-diamond${k.frame === frame ? ' current' : ''}`} style={{ left: pct(k.frame) }} title={`${selName} key, frame ${k.frame}`} data-key-frame={k.frame} onClick={() => store.setFrame(k.frame)} />
           ))}
         </div>
         <input
           type="range"
           className="tl-slider"
           aria-label="Current frame"
-          min={FRAME_START}
-          max={FRAME_END}
-          value={frame}
+          min={start}
+          max={end}
+          value={Math.min(end, Math.max(start, frame))}
           onChange={(e) => store.setFrame(Number(e.target.value))}
-          style={{ ['--pct' as string]: `${pct}%` }}
+          style={{ ['--pct' as string]: pct(frame) }}
         />
+      </div>
+      <div className="tl-foot muted">
+        {(end - start + 1) / fps < 60 ? `${((end - start + 1) / fps).toFixed(1)} s` : `${Math.floor((end - start + 1) / fps / 60)} min ${Math.round(((end - start + 1) / fps) % 60)} s`} at {fps} fps
+        {keyFrames(animationOf({ animation: anim }), null).length ? ` · ${Object.keys(tracks).length} animated object${Object.keys(tracks).length === 1 ? '' : 's'}${camera.length ? ', animated camera' : ''}` : ' · no animation yet: select an object and press ◆ Key'}
       </div>
     </div>
   );

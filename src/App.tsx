@@ -15,6 +15,7 @@ import { Timeline } from './ui/Timeline';
 import { Help } from './ui/Help';
 import { ScriptDialog } from './ui/ScriptDialog';
 import { LibraryDialog } from './ui/LibraryDialog';
+import { VideoDialog } from './ui/VideoDialog';
 import { Icon } from './ui/icons';
 import { runAction, shortcutFor } from './ui/actions';
 import type { Ctx } from './ui/actions';
@@ -119,6 +120,7 @@ export function App() {
   const [ask, setAsk] = useState<{ message: string; ok: string; resolve: (v: boolean) => void } | null>(null);
   const [script, setScript] = useState(false);
   const [library, setLibrary] = useState(false);
+  const [video, setVideo] = useState(false);
   const ctx: Ctx = useMemo(
     () => ({
       store,
@@ -126,6 +128,7 @@ export function App() {
       confirm: (message, ok) => new Promise<boolean>((resolve) => setAsk({ message, ok, resolve })),
       openScript: () => setScript(true),
       openLibrary: () => setLibrary(true),
+      openVideo: () => setVideo(true),
     }),
     [store],
   );
@@ -181,7 +184,7 @@ export function App() {
       const t = e.target as HTMLElement;
       if (t.closest('input, textarea, select, [contenteditable="true"]')) return;
       if (e.repeat && !['KeyZ', 'KeyY'].includes(e.code)) return;
-      if (menu || ask || script || library) return; // menus/dialogs handle their own keys
+      if (menu || ask || script || library || video) return; // menus/dialogs handle their own keys
       if (e.shiftKey && e.code === 'KeyA' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         openMenu(ADD_ITEMS, pointer.current.x, pointer.current.y, 'Add');
@@ -206,7 +209,7 @@ export function App() {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('keydown', onKey);
     };
-  }, [ctx, menu, help, ask, script, library, openMenu]);
+  }, [ctx, menu, help, ask, script, library, video, openMenu]);
 
   const clampSide = (w: number) => Math.max(220, Math.min(w, Math.min(560, window.innerWidth - 320)));
 
@@ -267,6 +270,7 @@ export function App() {
           {help && <Help onClose={() => setHelp(false)} />}
           {script && <ScriptDialog onClose={() => setScript(false)} />}
           {library && <LibraryDialog onClose={() => setLibrary(false)} />}
+          {video && <VideoDialog onClose={() => setVideo(false)} />}
           {ask && (
             <div className="modal-backdrop" onClick={() => answer(false)}>
               <div className="modal confirm" role="alertdialog" aria-label="Confirm" onClick={(e) => e.stopPropagation()}>
