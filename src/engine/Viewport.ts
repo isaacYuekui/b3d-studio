@@ -54,6 +54,8 @@ import { babylonQuatToEulerDeg, clean, eulerDegToBabylonQuat, fromBabylonVec, to
 import { buildVertexData } from './geometry';
 import { subtree } from '../core/commands';
 import { EditOverlay } from './EditOverlay';
+import type { M4, PosedBones, Weights } from '../core/rig';
+import { apply as m4apply, rotEuler as rotEulerM, boneBase, invert as m4invert, m4ToQuat, mul as m4mul, poseAt, poseBones, poseEdit, quatToM4, rotationOnly, skinMesh, toEuler, worldMatrix } from '../core/rig';
 import { applyModifiers } from '../core/mesh/modifiers';
 import { transformVerts } from '../core/mesh/ops';
 import { flush, pickElement, selectLoop } from '../core/mesh/select';
@@ -73,6 +75,8 @@ interface Entry {
   key: string;
   material?: PBRMaterial;
   light?: Light;
+  /** Armatures: the drawn bones (rebuilt when the pose changes). */
+  bonesKey?: string;
   shadow?: ShadowGenerator;
   /** Last applied object data, to skip unchanged updates. */
   last?: SceneObject;
@@ -164,6 +168,8 @@ export class Viewport {
     this.overlay = new EditOverlay(scene);
     this.editPivot = new TransformNode('edit-pivot', scene);
     this.editPivot.rotationQuaternion = Quaternion.Identity();
+    this.bonePivot = new TransformNode('bone-pivot', scene);
+    this.bonePivot.rotationQuaternion = Quaternion.Identity();
 
     // Gizmos
     const gm = (this.gizmos = new GizmoManager(scene, 1.6));
@@ -176,12 +182,17 @@ export class Viewport {
       if (!gizmo) continue;
       gizmo.onDragStartObservable.add(() => {
         this.dragging = true;
-        this.startEditDrag();
+        if (this.store.getState().pose) this.startBoneDrag();
+        else this.startEditDrag();
       });
-      gizmo.onDragObservable.add(() => this.stepEditDrag());
+      gizmo.onDragObservable.add(() => (this.boneDrag ? this.stepBoneDrag() : this.stepEditDrag()));
       gizmo.onDragEndObservable.add(() => {
         this.dragging = false;
-        if (this.editDrag) {
+        if (this.boneDrag) {
+          this.boneDrag = null;
+          this.store.commitPreview();
+          this.placeBonePivot(this.store.getState());
+        } else if (this.editDrag) {
           this.editDrag = null;
           this.store.commitPreview();
           this.placePivot(this.store.getState());
@@ -201,7 +212,8 @@ export class Viewport {
       if (info.type !== PointerEventTypes.POINTERTAP) return;
       const ev = info.event as PointerEvent;
       if (ev.button !== 0) return;
-      if (this.store.getState().edit) this.editTap(scene.pointerX, scene.pointerY, ev.shiftKey || this.store.getState().addSelect, ev.altKey, ev.pointerType !== 'mouse');
+      if (this.store.getState().pose) this.poseTap(scene.pointerX, scene.pointerY, ev.pointerType !== 'mouse');
+      else if (this.store.getState().edit) this.editTap(scene.pointerX, scene.pointerY, ev.shiftKey || this.store.getState().addSelect, ev.altKey, ev.pointerType !== 'mouse');
       else this.store.select(this.pickAt(scene.pointerX, scene.pointerY));
     });
 
@@ -279,7 +291,10 @@ export class Viewport {
     const editKey = state.edit ? `${state.edit.id}|${state.edit.mode}|${state.xray}` : '';
     const editChanged = editKey !== this.lastEditKey || state.edit !== this.lastEdit || (state.edit && docChanged);
     if (editChanged) this.syncEdit(state, editKey !== this.lastEditKey);
-    if (state.selection !== this.lastSel || state.tool !== this.lastTool || editChanged) {
+    const poseChanged = state.pose !== this.lastPose;
+    this.lastPose = state.pose;
+    if (poseChanged) this.applyRigs(state);
+    if (state.selection !== this.lastSel || state.tool !== this.lastTool || editChanged || poseChanged) {
       this.syncSelection(state.selection, state.tool);
       this.lastSel = state.selection;
       this.lastTool = state.tool;
@@ -289,6 +304,182 @@ export class Viewport {
   }
 
   private lastEdit: AppState['edit'] = null;
+  private lastPose: AppState['pose'] = null;
+
+  // ---------------------------------------------------------------- armatures & skinning
+
+  private bonePivot!: TransformNode;
+  private boneDrag: { arm: string; bone: string; startQ: Quaternion; startPos: Vector3; base: M4; armWorld: M4; rot0: [number, number, number]; loc0: [number, number, number] } | null = null;
+  private bindCache = new Map<string, { key: unknown; weights: Weights; rel: string }>();
+  private evalCache = new Map<string, { mesh: unknown; mods: unknown; out: MeshData }>();
+  private skinned = new Set<string>();
+
+  /** Draw bones (posed) and deform skinned meshes for the current frame. */
+  private applyRigs(state: AppState) {
+    const doc = state.doc;
+    const rendered = state.shading === 'rendered';
+    for (const id of doc.order) {
+      const o = doc.objects[id];
+      const e = this.entries.get(id);
+      if (!e) continue;
+      if (o.type === 'armature' && o.armature) {
+        const pose = poseAt(doc, id, state.frame);
+        const selBone = state.pose?.id === id ? state.pose.bone : null;
+        const key = JSON.stringify([o.armature.bones, pose, selBone, state.selection === id, !!state.pose]);
+        if (key !== e.bonesKey) {
+          e.pick?.dispose();
+          e.pick = this.drawBones(o, poseBones(o.armature.bones, pose), selBone, state.selection === id, state.pose?.id === id);
+          e.pick.parent = e.node;
+          e.bonesKey = key;
+        }
+        e.pick?.setEnabled(!rendered && o.visible);
+      }
+    }
+    // Skinned meshes
+    const now = new Set<string>();
+    for (const id of doc.order) {
+      const o = doc.objects[id];
+      if (o.type !== 'mesh' || !o.mesh || !o.skin || !doc.objects[o.skin.armature]) continue;
+      const e = this.entries.get(id);
+      if (!e || !(e.node instanceof Mesh)) continue;
+      if (state.edit?.id === id) continue; // edit the rest shape
+      now.add(id);
+      let ev = this.evalCache.get(id);
+      if (!ev || ev.mesh !== o.mesh || ev.mods !== o.modifiers) {
+        ev = { mesh: o.mesh, mods: o.modifiers, out: applyModifiers(o.mesh, o.modifiers) };
+        this.evalCache.set(id, ev);
+      }
+      const deformed = skinMesh(doc, id, ev.out, state.frame, this.bindCache);
+      buildVertexData(deformed).applyToMesh(e.node, true);
+      e.node.refreshBoundingInfo();
+    }
+    // Meshes no longer skinned: back to the rest shape.
+    for (const id of this.skinned) {
+      if (now.has(id)) continue;
+      const o = doc.objects[id];
+      const e = this.entries.get(id);
+      if (o?.mesh && e?.node instanceof Mesh) buildVertexData(applyModifiers(o.mesh, o.modifiers)).applyToMesh(e.node, true);
+    }
+    this.skinned = now;
+  }
+
+  /** Octahedral bones like Blender's, in the armature's local space. */
+  private drawBones(o: SceneObject, posed: PosedBones, selBone: string | null, objSelected: boolean, poseMode: boolean): LinesMesh {
+    const lines: Vector3[][] = [];
+    const colors: Color4[][] = [];
+    const base = poseMode ? new Color4(0.55, 0.6, 0.68, 1) : objSelected ? Color4.FromColor3(SELECT_COLOR, 1) : new Color4(0.62, 0.62, 0.62, 1);
+    const hi = new Color4(0.3, 0.75, 1, 1);
+    for (const b of o.armature!.bones) {
+      const P = posed.posed.get(b.name)!;
+      const L = Math.hypot(b.tail[0] - b.head[0], b.tail[1] - b.head[1], b.tail[2] - b.head[2]);
+      const w = L * 0.1;
+      const pt = (x: number, y: number, z: number) => new Vector3(...toBabylonVec(m4apply(P, [x, y, z])));
+      const h = pt(0, 0, 0), t = pt(0, L, 0);
+      const ring = [pt(w, w, 0), pt(0, w, w), pt(-w, w, 0), pt(0, w, -w)];
+      const c = b.name === selBone ? hi : base;
+      for (let i = 0; i < 4; i++) {
+        lines.push([h, ring[i]], [ring[i], t], [ring[i], ring[(i + 1) % 4]]);
+        colors.push([c, c], [c, c], [c, c]);
+      }
+    }
+    const m = MeshBuilder.CreateLineSystem(`${o.id}-bones`, { lines, colors, useVertexAlpha: false }, this.scene);
+    m.metadata = { id: o.id };
+    m.intersectionThreshold = 0.12;
+    m.renderingGroupId = poseMode ? 1 : 0; // in Pose Mode bones draw on top of the body
+    m.alwaysSelectAsActiveMesh = true;
+    return m;
+  }
+
+  /** Pose Mode tap: select the bone under the finger. */
+  private poseTap(x: number, y: number, touch: boolean) {
+    const st = this.store.getState();
+    const p = st.pose!;
+    const o = st.doc.objects[p.id];
+    const e = this.entries.get(p.id);
+    if (!o?.armature || !e) return;
+    const posed = poseBones(o.armature.bones, poseAt(st.doc, p.id, st.frame));
+    const world = e.node.computeWorldMatrix(true);
+    const engine = this.engine;
+    const k = engine.getHardwareScalingLevel();
+    const vp = this.camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight());
+    const tm = this.scene.getTransformMatrix();
+    const proj = (q: [number, number, number]) => {
+      const s = Vector3.Project(new Vector3(...toBabylonVec(q)), world, tm, vp);
+      return { x: s.x * k, y: s.y * k };
+    };
+    let best: string | null = null;
+    let bd = touch ? 26 : 14;
+    for (const b of o.armature.bones) {
+      const P = posed.posed.get(b.name)!;
+      const L = Math.hypot(b.tail[0] - b.head[0], b.tail[1] - b.head[1], b.tail[2] - b.head[2]);
+      const a = proj(m4apply(P, [0, 0, 0])), c = proj(m4apply(P, [0, L, 0]));
+      const dx = c.x - a.x, dy = c.y - a.y, LL = dx * dx + dy * dy;
+      const t = LL ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / LL)) : 0;
+      const d = Math.hypot(x - (a.x + t * dx), y - (a.y + t * dy));
+      if (d < bd) (bd = d), (best = b.name);
+    }
+    if (best || !this.store.getState().addSelect) this.store.setPose({ id: p.id, bone: best });
+  }
+
+  /** Put the bone gizmo pivot at the selected bone's head, aligned with it (world space). */
+  private placeBonePivot(state: AppState) {
+    const p = state.pose;
+    if (!p?.bone || this.boneDrag) return;
+    const o = state.doc.objects[p.id];
+    if (!o?.armature?.bones.some((b) => b.name === p.bone)) return;
+    const posed = poseBones(o.armature.bones, poseAt(state.doc, p.id, state.frame));
+    const W = m4mul(worldMatrix(state.doc, p.id, state.frame), posed.posed.get(p.bone)!);
+    this.bonePivot.position.set(...toBabylonVec([W[3], W[7], W[11]]));
+    const [x, y, z, w] = m4ToQuat(rotationOnly(W));
+    // Blender quaternion → Babylon (see coords.ts): (x, y, z) → (-x, -z, -y)
+    this.bonePivot.rotationQuaternion = new Quaternion(-x, -z, -y, w);
+    this.bonePivot.scaling.setAll(1);
+    this.bonePivot.computeWorldMatrix(true);
+  }
+
+  private startBoneDrag() {
+    const st = this.store.getState();
+    const p = st.pose;
+    if (!p?.bone) return;
+    const o = st.doc.objects[p.id];
+    if (!o?.armature) return;
+    const pose = poseAt(st.doc, p.id, st.frame);
+    const posed = poseBones(o.armature.bones, pose);
+    const cur = pose[p.bone];
+    this.boneDrag = {
+      arm: p.id,
+      bone: p.bone,
+      startQ: this.bonePivot.rotationQuaternion!.clone(),
+      startPos: this.bonePivot.position.clone(),
+      base: boneBase(o.armature.bones, posed, p.bone),
+      armWorld: worldMatrix(st.doc, p.id, st.frame),
+      rot0: [...(cur?.rotation ?? [0, 0, 0])] as [number, number, number],
+      loc0: [...(cur?.location ?? [0, 0, 0])] as [number, number, number],
+    };
+  }
+
+  private stepBoneDrag() {
+    const d = this.boneDrag;
+    if (!d) return;
+    const st = this.store.getState();
+    const q = this.bonePivot.rotationQuaternion!;
+    // World-space delta rotation (Babylon) → Blender.
+    const dq = q.multiply(Quaternion.Inverse(d.startQ));
+    const D = quatToM4([-dq.x, -dq.z, -dq.y, dq.w]);
+    const AB = rotationOnly(m4mul(d.armWorld, d.base));
+    const L0 = rotationOnly(quatToM4(m4ToQuat(rotEulerM(d.rot0))));
+    const Lnew = m4mul(m4mul(m4invert(AB), D), m4mul(AB, L0));
+    const rotation = toEuler(Lnew);
+    // Location: world delta into the bone's base axes.
+    const dp = this.bonePivot.position.subtract(d.startPos);
+    const dw = fromBabylonVec([dp.x, dp.y, dp.z]);
+    const inv = m4invert(m4mul(d.armWorld, d.base));
+    const o = m4apply(inv, [0, 0, 0]);
+    const t = m4apply(inv, dw);
+    const location: [number, number, number] = [d.loc0[0] + t[0] - o[0], d.loc0[1] + t[1] - o[1], d.loc0[2] + t[2] - o[2]];
+    const hasLoc = location.some((x) => Math.abs(x) > 1e-6);
+    this.store.preview(poseEdit(st.doc, st.frame, d.arm, d.bone, { rotation, ...(hasLoc ? { location } : {}) }));
+  }
   private editedId: string | null = null;
 
   /** Edit-mode overlay, see-through display and the pivot the gizmo drives. */
@@ -443,6 +634,7 @@ export class Viewport {
       if (e && o) this.applyTransform(e.node, o);
     }
     this.animated = now;
+    this.applyRigs(state);
     if (state.cameraView) {
       const cam = (anim?.camera.length ? evaluateCamera(anim.camera, state.frame) : null) ?? state.doc.camera;
       if (cam) this.placeCamera(cam.position, cam.target);
@@ -551,6 +743,10 @@ export class Viewport {
       const helper = this.lightHelper(o, l.type);
       helper.parent = node;
       return { node, pick: helper, key, light, meshes: [] };
+    }
+    if (o.type === 'armature') {
+      // Bones are drawn in applyRigs (they follow the pose).
+      return { node, pick: null, key, meshes: [] };
     }
     // empty: small axes cross
     const size = 0.5;
@@ -855,6 +1051,16 @@ export class Viewport {
     }
     const gm = this.gizmos;
     const st = this.store.getState();
+    if (st.pose) {
+      for (const e of this.entries.values()) for (const m of e.meshes) m.renderOutline = false;
+      const has = !!st.pose.bone;
+      gm.positionGizmoEnabled = tool === 'move' && has;
+      gm.rotationGizmoEnabled = (tool === 'rotate' || tool === 'select' || tool === 'scale') && has;
+      gm.scaleGizmoEnabled = false;
+      this.placeBonePivot(st);
+      gm.attachToNode(has ? this.bonePivot : null);
+      return;
+    }
     if (st.edit) {
       // Edit mode: the gizmo moves the selected vertices (through the pivot), not the object.
       for (const m of this.entries.get(st.edit.id)?.meshes ?? []) m.renderOutline = false;

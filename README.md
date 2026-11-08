@@ -5,6 +5,12 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Characters (v0.9)
+
+- Armatures with Blender-style bones, automatic skin weights, Pose Mode (tap a bone, turn it with the gizmo, type rotations), bone keyframes with auto-key
+- New example: an original mannequin, box-modelled with `editMesh`, rigged with 19 bones, walking (3 loops) with a tracking camera
+- [docs/CHARACTERS.md](docs/CHARACTERS.md): data model and a bone-axis cheat sheet
+
 ## Scripted modelling (v0.8)
 
 - Scene scripts can model with Edit Mode operators: `editMesh` selects parts of a mesh by direction, box, sharp edges, nearest point or edge loop, then extrudes, insets, bevels, loop-cuts, moves (with proportional falloff)… ([docs/SCRIPTS.md](docs/SCRIPTS.md))

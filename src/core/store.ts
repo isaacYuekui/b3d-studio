@@ -39,6 +39,8 @@ export interface AppState {
   addSelect: boolean;
   /** Edit mode: next drag on the viewport draws a selection box (B). */
   boxMode: boolean;
+  /** Pose Mode on an armature, with the selected bone. */
+  pose: { id: string; bone: string | null } | null;
 }
 
 interface Snapshot {
@@ -77,6 +79,7 @@ export class Store {
       xray: false,
       addSelect: false,
       boxMode: false,
+      pose: null,
     };
   }
 
@@ -90,6 +93,7 @@ export class Store {
   private set(patch: Partial<AppState>) {
     const next = { ...this.state, ...patch };
     if (next.doc !== this.state.doc && next.edit && !('edit' in patch)) next.edit = this.fixEdit(next.doc, next.edit);
+    if (next.pose && next.doc.objects[next.pose.id]?.type !== 'armature') next.pose = null;
     this.state = next;
     this.listeners.forEach((l) => l());
   }
@@ -199,7 +203,7 @@ export class Store {
   reset(doc: SceneDoc, notice?: string) {
     this.past = [];
     this.future = [];
-    this.set({ doc, selection: null, edit: null, canUndo: false, canRedo: false, notice: notice ?? null });
+    this.set({ doc, selection: null, edit: null, pose: null, canUndo: false, canRedo: false, notice: notice ?? null });
   }
 
   private fixSel(doc: SceneDoc) {
@@ -211,6 +215,7 @@ export class Store {
     if (id !== null && !this.state.doc.objects[id]) return;
     // Picking another object (Outliner) leaves edit mode, like Blender.
     if (this.state.edit && id !== this.state.edit.id) this.set({ edit: null, boxMode: false });
+    if (this.state.pose && id !== this.state.pose.id) this.set({ pose: null });
     if (id !== this.state.selection) this.set({ selection: id });
   }
 
@@ -259,6 +264,10 @@ export class Store {
 
   setXray(xray: boolean) {
     this.set({ xray });
+  }
+
+  setPose(pose: AppState['pose']) {
+    this.set({ pose, ...(pose ? { selection: pose.id, edit: null } : {}) });
   }
 
   setAddSelect(addSelect: boolean) {

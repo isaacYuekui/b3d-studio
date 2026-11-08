@@ -100,7 +100,7 @@ function StatusBar() {
   return (
     <footer className="statusbar" aria-live="polite">
       <span className="status-notice">{notice ?? `Tool: ${tool[0].toUpperCase()}${tool.slice(1)}`}</span>
-      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v0.8</span>
+      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v0.9</span>
     </footer>
   );
 }

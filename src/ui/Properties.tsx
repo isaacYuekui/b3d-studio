@@ -14,7 +14,8 @@ import { worldOf } from '../core/types';
 import { EASINGS, isAnimated, transformAt, transformEdit } from '../core/animation';
 import type { Easing } from '../core/animation';
 import type { Background } from '../core/types';
-import { canEdit, setSmooth, setSubdivision } from './editing';
+import { canEdit, setSmooth, setSubdivision, togglePose } from './editing';
+import { poseAt, poseEdit } from '../core/rig';
 import { transformVerts } from '../core/mesh/ops';
 import { centroid } from '../core/mesh/topology';
 
@@ -163,6 +164,8 @@ export function Properties() {
       {o.type === 'model' && <ModelSection id={o.id} />}
 
       {canEdit(o) && <ModifiersSection id={o.id} />}
+
+      {o.type === 'armature' && <PoseSection id={o.id} />}
 
       {isRenderable(o.type) && o.type !== 'model' && (
         <Section title="Material">
@@ -523,6 +526,63 @@ function ModifiersSection({ id }: { id: string }) {
         </div>
       )}
       <p className="prop-hint">Subdivision rounds the shape off (smooth characters and cars). Mirror X: model one half, the other follows.</p>
+    </Section>
+  );
+}
+
+/** Armature: bones, Pose Mode, the selected bone's rotation (auto-keyed when animated). */
+function PoseSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const o = useApp((s) => s.doc.objects[id]);
+  const doc = useApp((s) => s.doc);
+  const frame = useApp((s) => s.frame);
+  const pose = useApp((s) => s.pose);
+  const inPose = pose?.id === id;
+  const bone = inPose ? pose!.bone : null;
+  const cur = bone ? poseAt(doc, id, frame)[bone] ?? { rotation: [0, 0, 0] as Vec3 } : null;
+  const keyed = bone ? (doc.animation?.poses?.[id]?.[bone]?.length ?? 0) > 0 : false;
+  const edit = (axis: number, v: number) => {
+    const rotation = [...cur!.rotation] as Vec3;
+    rotation[axis] = v;
+    return poseEdit(store.getState().doc, frame, id, bone!, { ...cur!, rotation });
+  };
+  return (
+    <Section title="Armature">
+      <div className="prop-actions" style={{ padding: 0 }}>
+        <button className={`btn${inPose ? ' primary' : ''}`} data-testid="pose-toggle" onClick={() => togglePose(store)}>
+          {inPose ? 'Leave Pose Mode' : 'Pose Mode'}
+        </button>
+      </div>
+      <div className="bone-list" role="listbox" aria-label="Bones">
+        {o.armature!.bones.map((b) => (
+          <button key={b.name} role="option" aria-selected={bone === b.name} className={`bone-item${bone === b.name ? ' active' : ''}`} data-bone={b.name} onClick={() => store.setPose({ id, bone: b.name })}>
+            {b.parent ? '· ' : ''}{b.name}
+          </button>
+        ))}
+      </div>
+      {bone && cur && (
+        <div className="vec3" aria-label={`${bone} rotation`}>
+          <div className="prop-sub">{bone} rotation{keyed ? ' · keyed' : ''}</div>
+          {AXES.map((ax, i) => (
+            <NumberField
+              key={ax}
+              label={ax.toUpperCase()}
+              axis={ax}
+              value={cur.rotation[i]}
+              step={5}
+              dragRate={0.5}
+              suffix="°"
+              onPreview={(v) => store.preview(edit(i, v))}
+              onCommit={(v) => {
+                store.preview(edit(i, v));
+                store.commitPreview();
+              }}
+              onCancel={() => store.cancelPreview()}
+            />
+          ))}
+        </div>
+      )}
+      <p className="prop-hint">Pose Mode: tap a bone, turn it with the gizmo. Press I (or ◆ Key) to keyframe the bone.</p>
     </Section>
   );
 }

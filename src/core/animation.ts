@@ -32,6 +32,15 @@ export interface Animation {
   tracks: Record<string, TransformKey[]>;
   /** Scene-camera keys, sorted by frame. */
   camera: CameraKey[];
+  /** Bone pose keys: armature id → bone name → keys. */
+  poses?: Record<string, Record<string, PoseKey[]>>;
+}
+
+export interface PoseKey {
+  frame: number;
+  rotation: Vec3;
+  location?: Vec3;
+  easing: Easing;
 }
 
 export const DEFAULT_ANIMATION: Animation = { fps: 24, start: 1, end: 250, tracks: {}, camera: [] };
@@ -111,6 +120,13 @@ export function evaluateCamera(keys: CameraKey[], frame: number): { position: Ve
   return { position: lerp3(a.position, b.position, t), target: lerp3(a.target, b.target, t) };
 }
 
+export function evaluatePose(keys: PoseKey[], frame: number): { rotation: Vec3; location: Vec3 } | null {
+  const s = segment(keys, frame);
+  if (!s) return null;
+  const [a, b, t] = s;
+  return { rotation: lerp3(a.rotation, b.rotation, t), location: lerp3(a.location ?? [0, 0, 0], b.location ?? [0, 0, 0], t) };
+}
+
 /** Transform an object shows at a frame: animated if it has keys, otherwise its own. */
 export function transformAt(doc: { animation?: Animation; objects: Record<string, { transform: Transform }> }, id: string, frame: number): Transform | null {
   const o = doc.objects[id];
@@ -133,6 +149,8 @@ export function keyFrames(anim: Animation, ids: string[] | null): number[] {
   const set = new Set<number>();
   const tracks = ids ? ids.map((id) => anim.tracks[id] ?? []) : Object.values(anim.tracks);
   for (const t of tracks) for (const k of t) set.add(k.frame);
+  // Bone keys count for their armature.
+  for (const [arm, bones] of Object.entries(anim.poses ?? {})) if (!ids || ids.includes(arm)) for (const ks of Object.values(bones)) for (const k of ks) set.add(k.frame);
   if (!ids) for (const k of anim.camera) set.add(k.frame);
   return [...set].sort((a, b) => a - b);
 }

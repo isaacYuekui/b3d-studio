@@ -46,10 +46,12 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
   const count = useApp((s) => s.doc.order.length);
   const shading = useApp((s) => s.shading);
   const edit = useApp((s) => s.edit);
+  const posing = useApp((s) => s.pose);
   const xray = useApp((s) => s.xray);
   const addSelect = useApp((s) => s.addSelect);
   const boxMode = useApp((s) => s.boxMode);
   const selEditable = useApp((s) => canEdit(s.selection ? s.doc.objects[s.selection] : null));
+  const selArmature = useApp((s) => (s.selection ? s.doc.objects[s.selection]?.type === 'armature' : false));
   const counts = useApp((s) => {
     const e = s.edit;
     const m = e ? s.doc.objects[e.id]?.mesh : null;
@@ -137,15 +139,16 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
 
       <div className="vp-header">
         <button
-          className={`vp-mode${edit ? ' editing' : ''}`}
+          className={`vp-mode${edit ? ' editing' : posing ? ' posing' : ''}`}
           data-testid="mode-toggle"
-          aria-pressed={!!edit}
-          disabled={!edit && !selEditable}
-          title={edit ? 'Back to Object Mode (Tab)' : 'Edit Mode: move vertices, edges and faces (Tab)'}
+          aria-pressed={!!edit || !!posing}
+          disabled={!edit && !posing && !selEditable && !selArmature}
+          title={edit ? 'Back to Object Mode (Tab)' : posing ? 'Back to Object Mode (Tab)' : selArmature ? 'Pose Mode: pose the bones (Tab)' : 'Edit Mode: move vertices, edges and faces (Tab)'}
           onClick={() => run('mode.edit')}
         >
-          {edit ? 'Edit Mode' : 'Object Mode'}
+          {edit ? 'Edit Mode' : posing ? 'Pose Mode' : 'Object Mode'}
         </button>
+        {posing && <span className="vp-info"><b data-testid="pose-bone">{posing.bone ?? 'Tap a bone'}</b></span>}
         {edit ? (
           <>
             <div className="seg" role="radiogroup" aria-label="Select mode">
@@ -166,7 +169,7 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
             </button>
             <span className="vp-info muted" data-testid="edit-counts">{counts}</span>
           </>
-        ) : (
+        ) : posing ? null : (
           <span className="vp-info">
             {selName ? <b>{selName}</b> : <span className="muted">Nothing selected</span>}
             <span className="muted"> · {count} object{count === 1 ? '' : 's'}</span>

@@ -11,8 +11,8 @@ export const LIGHT_TYPES = ['point', 'sun', 'spot'] as const;
 export type LightType = (typeof LIGHT_TYPES)[number];
 
 /** Every object type the scene can hold. */
-export type ObjectType = PrimitiveType | 'mesh' | 'model' | 'light' | 'empty';
-export const OBJECT_TYPES: readonly ObjectType[] = [...PRIMITIVES, 'mesh', 'model', 'light', 'empty'];
+export type ObjectType = PrimitiveType | 'mesh' | 'model' | 'light' | 'empty' | 'armature';
+export const OBJECT_TYPES: readonly ObjectType[] = [...PRIMITIVES, 'mesh', 'model', 'light', 'empty', 'armature'];
 
 export interface Transform {
   position: Vec3;
@@ -82,6 +82,28 @@ export interface Modifiers {
   subdivision?: { levels: number };
 }
 
+/** One bone of an armature, in the armature's local space (metres, Z up), like Blender's edit bones. */
+export interface Bone {
+  name: string;
+  parent: string | null;
+  head: Vec3;
+  tail: Vec3;
+  /** Twist around the bone's length, degrees. */
+  roll?: number;
+  /** false for control bones that should not move the mesh. */
+  deform?: boolean;
+}
+
+export interface ArmatureData {
+  bones: Bone[];
+}
+
+/** A bone's pose relative to its rest position, in the bone's own axes (Y along the bone). */
+export interface BonePose {
+  rotation: Vec3;
+  location?: Vec3;
+}
+
 export interface SceneObject {
   id: string;
   name: string;
@@ -97,6 +119,11 @@ export interface SceneObject {
   light?: LightData;
   /** Library model id, for type 'model'. */
   asset?: string;
+  /** Armature objects: bones and the current pose. */
+  armature?: ArmatureData;
+  pose?: Record<string, BonePose>;
+  /** Mesh objects: deformed by this armature (automatic weights from bone distance). */
+  skin?: { armature: string };
 }
 
 export const BACKGROUNDS = ['color', 'hdri', 'blurred'] as const;
@@ -170,4 +197,4 @@ export const DEFAULT_LIGHT: Record<LightType, LightData> = {
   spot: { type: 'spot', color: '#ffffff', power: 1000, spotAngle: 45, shadows: true },
 };
 
-export const isRenderable = (t: ObjectType) => t !== 'light' && t !== 'empty';
+export const isRenderable = (t: ObjectType) => t !== 'light' && t !== 'empty' && t !== 'armature';

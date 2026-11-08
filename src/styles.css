@@ -534,3 +534,8 @@ button.vp-mode.editing { background: #7a4a12; border-color: var(--select); color
 .app.compact .viewport.editing .vp-header { flex-wrap: wrap; row-gap: 6px; }
 .app.compact .viewport.editing .toolshelf { top: calc(var(--tap) * 2 + 30px); }
 .app.compact .lastop { width: 180px; }
+
+.bone-list { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+.bone-item { border: 1px solid var(--line); background: var(--bg-field); color: var(--text); border-radius: var(--radius); min-height: calc(var(--tap) - 8px); padding: 0 8px; font: 12px var(--font); }
+.bone-item.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.vp-mode.posing { background: #1f4f7a; border-color: #4fb0ff; color: #fff; }

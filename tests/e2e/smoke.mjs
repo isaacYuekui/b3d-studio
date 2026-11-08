@@ -664,6 +664,55 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Characters: rig, skin, Pose Mode (v0.9).
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.click('[data-testid="script-btn"]');
+  await page.click('[data-example="character-walk"]');
+  await page.waitForFunction(() => document.querySelector('[data-testid="script-text"]').value.length > 500);
+  await page.click('[data-testid="script-run"]');
+  await page.waitForTimeout(4000);
+  const info = await page.evaluate(() => {
+    const st = window.__b3d.store.getState();
+    const d = st.doc;
+    const rig = Object.values(d.objects).find((o) => o.type === 'armature');
+    const body = Object.values(d.objects).find((o) => o.skin);
+    return { bones: rig?.armature.bones.length, skinned: !!body, keys: Object.keys(d.animation?.poses?.[rig?.id] ?? {}).length, rig: rig?.id, body: body?.id };
+  });
+  check('v0.9: character example has a 19-bone rig, a skinned body and bone keys', info.bones === 19 && info.skinned && info.keys > 10, JSON.stringify(info));
+  const posAt = (f) => page.evaluate(({ f, body }) => {
+    window.__b3d.store.setFrame(f);
+    const m = window.__b3d.viewport().entries.get(body).node;
+    const p = m.getVerticesData('position');
+    let minY = Infinity, maxY = -Infinity;
+    for (let i = 2; i < p.length; i += 3) { minY = Math.min(minY, p[i]); maxY = Math.max(maxY, p[i]); }
+    return { n: p.length / 3, spread: maxY - minY };
+  }, { f, body: info.body });
+  const a = await posAt(1), b = await posAt(7);
+  check('v0.9: the body deforms as it walks (stride changes between frames)', a.n === b.n && Math.abs(a.spread - b.spread) > 0.05, `${a.spread.toFixed(3)} → ${b.spread.toFixed(3)} (local Babylon z = Blender y)`);
+  await page.evaluate(() => window.__b3d.viewport().viewCamera());
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: `${shots}/character-walk.png` });
+  // Pose Mode through the UI.
+  await page.evaluate(({ rig }) => { window.__b3d.store.setFrame(1); window.__b3d.store.dispatch({ type: 'clearPoseKeys', id: rig, bone: null }); window.__b3d.store.select(rig); }, info);
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(300);
+  check('v0.9: Tab on the armature enters Pose Mode', (await page.textContent('[data-testid="mode-toggle"]')) === 'Pose Mode');
+  await page.click('[data-bone="thigh.L"]');
+  await setNumber(page, '[aria-label="thigh.L rotation"]', 'X', -45);
+  const posed = await page.evaluate(({ rig }) => window.__b3d.store.getState().doc.objects[rig].pose?.['thigh.L'], info);
+  check('v0.9: typing a bone rotation poses it', posed?.rotation?.[0] === -45, JSON.stringify(posed));
+  await page.keyboard.press('KeyI');
+  await page.waitForTimeout(200);
+  const keyed = await page.evaluate(({ rig }) => window.__b3d.store.getState().doc.animation.poses?.[rig]?.['thigh.L']?.length, info);
+  check('v0.9: I keys the selected bone', keyed === 1, String(keyed));
+  await page.screenshot({ path: `${shots}/pose-mode.png` });
+  await page.keyboard.press('Tab');
+  check('v0.9: Tab leaves Pose Mode', (await page.textContent('[data-testid="mode-toggle"]')) === 'Object Mode');
+  check('v0.9: no errors (characters)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // iPad: edit mode by touch.
 {
   const { ctx, page, errors } = await open({ width: 820, height: 1180 }, { touch: true, dpr: 2 });
