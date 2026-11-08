@@ -6,3 +6,4 @@ dist-single
 test-results
 public/library
 tests/fixtures
+__pycache__

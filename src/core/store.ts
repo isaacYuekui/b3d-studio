@@ -20,6 +20,8 @@ export interface AppState {
   playing: boolean;
   /** Solid = studio lighting for modelling; Rendered = the scene's own lights, materials and shadows. */
   shading: Shading;
+  /** Looking through the scene camera (follows its animation during playback). */
+  cameraView: boolean;
 }
 
 const HISTORY_LIMIT = 200;
@@ -48,6 +50,7 @@ export class Store {
       frame: 1,
       playing: false,
       shading: 'solid',
+      cameraView: false,
     };
   }
 
@@ -159,6 +162,10 @@ export class Store {
 
   setFrame(frame: number) {
     this.set({ frame });
+  }
+
+  setCameraView(cameraView: boolean) {
+    if (cameraView !== this.state.cameraView) this.set({ cameraView });
   }
 
   setShading(shading: Shading) {

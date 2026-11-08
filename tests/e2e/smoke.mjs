@@ -313,18 +313,135 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await page.click('[data-testid="script-btn"]');
   await page.click('[data-example="forest-supercar"]');
   await page.waitForFunction(() => document.querySelector('[data-testid="script-text"]').value.length > 1000);
-  check('v0.4: example chip loads a scene script', /Supercar in the pines/.test(await page.textContent('.script-status')));
+  check('v0.4: example chip loads a scene script', /Supercar drive in the pines/.test(await page.textContent('.script-status')));
   await page.click('[data-testid="script-run"]');
   await page.waitForTimeout(15000);
-  check('v0.4: forest supercar builds 104 objects', (await objCount(page)) === 104, `${await objCount(page)}`);
+  check('v0.4: forest supercar builds 108 objects', (await objCount(page)) === 108, `${await objCount(page)}`);
   await page.keyboard.press('5');
   await page.waitForTimeout(1500);
   await page.keyboard.press('0');
   await page.waitForTimeout(2500);
   const sel = await page.evaluate(() => document.querySelector('.status-notice').textContent);
   check('v0.4: key 0 returns to the scene camera without complaint', !/no camera/.test(sel), sel);
+  // v0.6: the drive is keyframed — car, four wheel spins and a tracking camera.
+  const drive = await page.evaluate(() => {
+    const b = window.__b3d;
+    const doc = b.store.getState().doc;
+    const tracks = doc.animation?.tracks ?? {};
+    const carId = Object.keys(tracks).find((id) => doc.objects[id]?.name === 'Car' || id === 'car');
+    const node = (id) => b.viewport().entries.get(id)?.node;
+    const spinId = Object.keys(tracks).find((id) => /spin/i.test(doc.objects[id]?.name ?? id));
+    b.store.setFrame(1);
+    const x1 = node(carId).position.x;
+    b.store.setFrame(60);
+    const x60 = node(carId).position.x;
+    const spin = node(spinId);
+    return { tracks: Object.keys(tracks).length, camKeys: doc.animation?.camera.length ?? 0, x1, x60, spinAngle: spin ? spin.rotationQuaternion ? 1 : Math.abs(spin.rotation.x) + Math.abs(spin.rotation.y) + Math.abs(spin.rotation.z) : 0, end: doc.animation?.end };
+  });
+  check('v0.6: forest drive has car + 4 wheel tracks and camera keys', drive.tracks === 5 && drive.camKeys >= 10 && drive.end === 120, JSON.stringify(drive));
+  check('v0.6: car drives along the track (frame 1 → 60)', drive.x1 < -25 && Math.abs(drive.x60) < 2, `${drive.x1.toFixed(2)} → ${drive.x60.toFixed(2)}`);
+  check('v0.6: wheels have turned by mid-drive', drive.spinAngle > 0, String(drive.spinAngle));
+  await page.keyboard.press('0');
+  await page.waitForTimeout(2500);
+  await page.screenshot({ path: `${shots}/forest-drive-f60.png` });
+  await page.evaluate(() => window.__b3d.store.setFrame(110));
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: `${shots}/forest-drive-f110.png` });
   check('v0.4: all forest assets loaded', failed.length === 0, failed.slice(0, 3).join(' | '));
   check('v0.4: no console/page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// ---------------------------------------------------------------- keyframes, playback, MP4 (v0.6)
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  const id = await page.evaluate(() => window.__b3d.store.getState().selection);
+  check('v0.6: default cube is selected', !!id);
+  await page.keyboard.press('KeyI');
+  await page.waitForTimeout(200);
+  check('v0.6: I inserts a keyframe (diamond on the timeline)', (await page.$$('[data-key-frame]')).length === 1);
+  await page.evaluate((id) => {
+    const s = window.__b3d.store;
+    s.setFrame(24);
+    s.dispatch({ type: 'setKeyframe', id, frame: 24, transform: { position: [3, 0, 1], rotation: [0, 0, 90], scale: [1, 1, 1] }, easing: 'linear' }, { select: false });
+    s.dispatch({ type: 'setAnimation', end: 24 });
+  }, id);
+  await page.waitForTimeout(200);
+  check('v0.6: second keyframe shows', (await page.$$('[data-key-frame]')).length === 2);
+  const mid = await page.evaluate((id) => {
+    window.__b3d.store.setFrame(12);
+    return window.__b3d.viewport().entries.get(id).node.position.x;
+  }, id);
+  check('v0.6: object is between keys at the middle frame', mid > 0.5 && mid < 2.5, mid.toFixed(3));
+  const posField = await page.$$eval('[data-testid="properties"] [role="spinbutton"]', (els) => els.slice(0, 1).map((e) => e.getAttribute('aria-valuenow')));
+  check('v0.6: Properties shows the animated value', posField.length === 1 && Math.abs(Number(posField[0]) - mid) < 0.01, `${posField[0]} vs ${mid.toFixed(3)}`);
+  // Auto-key: editing the animated object at a new frame adds a key there.
+  await page.evaluate((id) => {
+    const b = window.__b3d;
+    b.store.setFrame(18);
+  }, id);
+  await page.keyboard.press('KeyI');
+  await page.waitForTimeout(200);
+  check('v0.6: keying a third frame', (await page.$$('[data-key-frame]')).length === 3);
+  await page.keyboard.press('Alt+KeyI');
+  await page.waitForTimeout(200);
+  check('v0.6: ⌥I deletes the key at the current frame', (await page.$$('[data-key-frame]')).length === 2);
+  await page.evaluate(() => window.__b3d.store.setFrame(1));
+  await page.click('[data-testid="play"]');
+  await page.waitForTimeout(700);
+  const playedTo = await page.evaluate(() => window.__b3d.store.getState().frame);
+  await page.click('[data-testid="play"]');
+  check('v0.6: playback advances frames', playedTo > 3, `frame ${playedTo}`);
+  await page.evaluate(() => window.__b3d.store.setFrame(1));
+  await page.click('[data-testid="tl-camkey"]');
+  await page.waitForTimeout(200);
+  check('v0.6: camera key stored', (await page.evaluate(() => window.__b3d.store.getState().doc.animation.camera.length)) === 1);
+
+  // MP4 render (draft square, 24 frames).
+  await page.click('[data-menu="File"]');
+  await page.click('.menu [data-action="file.video"]');
+  await page.click('[data-preset="square"]');
+  await page.check('#video-draft');
+  const t0 = Date.now();
+  await page.click('[data-testid="video-render"]');
+  const ok = await page.waitForSelector('[data-testid="video-preview"], .video-modal .script-status.bad', { timeout: 180000 }).then(() => true).catch(() => false);
+  const bad = await page.$('.video-modal .script-status.bad');
+  check('v0.6: video renders without error', ok && !bad, bad ? await bad.textContent() : `${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  if (ok && !bad) {
+    const meta = await page.$eval('[data-testid="video-preview"]', (v) => new Promise((res) => {
+      const done = () => res({ d: v.duration, w: v.videoWidth, h: v.videoHeight });
+      if (v.readyState >= 1) done(); else v.addEventListener('loadedmetadata', done, { once: true });
+      setTimeout(() => res({ d: -1, w: 0, h: 0 }), 8000);
+    }));
+    check('v0.6: MP4 plays back: 1 s, square 720×720', Math.abs(meta.d - 1) < 0.15 && meta.w === 720 && meta.h === 720, JSON.stringify(meta));
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-testid="video-save"]')]);
+    const fs = await import('node:fs');
+    const p = await dl.path();
+    const head = fs.readFileSync(p).subarray(4, 8).toString('latin1');
+    check('v0.6: saved file is an MP4', dl.suggestedFilename().endsWith('.mp4') && head === 'ftyp', `${dl.suggestedFilename()} ${head} ${fs.statSync(p).size} B`);
+    await page.screenshot({ path: `${shots}/video-result.png` });
+  }
+  check('v0.6: no console/page errors (animation, video)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// ---------------------------------------------------------------- FilmCraft hosted at /film (v0.6)
+{
+  const { ctx, page } = await open({ width: 1280, height: 800 });
+  const errors = [];
+  const film = await ctx.newPage();
+  film.on('pageerror', (e) => errors.push(String(e)));
+  const sizes = [];
+  film.on('response', async (r) => /\/film\/wasm\//.test(r.url()) && sizes.push([r.status(), Number(r.headers()['content-length'] ?? 0)]));
+  await film.goto(new URL('film/', url).href);
+  const started = await film.waitForFunction(() => window.filmcraftLoad && (window.filmcraftLoad.readyMs || window.filmcraftLoad.error), null, { timeout: 240000 }).then(() => film.evaluate(() => window.filmcraftLoad)).catch((e) => ({ error: String(e) }));
+  check('v0.6: FilmCraft starts at /film', !!started.readyMs, JSON.stringify(started));
+  check('v0.6: FilmCraft wasm parts load', sizes.length >= 2 && sizes.every(([st]) => st === 200), JSON.stringify(sizes));
+  const lic = await page.evaluate(async (u) => (await fetch(u)).status, new URL('film/LICENSE-MIT', url).href);
+  check('v0.6: FilmCraft licence is published with it', lic === 200);
+  await film.waitForTimeout(2000);
+  await film.screenshot({ path: `${shots}/filmcraft.png` });
+  check('v0.6: FilmCraft runs without page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }
 

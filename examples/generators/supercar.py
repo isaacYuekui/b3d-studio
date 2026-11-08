@@ -137,7 +137,12 @@ def canopy_mesh():
 
 # ---------------------------------------------------------------- assembly
 def build_car(add, parent, paint="#a50f12", prefix=""):
-    """Add the car's parts as children of `parent` (an existing object id)."""
+    """Add the car's parts as children of `parent` (an existing object id).
+
+    Returns {"FL": spin_id, ...}: each wheel's spin node, which rolls the wheel when
+    rotated about Y (positive = rolling forward).
+    """
+    spins = {}
     P = {"baseColor": paint, "metallic": 0.82, "roughness": 0.24}
     carbon = {"baseColor": "#121314", "metallic": 0.5, "roughness": 0.38}
     matte = {"baseColor": "#0d0e0f", "metallic": 0, "roughness": 0.75}
@@ -192,9 +197,12 @@ def build_car(add, parent, paint="#a50f12", prefix=""):
         front = wx > 0
         r = 0.355 if front else 0.365
         w = 0.27 if front else 0.33
-        hub = n(f"wheel_{tag}")
-        add(primitive="empty", id=hub, name=n(f"Wheel.{tag}"), parentId=parent,
+        steer_id = n(f"wheel_{tag}")
+        add(primitive="empty", id=steer_id, name=n(f"Wheel.{tag}"), parentId=parent,
             transform={"position": [wx, side * (0.985 - w / 2), r], "rotation": [0, 0, steer]})
+        hub = n(f"spin_{tag}")
+        add(primitive="empty", id=hub, name=n(f"Spin.{tag}"), parentId=steer_id)
+        spins[tag] = hub
         out = side * (w / 2)
         add(primitive="cylinder", name=n(f"Tyre.{tag}"), parentId=hub, params={"segments": 48},
             transform={"rotation": [90, 0, 0], "scale": [r, r, w / 2]}, material=rubber)
@@ -213,3 +221,4 @@ def build_car(add, parent, paint="#a50f12", prefix=""):
                            "rotation": [0, round(math.degrees(th), 2), 0], "scale": [r * 0.36, 0.012, 0.028]}, material=spoke_mat)
         add(primitive="cylinder", name=n(f"Centre Lock.{tag}"), parentId=hub, params={"segments": 6},
             transform={"position": [0, out + side * 0.03, 0], "rotation": [90, 0, 0], "scale": [0.05, 0.05, 0.015]}, material=spoke_mat)
+    return spins

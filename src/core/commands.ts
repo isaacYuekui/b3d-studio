@@ -8,6 +8,8 @@
 //   - easy unit testing
 
 import { BACKGROUNDS, DEFAULT_LIGHT, DEFAULT_MATERIAL, DEFAULT_WORLD, IDENTITY, LIGHT_TYPES, OBJECT_TYPES, PRIMITIVES } from './types';
+import { DEFAULT_ANIMATION, EASINGS, animationOf, transformAt, upsertKey } from './animation';
+import type { Animation, Easing } from './animation';
 import type { Background, LightData, LightType, Material, MeshData, ObjectType, PrimitiveParams, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 
 export interface AddCommand {
@@ -42,6 +44,12 @@ export type Command =
   | { type: 'setVisible'; id: string; visible: boolean }
   | { type: 'setWorld'; world: Partial<World> }
   | { type: 'setCamera'; position: Vec3; target: Vec3 }
+  | { type: 'setKeyframe'; id: string; frame: number; transform?: Transform; easing?: Easing }
+  | { type: 'deleteKeyframe'; id: string; frame: number }
+  | { type: 'setCameraKey'; frame: number; position: Vec3; target: Vec3; easing?: Easing }
+  | { type: 'deleteCameraKey'; frame: number }
+  | { type: 'clearAnimation'; id: string | null }
+  | { type: 'setAnimation'; fps?: number; start?: number; end?: number }
   | { type: 'batch'; commands: Command[] }
   | { type: 'replaceScene'; doc: SceneDoc };
 
@@ -105,6 +113,10 @@ function withObject(doc: SceneDoc, obj: SceneObject): SceneDoc {
   return { ...doc, objects: { ...doc.objects, [obj.id]: obj } };
 }
 
+function withAnimation(doc: SceneDoc, animation: Animation): SceneDoc {
+  return { ...doc, animation };
+}
+
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function defaultName(cmd: AddCommand): string {
@@ -152,7 +164,13 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       if (doomed.size === 0) return { doc, created: [] };
       const objects: Record<string, SceneObject> = {};
       for (const [id, o] of Object.entries(doc.objects)) if (!doomed.has(id)) objects[id] = o;
-      return { doc: { ...doc, objects, order: doc.order.filter((id) => !doomed.has(id)) }, created: [] };
+      let animation = doc.animation;
+      if (animation && [...doomed].some((id) => animation!.tracks[id])) {
+        const tracks = { ...animation.tracks };
+        doomed.forEach((id) => delete tracks[id]);
+        animation = { ...animation, tracks };
+      }
+      return { doc: { ...doc, objects, order: doc.order.filter((id) => !doomed.has(id)), ...(animation ? { animation } : {}) }, created: [] };
     }
 
     case 'duplicate': {
@@ -175,6 +193,13 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
           };
           if (isRoot) copy.transform.position[0] += 1;
           next = { ...next, objects: { ...next.objects, [newId]: copy }, order: [...next.order, newId] };
+          const srcKeys = doc.animation?.tracks[srcId];
+          if (srcKeys?.length) {
+            const keys = clone(srcKeys);
+            if (isRoot) keys.forEach((k) => (k.transform.position[0] += 1));
+            const anim = animationOf(next);
+            next = { ...next, animation: { ...anim, tracks: { ...anim.tracks, [newId]: keys } } };
+          }
           if (isRoot) created.push(newId);
         }
       }
@@ -236,6 +261,58 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
 
     case 'setCamera':
       return { doc: { ...doc, camera: { position: [...cmd.position], target: [...cmd.target] } }, created: [] };
+
+    case 'setKeyframe': {
+      requireObj(doc, cmd.id);
+      const anim = animationOf(doc);
+      const transform = cmd.transform ?? transformAt(doc, cmd.id, cmd.frame)!;
+      const prev = anim.tracks[cmd.id]?.find((k) => k.frame === cmd.frame);
+      const key = { frame: cmd.frame, transform: clone(transform), easing: cmd.easing ?? prev?.easing ?? 'ease' };
+      return { doc: withAnimation(doc, { ...anim, tracks: { ...anim.tracks, [cmd.id]: upsertKey(anim.tracks[cmd.id] ?? [], key) } }), created: [] };
+    }
+
+    case 'deleteKeyframe': {
+      const anim = animationOf(doc);
+      const keys = anim.tracks[cmd.id];
+      if (!keys?.some((k) => k.frame === cmd.frame)) return { doc, created: [] };
+      const rest = keys.filter((k) => k.frame !== cmd.frame);
+      const tracks = { ...anim.tracks };
+      if (rest.length) tracks[cmd.id] = rest;
+      else delete tracks[cmd.id];
+      // The object keeps the pose of its last remaining key, so nothing jumps.
+      const o = doc.objects[cmd.id];
+      const base = !rest.length && o ? withObject(doc, { ...o, transform: clone(keys[0].transform) }) : doc;
+      return { doc: withAnimation(base, { ...anim, tracks }), created: [] };
+    }
+
+    case 'setCameraKey': {
+      const anim = animationOf(doc);
+      const prev = anim.camera.find((k) => k.frame === cmd.frame);
+      const key = { frame: cmd.frame, position: [...cmd.position] as Vec3, target: [...cmd.target] as Vec3, easing: cmd.easing ?? prev?.easing ?? 'ease' };
+      return { doc: withAnimation(doc, { ...anim, camera: upsertKey(anim.camera, key) }), created: [] };
+    }
+
+    case 'deleteCameraKey': {
+      const anim = animationOf(doc);
+      if (!anim.camera.some((k) => k.frame === cmd.frame)) return { doc, created: [] };
+      return { doc: withAnimation(doc, { ...anim, camera: anim.camera.filter((k) => k.frame !== cmd.frame) }), created: [] };
+    }
+
+    case 'clearAnimation': {
+      const anim = animationOf(doc);
+      if (cmd.id === null) return { doc: withAnimation(doc, { ...anim, camera: [] }), created: [] };
+      if (!anim.tracks[cmd.id]) return { doc, created: [] };
+      const tracks = { ...anim.tracks };
+      delete tracks[cmd.id];
+      return { doc: withAnimation(doc, { ...anim, tracks }), created: [] };
+    }
+
+    case 'setAnimation': {
+      const anim = animationOf(doc);
+      const next = { ...anim, ...(cmd.fps !== undefined ? { fps: cmd.fps } : {}), ...(cmd.start !== undefined ? { start: cmd.start } : {}), ...(cmd.end !== undefined ? { end: cmd.end } : {}) };
+      if (next.end <= next.start) throw new CommandError('The end frame must be after the start frame');
+      return { doc: withAnimation(doc, next), created: [] };
+    }
 
     case 'batch': {
       // Atomic: any failure throws and the original doc is untouched (we never mutate).
@@ -402,12 +479,46 @@ export function validateSceneDoc(v: unknown): SceneDoc {
   }
   const doc: SceneDoc = { objects, order };
   if (v.world !== undefined) doc.world = { ...DEFAULT_WORLD, ...validateWorld(v.world) };
+  if (v.animation !== undefined) doc.animation = validateAnimation(v.animation, objects);
   if (v.camera !== undefined) {
     const c = v.camera;
     if (!isRecord(c) || !isVec3(c.position) || !isVec3(c.target)) fail('camera needs position and target [x,y,z]');
     doc.camera = { position: [...c.position], target: [...c.target] };
   }
   return doc;
+}
+
+const isFrame = (v: unknown): v is number => isNum(v) && v >= -100000 && v <= 1000000;
+const isEasing = (v: unknown): v is Easing => EASINGS.includes(v as Easing);
+const isTransform = (v: unknown): v is Transform => isRecord(v) && isVec3(v.position) && isVec3(v.rotation) && isVec3(v.scale);
+
+export function validateAnimation(v: unknown, objects: Record<string, SceneObject>): Animation {
+  if (!isRecord(v)) fail('animation must be an object');
+  const fps = v.fps === undefined ? DEFAULT_ANIMATION.fps : inRange(v.fps, 1, 240) ? v.fps : fail('animation.fps must be 1..240');
+  const start = v.start === undefined ? DEFAULT_ANIMATION.start : isFrame(v.start) ? v.start : fail('animation.start invalid');
+  const end = v.end === undefined ? DEFAULT_ANIMATION.end : isFrame(v.end) && v.end > start ? v.end : fail('animation.end must be after start');
+  const tracks: Animation['tracks'] = {};
+  if (v.tracks !== undefined) {
+    if (!isRecord(v.tracks)) fail('animation.tracks invalid');
+    for (const [id, keys] of Object.entries(v.tracks)) {
+      if (!objects[id]) continue; // drop tracks of objects that no longer exist
+      if (!Array.isArray(keys) || keys.length > 100000) fail(`animation track ${id} invalid`);
+      tracks[id] = keys
+        .map((k, i) => {
+          if (!isRecord(k) || !isFrame(k.frame) || !isTransform(k.transform)) fail(`animation track ${id}, key ${i} invalid`);
+          const t = k.transform;
+          return { frame: k.frame, transform: { position: [...t.position] as Vec3, rotation: [...t.rotation] as Vec3, scale: [...t.scale] as Vec3 }, easing: isEasing(k.easing) ? k.easing : 'ease' as Easing };
+        })
+        .sort((a, b) => a.frame - b.frame);
+    }
+  }
+  const camera = v.camera === undefined ? [] : Array.isArray(v.camera)
+    ? v.camera.map((k, i) => {
+        if (!isRecord(k) || !isFrame(k.frame) || !isVec3(k.position) || !isVec3(k.target)) fail(`camera key ${i} invalid`);
+        return { frame: k.frame, position: [...k.position] as Vec3, target: [...k.target] as Vec3, easing: isEasing(k.easing) ? k.easing : 'ease' as Easing };
+      }).sort((a, b) => a.frame - b.frame)
+    : fail('animation.camera invalid');
+  return { fps, start, end, tracks, camera };
 }
 
 const REF_ID = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -478,6 +589,34 @@ export function validateCommand(v: unknown, depth = 0): Command {
     case 'setCamera':
       if (!isVec3(v.position) || !isVec3(v.target)) fail('setCamera needs position and target as [x,y,z]');
       return { type: 'setCamera', position: [...v.position], target: [...v.target] };
+    case 'setKeyframe': {
+      if (!isId(v.id) || !isFrame(v.frame)) fail('setKeyframe needs id and frame');
+      if (v.easing !== undefined && !isEasing(v.easing)) fail(`easing must be one of ${EASINGS.join(', ')}`);
+      let transform: Transform | undefined;
+      if (v.transform !== undefined) {
+        if (!isTransform(v.transform)) fail('setKeyframe transform needs position, rotation and scale as [x,y,z]');
+        transform = { position: [...v.transform.position] as Vec3, rotation: [...v.transform.rotation] as Vec3, scale: [...v.transform.scale] as Vec3 };
+      }
+      return { type: 'setKeyframe', id: v.id, frame: v.frame, ...(transform ? { transform } : {}), ...(v.easing ? { easing: v.easing as Easing } : {}) };
+    }
+    case 'deleteKeyframe':
+      if (!isId(v.id) || !isFrame(v.frame)) fail('deleteKeyframe needs id and frame');
+      return { type: 'deleteKeyframe', id: v.id, frame: v.frame };
+    case 'setCameraKey':
+      if (!isFrame(v.frame) || !isVec3(v.position) || !isVec3(v.target)) fail('setCameraKey needs frame, position and target');
+      if (v.easing !== undefined && !isEasing(v.easing)) fail(`easing must be one of ${EASINGS.join(', ')}`);
+      return { type: 'setCameraKey', frame: v.frame, position: [...v.position], target: [...v.target], ...(v.easing ? { easing: v.easing as Easing } : {}) };
+    case 'deleteCameraKey':
+      if (!isFrame(v.frame)) fail('deleteCameraKey needs frame');
+      return { type: 'deleteCameraKey', frame: v.frame };
+    case 'clearAnimation':
+      if (!(v.id === null || isId(v.id))) fail('clearAnimation needs id (or null for the camera)');
+      return { type: 'clearAnimation', id: v.id as string | null };
+    case 'setAnimation':
+      if (v.fps !== undefined && !inRange(v.fps, 1, 240)) fail('fps must be 1..240');
+      if (v.start !== undefined && !isFrame(v.start)) fail('start invalid');
+      if (v.end !== undefined && !isFrame(v.end)) fail('end invalid');
+      return { type: 'setAnimation', ...(v.fps !== undefined ? { fps: v.fps as number } : {}), ...(v.start !== undefined ? { start: v.start as number } : {}), ...(v.end !== undefined ? { end: v.end as number } : {}) };
     case 'batch':
       if (depth > 0) fail('batches cannot be nested');
       if (!Array.isArray(v.commands) || v.commands.length > LIMITS.commands) fail(`batch needs a commands list (max ${LIMITS.commands})`);

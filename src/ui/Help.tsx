@@ -15,6 +15,9 @@ const KEYS: [string, string][] = [
   ['0  ·  Ctrl/⌘ ⌥ 0', 'Scene camera view · save current view as scene camera'],
   ['.  ·  Home', 'Frame selected · frame all'],
   ['Space', 'Play / pause timeline'],
+  ['I  ·  ⌥ I', 'Insert · delete keyframe at the current frame'],
+  ['← →  ·  ⇧ ← →', 'Previous / next frame · start / end'],
+  ['↓ ↑', 'Previous / next keyframe'],
   ['Z', 'Toggle Solid / Rendered shading'],
   [`${MOD} R`, 'Run a scene script'],
   ['⇧ L', 'Open the asset library'],
@@ -53,7 +56,7 @@ export function Help({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <p className="help-foot">
-          B3D Studio v0.1 is an independent project inspired by professional desktop 3D tools. It is not affiliated with or endorsed by the Blender Foundation.
+          B3D Studio is an independent project inspired by professional desktop 3D tools. It is not affiliated with or endorsed by the Blender Foundation.
           Coordinates use metres with Z up. Your scene autosaves in this browser.
         </p>
       </div>

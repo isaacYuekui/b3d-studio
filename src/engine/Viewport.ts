@@ -46,6 +46,7 @@ import type { Store, AppState, ToolMode, Shading } from '../core/store';
 import type { Material as SceneMaterial, SceneObject, SceneDoc, Vec3, World } from '../core/types';
 import { isRenderable, worldOf } from '../core/types';
 import { catalogNow, hdriUrl, loadCatalog, modelUrl, textureUrl } from './library';
+import { evaluateCamera, evaluateTransform, transformEdit } from '../core/animation';
 import { guessUnitScale, isUserAsset, updateUserModelMeta, userModelMetaNow, userModelUrl } from './userModels';
 
 class MissingModel extends Error {}
@@ -168,6 +169,12 @@ export class Viewport {
     }
     gm.positionGizmoEnabled = gm.rotationGizmoEnabled = gm.scaleGizmoEnabled = false;
 
+    // Moving the view by hand leaves the scene-camera view (like Blender).
+    scene.onPointerObservable.add((info) => {
+      if (info.type === PointerEventTypes.POINTERMOVE && (info.event as PointerEvent).buttons && this.store.getState().cameraView && !this.dragging) this.store.setCameraView(false);
+    });
+    canvas.addEventListener('wheel', () => this.store.getState().cameraView && this.store.setCameraView(false), { passive: true });
+
     // Tap to select
     scene.onPointerObservable.add((info) => {
       if (info.type !== PointerEventTypes.POINTERTAP) return;
@@ -224,10 +231,20 @@ export class Viewport {
 
   // ---------------------------------------------------------------- scene sync
 
+  private lastFrame = -1;
+  private animated = new Set<string>();
+  private lastCameraView = false;
+
   private sync(state: AppState) {
-    if (state.doc !== this.lastDoc) {
+    const docChanged = state.doc !== this.lastDoc;
+    if (docChanged) {
       this.syncDoc(state.doc);
       this.lastDoc = state.doc;
+    }
+    if (docChanged || state.frame !== this.lastFrame || state.cameraView !== this.lastCameraView) {
+      this.applyAnimation(state);
+      this.lastFrame = state.frame;
+      this.lastCameraView = state.cameraView;
     }
     const world = worldOf(state.doc);
     if (state.shading !== this.lastShading || JSON.stringify(world) !== JSON.stringify(this.lastWorld)) {
@@ -241,6 +258,46 @@ export class Viewport {
       this.lastSel = state.selection;
       this.lastTool = state.tool;
     }
+  }
+
+  /** Pose animated objects (and the camera, when looking through it) at the current frame. */
+  private applyAnimation(state: AppState) {
+    const anim = state.doc.animation;
+    const now = new Set<string>();
+    const sel = state.selection;
+    for (const [id, keys] of Object.entries(anim?.tracks ?? {})) {
+      const e = this.entries.get(id);
+      if (!e || !keys.length) continue;
+      now.add(id);
+      if (this.dragging && id === sel) continue;
+      const t = evaluateTransform(keys, state.frame)!;
+      this.applyTransform(e.node, { ...state.doc.objects[id], transform: t });
+    }
+    // Objects whose animation was removed go back to their own transform.
+    for (const id of this.animated) {
+      if (now.has(id)) continue;
+      const e = this.entries.get(id);
+      const o = state.doc.objects[id];
+      if (e && o) this.applyTransform(e.node, o);
+    }
+    this.animated = now;
+    if (state.cameraView) {
+      const cam = (anim?.camera.length ? evaluateCamera(anim.camera, state.frame) : null) ?? state.doc.camera;
+      if (cam) this.placeCamera(cam.position, cam.target);
+    }
+  }
+
+  /** Put the viewport camera exactly at a scene-camera position (no tween). */
+  private placeCamera(position: Vec3, target: Vec3) {
+    const pos = new Vector3(...toBabylonVec(position));
+    const tgt = new Vector3(...toBabylonVec(target));
+    const d = pos.subtract(tgt);
+    const radius = Math.max(d.length(), 0.3);
+    this.tween = null;
+    this.camera.setTarget(tgt);
+    this.camera.alpha = Math.atan2(d.z, d.x);
+    this.camera.beta = Math.acos(Math.min(1, Math.max(-1, d.y / radius)));
+    this.camera.radius = radius;
   }
 
   private keyFor(o: SceneObject): string {
@@ -647,7 +704,8 @@ export class Viewport {
     const n = e.node;
     const q = n.rotationQuaternion ?? Quaternion.FromEulerVector(n.rotation);
     const r = (v: Vector3): Vec3 => fromBabylonVec([clean(v.x), clean(v.y), clean(v.z)]);
-    this.store.dispatch({ type: 'transform', id: sel, position: r(n.position), rotation: babylonQuatToEulerDeg([q.x, q.y, q.z, q.w]), scale: r(n.scaling) });
+    const st = this.store.getState();
+    this.store.dispatch(transformEdit(st.doc, st.frame, sel, { position: r(n.position), rotation: babylonQuatToEulerDeg([q.x, q.y, q.z, q.w]), scale: r(n.scaling) }));
   }
 
   private grid: LinesMesh[] = [];
@@ -692,7 +750,8 @@ export class Viewport {
 
   /** Move to the scene camera (if the scene has one). Returns false when there is none. */
   viewCamera(): boolean {
-    const c = this.store.getState().doc.camera;
+    const st = this.store.getState();
+    const c = (st.doc.animation?.camera.length ? evaluateCamera(st.doc.animation.camera, st.frame) : null) ?? st.doc.camera;
     if (!c) return false;
     const pos = new Vector3(...toBabylonVec(c.position));
     const target = new Vector3(...toBabylonVec(c.target));
@@ -701,6 +760,7 @@ export class Viewport {
     const alpha = Math.atan2(d.z, d.x);
     const beta = Math.acos(Math.min(1, Math.max(-1, d.y / radius)));
     this.animateCamera(alpha, beta, radius, target);
+    setTimeout(() => this.store.setCameraView(true), 320);
     return true;
   }
 
@@ -796,6 +856,76 @@ export class Viewport {
     cam.beta = lerp(tw.from[1], tw.to[1]);
     cam.radius = lerp(tw.from[2], tw.to[2]);
     if (k >= 1) this.tween = null;
+  }
+
+  /**
+   * Render the animation frame by frame and encode it to MP4 (H.264 when the device
+   * can encode it). Deterministic: every frame is posed from the timeline, rendered,
+   * copied, and encoded, so the result never drops frames however slow the device is.
+   */
+  async renderVideo(opts: { width: number; height: number; start: number; end: number; fps: number; onProgress?: (done: number, total: number) => void; isCancelled?: () => boolean }): Promise<{ blob: Blob; codec: string } | null> {
+    const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, QUALITY_HIGH, getFirstEncodableVideoCodec } = await import('mediabunny');
+    const W = Math.round(opts.width / 2) * 2;
+    const H = Math.round(opts.height / 2) * 2;
+    const codec = await getFirstEncodableVideoCodec(['avc', 'hevc', 'vp9', 'av1'], { width: W, height: H });
+    if (!codec) throw new Error('This browser cannot encode video. Update Safari / Chrome and try again.');
+
+    const st0 = this.store.getState();
+    const restore = { shading: st0.shading, selection: st0.selection, frame: st0.frame, cameraView: st0.cameraView, scaling: this.engine.getHardwareScalingLevel() };
+    const hasCamera = !!st0.doc.camera || (st0.doc.animation?.camera.length ?? 0) > 0;
+
+    // Look the way the final video should: rendered shading, no selection, through the scene camera.
+    this.store.select(null);
+    this.store.setShading('rendered');
+    if (hasCamera) this.store.setCameraView(true);
+    this.engine.stopRenderLoop();
+    this.resizeObs.disconnect();
+    this.engine.setHardwareScalingLevel(1);
+    this.engine.setSize(W, H);
+    await this.settle();
+    await this.scene.whenReadyAsync();
+
+    const copy = document.createElement('canvas');
+    copy.width = W;
+    copy.height = H;
+    const ctx2d = copy.getContext('2d')!;
+    const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
+    const source = new CanvasSource(copy, { codec, quality: QUALITY_HIGH, keyFrameInterval: 2 });
+    output.addVideoTrack(source, { frameRate: opts.fps });
+    await output.start();
+
+    const total = opts.end - opts.start + 1;
+    let cancelled = false;
+    try {
+      for (let i = 0; i < total; i++) {
+        if (opts.isCancelled?.()) {
+          cancelled = true;
+          break;
+        }
+        this.store.setFrame(opts.start + i); // poses objects and camera synchronously
+        this.scene.render();
+        ctx2d.drawImage(this.canvas, 0, 0, W, H); // copy before the WebGL buffer is cleared
+        await source.add(i / opts.fps, 1 / opts.fps);
+        opts.onProgress?.(i + 1, total);
+        if (i % 4 === 3) await new Promise((r) => setTimeout(r, 0)); // keep the page responsive
+      }
+      if (cancelled) {
+        await output.cancel();
+        return null;
+      }
+      await output.finalize();
+      const buf = (output.target as InstanceType<typeof BufferTarget>).buffer!;
+      return { blob: new Blob([buf], { type: 'video/mp4' }), codec };
+    } finally {
+      this.engine.setHardwareScalingLevel(restore.scaling);
+      this.engine.resize();
+      this.resizeObs.observe(this.canvas);
+      this.engine.runRenderLoop(() => this.scene.render());
+      this.store.setShading(restore.shading);
+      this.store.setCameraView(restore.cameraView);
+      this.store.setFrame(restore.frame);
+      this.store.select(restore.selection);
+    }
   }
 
   /** Export the scene as binary glTF (opens in Blender via File > Import > glTF 2.0). */

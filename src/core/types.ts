@@ -114,6 +114,7 @@ export interface SceneDoc {
   order: string[];
   world?: World;
   camera?: SceneCamera;
+  animation?: import('./animation').Animation;
 }
 
 export const DEFAULT_WORLD: World = {

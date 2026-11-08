@@ -115,6 +115,9 @@ export const ADD_ITEMS: MenuItem[] = [
 ];
 
 export const OBJECT_CONTEXT: MenuItem[] = [
+  'anim.insertKey',
+  'anim.deleteKey',
+  '-',
   'edit.duplicate',
   'edit.delete',
   'edit.hide',

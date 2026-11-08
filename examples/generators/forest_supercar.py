@@ -60,7 +60,7 @@ add(primitive="mesh", name="Gravel Track", mesh={"vertices": road_v, "faces": ro
 # ----------------------------------------------------------------- the car
 heading = math.degrees(math.atan(1.6 / 9 * math.cos(0.5 / 9)))  # follow the track's tangent near x=0.5
 add(primitive="empty", id="car", name="Supercar", transform={"position": [0.5, round(1.6 * math.sin(0.5 / 9), 3), 0], "rotation": [0, 0, round(heading, 2)]})
-build_car(add, "car", paint="#a50f12")
+spins = build_car(add, "car", paint="#a50f12")
 
 # ----------------------------------------------------------------- forest
 CAM = [5.0, 5.6, 1.15]
@@ -79,8 +79,10 @@ def blocks_view(x, y):
 
 
 def free(x, y):
-    """Keep trees off the track, away from the car and out of the camera's view of it."""
-    return abs(y - 1.6 * math.sin(x / 9)) > 4.2 and math.hypot(x - 0.5, y) > 5 and not blocks_view(x, y)
+    """Keep trees off the track, out of the tracking camera's lane, and out of its view of the car."""
+    yc = 1.6 * math.sin(x / 9)
+    in_camera_lane = 3.2 < y - yc < 10.5
+    return abs(y - yc) > 4.2 and not in_camera_lane and math.hypot(x - 0.5, y) > 5 and not blocks_view(x, y)
 
 
 trees = []
@@ -109,10 +111,51 @@ for i, (asset, s, (x, y)) in enumerate(props):
 add(primitive="light", name="Sun", light={"type": "sun", "power": 3.4, "color": "#ffe3bf", "shadows": True},
     transform={"position": [-12, -10, 9], "rotation": [62, 0, -50]})
 
-# The composed shot: low front three-quarter view, slightly below eye level.
-C.append({"type": "setCamera", "position": CAM, "target": [0.2, 0.0, 0.55]})
 
-script = {"format": "b3d-studio-script", "version": 1, "title": "Supercar in the pines", "commands": C}
+# ----------------------------------------------------------------- animation: the drive
+# The car follows the track centre line y = 1.6 sin(x / 9) at a steady 12 m/s,
+# heading along the tangent; wheels roll at the matching rate; a tracking camera
+# runs alongside on the forest side, slightly ahead and low, so the trees stream past.
+FPS, F0, F1 = 24, 1, 120
+X0, X1 = -30.0, 30.0
+
+
+def track(x):
+    return 1.6 * math.sin(x / 9), math.degrees(math.atan(1.6 / 9 * math.cos(x / 9)))
+
+
+def arc_length(a, b, n=400):
+    d, px, py = 0.0, a, track(a)[0]
+    for i in range(1, n + 1):
+        x = a + (b - a) * i / n
+        y = track(x)[0]
+        d += math.hypot(x - px, y - py)
+        px, py = x, y
+    return d
+
+
+C.append({"type": "setAnimation", "fps": FPS, "start": F0, "end": F1})
+for f in range(F0, F1 + 1, 6):
+    x = X0 + (X1 - X0) * (f - F0) / (F1 - F0)
+    y, hdg = track(x)
+    C.append({"type": "setKeyframe", "id": "car", "frame": f, "easing": "linear",
+              "transform": {"position": [round(x, 3), round(y, 3), 0], "rotation": [0, 0, round(hdg, 2)], "scale": [1, 1, 1]}})
+    # Tracking camera: alongside, a little ahead, low; looks at the car's flank.
+    C.append({"type": "setCameraKey", "frame": f, "easing": "linear",
+              "position": [round(x + 3.2, 3), round(y + 6.8, 3), 1.05], "target": [round(x - 0.2, 3), round(y, 3), 0.62]})
+dist = arc_length(X0, X1)
+for tag, spin in spins.items():
+    r = 0.355 if tag.startswith("F") else 0.365
+    turns = math.degrees(dist / r)
+    for f, a in ((F0, 0), (F1, turns)):
+        C.append({"type": "setKeyframe", "id": spin, "frame": f, "easing": "linear",
+                  "transform": {"position": [0, 0, 0], "rotation": [0, round(a, 1), 0], "scale": [1, 1, 1]}})
+
+# Scene camera starts on the first tracking key (key 0 views it; playback follows the keys).
+y0 = track(X0)[0]
+C.append({"type": "setCamera", "position": [round(X0 + 3.2, 3), round(y0 + 6.8, 3), 1.05], "target": [round(X0 - 0.2, 3), round(y0, 3), 0.62]})
+
+script = {"format": "b3d-studio-script", "version": 1, "title": "Supercar drive in the pines", "commands": C}
 out = ROOT / "examples/forest-supercar.b3d-script.json"
 out.write_text(json.dumps(script, separators=(",", ":")))
 print(f"{len(C)} commands, {out.stat().st_size // 1024} KB")
