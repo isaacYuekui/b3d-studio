@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Import your own models (v0.5)
+
+**File > Import 3D Model** (⇧⌘I) takes a `.glb`, a `.gltf`, or a `.zip` of glTF + files (e.g. a Sketchfab download).
+Models are stored on the device (IndexedDB), grounded and centred automatically, converted from centimetres or
+millimetres when needed, listed under Library > My Models, and embedded in exported project files.
+Set the real size in Properties > Model.
+
 ## Realism (v0.3)
 
 - Built-in CC0 library from Poly Haven: 60 scanned models, 9 HDRI skies, 18 photo materials ([docs/LIBRARY.md](docs/LIBRARY.md)); browse it with the Library button (⇧L)

@@ -9,7 +9,7 @@ export const MenuCtx = createContext<OpenMenu>(() => {});
 export const useOpenMenu = () => useContext(MenuCtx);
 
 const MENUS: { label: string; items: MenuItem[] }[] = [
-  { label: 'File', items: ['file.new', '-', 'file.script', '-', 'file.save', 'file.load', '-', 'file.import', 'file.export', 'file.glb'] },
+  { label: 'File', items: ['file.new', '-', 'file.script', '-', 'file.save', 'file.load', '-', 'file.importModel', '-', 'file.import', 'file.export', 'file.glb'] },
   { label: 'Edit', items: ['edit.undo', 'edit.redo', '-', 'edit.duplicate', 'edit.delete', '-', 'edit.hide', 'edit.unhideAll', 'edit.deselect'] },
   { label: 'Add', items: ADD_ITEMS },
   {

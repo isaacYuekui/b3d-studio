@@ -23,7 +23,7 @@ async function open(viewport, opts = {}) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-  await page.goto(url);
+  await page.goto(url + (url.includes('?') ? '&' : '?') + 'debug');
   await page.waitForSelector('[data-testid="viewport-canvas"]');
   await page.waitForTimeout(1500);
   return { ctx, page, errors };
@@ -267,7 +267,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await page.click('[data-asset="ceramic_vase_01"]');
   await page.waitForTimeout(2500);
   check('v0.3: adding a library model selects it', (await selectedName(page)) === 'Ceramic Vase');
-  check('v0.3: model shows its asset in Properties', /ceramic_vase_01/.test(await page.textContent('[data-testid="properties"]')));
+  check('v0.3: model shows its source in Properties', /Ceramic Vase/.test(await page.textContent('[data-testid="properties"]')));
 
   // Apply a photo material to a cube
   await page.click('[data-outliner-id] >> text=Cube');
@@ -316,7 +316,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   check('v0.4: example chip loads a scene script', /Supercar in the pines/.test(await page.textContent('.script-status')));
   await page.click('[data-testid="script-run"]');
   await page.waitForTimeout(15000);
-  check('v0.4: forest supercar builds 61 objects', (await objCount(page)) === 61, `${await objCount(page)}`);
+  check('v0.4: forest supercar builds 104 objects', (await objCount(page)) === 104, `${await objCount(page)}`);
   await page.keyboard.press('5');
   await page.waitForTimeout(1500);
   await page.keyboard.press('0');
@@ -326,6 +326,74 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   check('v0.4: all forest assets loaded', failed.length === 0, failed.slice(0, 3).join(' | '));
   check('v0.4: no console/page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
+}
+
+// ---------------------------------------------------------------- model import (v0.5)
+{
+  const fs = await import('node:fs');
+  const { execFileSync } = await import('node:child_process');
+  if (!fs.existsSync('tests/fixtures/vase-cm.glb')) execFileSync('node', ['tests/e2e/make-fixtures.mjs']);
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  const importFile = async (path) => {
+    const name = path.split('/').pop().replace(/\.[^.]+$/, '');
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.keyboard.press('Control+Shift+i')]);
+    await chooser.setFiles(path);
+    await page.waitForFunction((n) => { const t = document.querySelector('.status-notice')?.textContent ?? ''; return t.includes(`Imported “${n}”`) || t.includes('Import failed'); }, name, { timeout: 30000 });
+    return page.textContent('.status-notice');
+  };
+
+  const n1 = await importFile('tests/fixtures/vase-cm.glb');
+  check('v0.5: GLB import adds the model', /Imported “vase-cm”/.test(n1) && (await objCount(page)) === 2, n1);
+  await page.waitForTimeout(2500);
+  const size = Number(await page.locator('[aria-label="Size (longest side, m)"]').getAttribute('aria-valuenow'));
+  check('v0.5: centimetre file converted to real metres', size > 0.2 && size < 0.6, `longest side ${size} m`);
+  const grounded = await page.evaluate(() => {
+    const vp = window.__b3d.viewport(); const sel = window.__b3d.store.getState().selection; const e = vp.entries.get(sel);
+    let minY = Infinity, cx = 0, cz = 0, n = 0;
+    for (const m of e.meshes) { m.computeWorldMatrix(true); const bb = m.getBoundingInfo().boundingBox; minY = Math.min(minY, bb.minimumWorld.y); cx += bb.centerWorld.x; cz += bb.centerWorld.z; n++; }
+    return [minY, cx / n, cz / n].map((v) => Math.round(v * 100) / 100);
+  });
+  check('v0.5: imported model sits on the ground, centred at its origin', Math.abs(grounded[0]) < 0.02 && Math.abs(grounded[1]) < 0.1 && Math.abs(grounded[2]) < 0.1, grounded.join(', '));
+
+  // Size field resizes uniformly
+  const sizeField = page.locator('[aria-label="Size (longest side, m)"]');
+  await sizeField.click();
+  await page.keyboard.press('Control+a');
+  await page.keyboard.type('4.5');
+  await page.keyboard.press('Enter');
+  check('v0.5: typing a size scales the model', Math.abs(Number(await sizeField.getAttribute('aria-valuenow')) - 4.5) < 0.01);
+
+  const n2 = await importFile('tests/fixtures/vase-gltf.zip');
+  check('v0.5: ZIP of glTF + files imports', /Imported “vase-gltf”/.test(n2) && (await objCount(page)) === 3, n2);
+
+  // Persists across reload (IndexedDB) and appears under My Models
+  await page.waitForTimeout(1200);
+  await page.reload();
+  await page.waitForSelector('[data-outliner-id]');
+  await page.waitForTimeout(3000);
+  check('v0.5: imported models reload from device storage', (await objCount(page)) === 3 && !/another device/.test(await page.textContent('.status-notice')));
+  await page.click('[data-testid="library-btn"]');
+  await page.click('[data-lib-tab="mine"]');
+  check('v0.5: My Models lists both imports', (await page.$$eval('.lib-mine', (els) => els.length)) === 2);
+  await page.keyboard.press('Escape');
+  await page.click('.modal-backdrop', { position: { x: 5, y: 5 } }).catch(() => {});
+
+  // Project export embeds the models; a fresh browser restores them
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.keyboard.press('Control+e')]);
+  const projPath = `${shots}/with-models.b3d.json`;
+  await dl.saveAs(projPath);
+  const proj = JSON.parse(fs.readFileSync(projPath, 'utf8'));
+  check('v0.5: project export embeds imported models', Object.keys(proj.models ?? {}).length === 2);
+  check('v0.5: no console/page errors (import)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+
+  const fresh = await open({ width: 1280, height: 800 });
+  const [ch] = await Promise.all([fresh.page.waitForEvent('filechooser'), fresh.page.keyboard.press('Control+i')]);
+  await ch.setFiles(projPath);
+  await fresh.page.waitForTimeout(4000);
+  const meshes = await fresh.page.evaluate(() => [...window.__b3d.viewport().entries.values()].reduce((s, e) => s + e.meshes.length, 0));
+  check('v0.5: project with embedded models opens on a fresh device', (await objCount(fresh.page)) === 3 && meshes >= 3 && !/another device/.test(await fresh.page.textContent('.status-notice')), `${meshes} meshes`);
+  await fresh.ctx.close();
 }
 
 // ---------------------------------------------------------------- iPad (landscape + portrait), touch

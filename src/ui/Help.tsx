@@ -18,6 +18,7 @@ const KEYS: [string, string][] = [
   ['Z', 'Toggle Solid / Rendered shading'],
   [`${MOD} R`, 'Run a scene script'],
   ['⇧ L', 'Open the asset library'],
+  [`⇧ ${MOD} I`, 'Import a 3D model (GLB, glTF or ZIP)'],
 ];
 
 const MOUSE: [string, string][] = [

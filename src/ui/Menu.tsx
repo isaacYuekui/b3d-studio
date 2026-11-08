@@ -107,6 +107,7 @@ function Item({ id, onDone }: { id: ActionId; onDone: () => void }) {
 
 export const ADD_ITEMS: MenuItem[] = [
   'add.library',
+  'file.importModel',
   '-',
   'add.cube', 'add.sphere', 'add.cylinder', 'add.cone', 'add.torus', 'add.capsule', 'add.plane',
   '-', 'add.empty',
