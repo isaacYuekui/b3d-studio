@@ -99,10 +99,15 @@ export function parseScript(text: string): ParsedScript {
   else if (typeof data === 'object' && data !== null) {
     const d = data as Record<string, unknown>;
     if (d.format === FORMAT) throw new Error('This is a project file. Use File > Import Project File instead.');
-    if (d.format !== SCRIPT_FORMAT) throw new Error(`Not a B3D Studio script (expected "format": "${SCRIPT_FORMAT}")`);
-    if (typeof d.version !== 'number' || d.version > 1) throw new Error(`Unsupported script version ${String(d.version)}`);
+    if (d.asset && (d.nodes || d.meshes || d.scenes))
+      throw new Error('This is a glTF 3D model file, not a script. Save it as a .gltf/.glb file and use File > Import Model instead.');
+    if (d.format !== undefined && d.format !== SCRIPT_FORMAT) throw new Error(`Not a B3D Studio script (unknown "format": "${String(d.format)}")`);
+    if (d.version !== undefined && (typeof d.version !== 'number' || d.version > 1)) throw new Error(`Unsupported script version ${String(d.version)}`);
     title = typeof d.title === 'string' ? d.title.slice(0, 120) : null;
-    commands = d.commands;
+    // Lenient: {"commands": [...]} without the header, or one bare command {"type": ...}.
+    if (Array.isArray(d.commands)) commands = d.commands;
+    else if (typeof d.type === 'string') commands = [d];
+    else throw new Error('No commands found. A script looks like {"format": "b3d-studio-script", "version": 1, "commands": [ ... ]}.');
   }
   const command = validateCommand({ type: 'batch', commands });
   return { title, command, count: (command as { commands: Command[] }).commands.length };
