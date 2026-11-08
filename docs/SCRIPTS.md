@@ -106,3 +106,10 @@ rejected and the error names the step.
 Add `setModifiers` with `subdivision: {levels: 2}` after modelling for smooth, rounded results;
 bevels and loop cuts near edges keep them crisp. `examples/generators/coffee_mug.py` is a full example.
 Check models with `node scripts/render-check.mjs <script.json> <sheet.png> --focus id1,id2`.
+
+## Characters (v0.9)
+
+`add` with `"primitive": "armature"` and `"armature": {"bones": [...]}`, then `setSkin`,
+`setPose`, `setPoseKey`, `deletePoseKey`, `clearPoseKeys`, `setArmature`. Bone axes and a full
+cheat sheet: [CHARACTERS.md](CHARACTERS.md). Example: `examples/generators/character.py`
+(box-modelled body + 19-bone rig + walk cycle).

@@ -36,8 +36,28 @@ export function exitEdit(store: Store) {
 }
 
 export function toggleEdit(store: Store) {
-  if (store.getState().edit) exitEdit(store);
-  else enterEdit(store);
+  const st = store.getState();
+  if (st.pose) return store.setPose(null);
+  if (st.edit) return exitEdit(store);
+  const o = st.selection ? st.doc.objects[st.selection] : null;
+  if (o?.type === 'armature') return togglePose(store);
+  enterEdit(store);
+}
+
+/** Pose Mode (Ctrl+Tab): select and rotate bones of the selected armature (or a skinned mesh's armature). */
+export function togglePose(store: Store) {
+  const st = store.getState();
+  if (st.pose) return store.setPose(null);
+  const o = st.selection ? st.doc.objects[st.selection] : null;
+  const armId = o?.type === 'armature' ? o.id : o?.skin?.armature;
+  const arm = armId ? st.doc.objects[armId] : null;
+  if (!arm?.armature) {
+    store.notify('Select an armature (or a character mesh) for Pose Mode');
+    return;
+  }
+  if (st.edit) exitEdit(store);
+  store.setPose({ id: arm.id, bone: arm.armature.bones[0]?.name ?? null });
+  store.setTool('rotate');
 }
 
 /** The edited object's mesh and edit state, or null outside edit mode. */

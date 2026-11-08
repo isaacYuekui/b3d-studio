@@ -7,7 +7,8 @@ import { createDefaultDoc } from '../core/store';
 import { loadLocal, parseProject, saveLocal, serializeProject } from '../core/serialize';
 import type { LightType, ObjectType } from '../core/types';
 import { animationOf, keyFrames } from '../core/animation';
-import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit } from './editing';
+import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit, togglePose } from './editing';
+import { poseAt } from '../core/rig';
 import type { MeshOpId } from './editing';
 
 export interface Ctx {
@@ -219,8 +220,28 @@ export const actions = {
     id: 'mode.edit',
     label: 'Toggle Edit Mode',
     shortcut: 'Tab',
-    enabled: editable,
+    enabled: (c) => editable(c) || !!c.store.getState().pose || (() => { const st = c.store.getState(); return st.selection ? st.doc.objects[st.selection]?.type === 'armature' : false; })(),
     run: (c) => toggleEdit(c.store),
+  },
+  'mode.pose': {
+    id: 'mode.pose',
+    label: 'Toggle Pose Mode',
+    shortcut: `${MOD} Tab`,
+    enabled: (c) => {
+      const st = c.store.getState();
+      const o = st.selection ? st.doc.objects[st.selection] : null;
+      return !!st.pose || o?.type === 'armature' || !!o?.skin;
+    },
+    run: (c) => togglePose(c.store),
+  },
+  'pose.reset': {
+    id: 'pose.reset',
+    label: 'Clear Pose (rest)',
+    enabled: (c) => !!c.store.getState().pose,
+    run: (c) => {
+      const p = c.store.getState().pose;
+      if (p) c.store.dispatch({ type: 'setPose', id: p.id, pose: {}, reset: true }, { select: false });
+    },
   },
   'mode.enterEdit': { id: 'mode.enterEdit', label: 'Edit Mode', enabled: editable, run: (c) => void (!editing(c) && enterEdit(c.store)) },
   'mode.object': { id: 'mode.object', label: 'Object Mode', run: (c) => exitEdit(c.store) },
@@ -421,7 +442,14 @@ export const actions = {
     shortcut: 'I',
     enabled: hasSel,
     run: (c) => {
-      const { selection, frame, doc } = c.store.getState();
+      const { selection, frame, doc, pose } = c.store.getState();
+      if (pose?.bone) {
+        // Pose Mode: key the selected bone's current pose.
+        const p = poseAt(doc, pose.id, frame)[pose.bone] ?? { rotation: [0, 0, 0] };
+        c.store.dispatch({ type: 'setPoseKey', id: pose.id, bone: pose.bone, frame, rotation: p.rotation, ...(p.location ? { location: p.location } : {}) }, { select: false });
+        c.store.notify(`Keyframe for bone ${pose.bone} at frame ${frame}`);
+        return;
+      }
       if (!selection) return;
       c.store.dispatch({ type: 'setKeyframe', id: selection, frame }, { select: false });
       c.store.notify(`Keyframe for ${doc.objects[selection].name} at frame ${frame}`);
@@ -433,7 +461,8 @@ export const actions = {
     shortcut: '⌥ I',
     enabled: hasSel,
     run: (c) => {
-      const { selection, frame } = c.store.getState();
+      const { selection, frame, pose } = c.store.getState();
+      if (pose?.bone) return void c.store.dispatch({ type: 'deletePoseKey', id: pose.id, bone: pose.bone, frame }, { select: false });
       if (selection) c.store.dispatch({ type: 'deleteKeyframe', id: selection, frame }, { select: false });
     },
   },
@@ -509,6 +538,7 @@ export function shortcutFor(e: KeyboardEvent, editMode = false): ActionId | null
   const mod = e.metaKey || e.ctrlKey;
   const k = e.key.toLowerCase();
   const code = e.code;
+  if (code === 'Tab' && mod && !e.altKey) return 'mode.pose';
   if (code === 'Tab' && !mod && !e.altKey) return 'mode.edit';
   if (mod && !e.shiftKey && !e.altKey && /^Digit[0-3]$/.test(code)) return `mod.subdiv${code.slice(5)}` as ActionId;
   if (e.altKey && !mod && code === 'KeyZ') return 'view.xray';

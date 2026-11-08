@@ -9,8 +9,8 @@
 
 import { BACKGROUNDS, DEFAULT_LIGHT, DEFAULT_MATERIAL, DEFAULT_WORLD, IDENTITY, LIGHT_TYPES, OBJECT_TYPES, PRIMITIVES } from './types';
 import { DEFAULT_ANIMATION, EASINGS, animationOf, transformAt, upsertKey } from './animation';
-import type { Animation, Easing } from './animation';
-import type { Background, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
+import type { Animation, Easing, PoseKey } from './animation';
+import type { ArmatureData, Bone, BonePose, Background, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
 import { EDIT_OPS, runEditSteps } from './mesh/script';
@@ -33,6 +33,8 @@ export interface AddCommand {
   light?: Partial<LightData>;
   /** Library model id (type 'model'). */
   asset?: string;
+  /** Bones (type 'armature'). */
+  armature?: ArmatureData;
   parentId?: string | null;
 }
 
@@ -55,6 +57,17 @@ export type Command =
   | { type: 'setModifiers'; id: string; modifiers: { mirror?: Modifiers['mirror'] | null; subdivision?: Modifiers['subdivision'] | null } }
   /** Bake the modifiers into the mesh. */
   | { type: 'applyModifiers'; id: string }
+  /** Replace an armature's bones. */
+  | { type: 'setArmature'; id: string; armature: ArmatureData }
+  /** Pose bones (merged per bone; `reset` clears the rest first). */
+  | { type: 'setPose'; id: string; pose: Record<string, BonePose>; reset?: boolean }
+  /** Key a bone's pose at a frame. */
+  | { type: 'setPoseKey'; id: string; bone: string; frame: number; rotation: Vec3; location?: Vec3; easing?: Easing }
+  | { type: 'deletePoseKey'; id: string; bone: string; frame: number }
+  /** Remove a bone's keys (or all of the armature's with bone null). */
+  | { type: 'clearPoseKeys'; id: string; bone: string | null }
+  /** Deform a mesh (or shape, converted) with an armature, or stop (null). */
+  | { type: 'setSkin'; id: string; armature: string | null }
   /** Model with Edit Mode operators: each step selects elements by a query and applies an op. */
   | { type: 'editMesh'; id: string; steps: EditStep[] }
   | { type: 'setWorld'; world: Partial<World> }
@@ -132,6 +145,12 @@ function withAnimation(doc: SceneDoc, animation: Animation): SceneDoc {
   return { ...doc, animation };
 }
 
+function requireArmature(doc: SceneDoc, id: string): SceneObject {
+  const o = requireObj(doc, id);
+  if (o.type !== 'armature' || !o.armature) throw new CommandError(`${o.name} is not an armature`);
+  return o;
+}
+
 /** A mesh-object version of o: primitives are converted to their polygon mesh. */
 function asMesh(o: SceneObject): SceneObject {
   if (o.type === 'mesh') return o;
@@ -179,6 +198,7 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       if (cmd.primitive === 'mesh' && cmd.mesh) obj.mesh = clone(cmd.mesh);
       if (cmd.primitive === 'light') obj.light = { ...DEFAULT_LIGHT[lightType], ...cmd.light, type: lightType };
       if (cmd.primitive === 'model') obj.asset = cmd.asset;
+      if (cmd.primitive === 'armature') obj.armature = clone(cmd.armature ?? { bones: [{ name: 'Bone', parent: null, head: [0, 0, 0], tail: [0, 0, 1] }] });
       return { doc: { ...doc, objects: { ...doc.objects, [id]: obj }, order: [...doc.order, id] }, created: [id] };
     }
 
@@ -189,10 +209,17 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       const objects: Record<string, SceneObject> = {};
       for (const [id, o] of Object.entries(doc.objects)) if (!doomed.has(id)) objects[id] = o;
       let animation = doc.animation;
-      if (animation && [...doomed].some((id) => animation!.tracks[id])) {
+      if (animation && [...doomed].some((id) => animation!.tracks[id] || animation!.poses?.[id])) {
         const tracks = { ...animation.tracks };
-        doomed.forEach((id) => delete tracks[id]);
-        animation = { ...animation, tracks };
+        const poses = { ...animation.poses };
+        doomed.forEach((id) => (delete tracks[id], delete poses[id]));
+        animation = { ...animation, tracks, poses };
+      }
+      // Meshes skinned to a deleted armature keep their rest shape.
+      for (const [id, o] of Object.entries(objects)) if (o.skin && doomed.has(o.skin.armature)) {
+        const { skin: _drop, ...rest } = o;
+        void _drop;
+        objects[id] = rest;
       }
       return { doc: { ...doc, objects, order: doc.order.filter((id) => !doomed.has(id)), ...(animation ? { animation } : {}) }, created: [] };
     }
@@ -224,7 +251,17 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
             const anim = animationOf(next);
             next = { ...next, animation: { ...anim, tracks: { ...anim.tracks, [newId]: keys } } };
           }
+          const srcPoses = doc.animation?.poses?.[srcId];
+          if (srcPoses) {
+            const anim = animationOf(next);
+            next = { ...next, animation: { ...anim, poses: { ...anim.poses, [newId]: clone(srcPoses) } } };
+          }
           if (isRoot) created.push(newId);
+        }
+        // Copies skinned to a copied armature follow the copy.
+        for (const newId of map.values()) {
+          const o = next.objects[newId];
+          if (o.skin && map.has(o.skin.armature)) next = withObject(next, { ...o, skin: { armature: map.get(o.skin.armature)! } });
         }
       }
       return { doc: next, created };
@@ -302,6 +339,64 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       const next: SceneObject = { ...o, modifiers: mods };
       if (!Object.keys(mods).length) delete next.modifiers;
       return { doc: withObject(doc, next), created: [] };
+    }
+
+    case 'setArmature': {
+      const o = requireArmature(doc, cmd.id);
+      return { doc: withObject(doc, { ...o, armature: clone(cmd.armature) }), created: [] };
+    }
+
+    case 'setPose': {
+      const o = requireArmature(doc, cmd.id);
+      const names = new Set(o.armature!.bones.map((b) => b.name));
+      for (const b of Object.keys(cmd.pose)) if (!names.has(b)) throw new CommandError(`${o.name} has no bone "${b}"`);
+      const pose = { ...(cmd.reset ? {} : o.pose), ...clone(cmd.pose) };
+      return { doc: withObject(doc, { ...o, pose }), created: [] };
+    }
+
+    case 'setPoseKey': {
+      const o = requireArmature(doc, cmd.id);
+      if (!o.armature!.bones.some((b) => b.name === cmd.bone)) throw new CommandError(`${o.name} has no bone "${cmd.bone}"`);
+      const anim = animationOf(doc);
+      const arm = { ...anim.poses?.[cmd.id] };
+      const prev = arm[cmd.bone]?.find((k) => k.frame === cmd.frame);
+      const key: PoseKey = { frame: cmd.frame, rotation: [...cmd.rotation], easing: cmd.easing ?? prev?.easing ?? 'ease', ...(cmd.location ? { location: [...cmd.location] as Vec3 } : {}) };
+      arm[cmd.bone] = upsertKey(arm[cmd.bone] ?? [], key);
+      return { doc: { ...doc, animation: { ...anim, poses: { ...anim.poses, [cmd.id]: arm } } }, created: [] };
+    }
+
+    case 'deletePoseKey': {
+      const anim = animationOf(doc);
+      const keys = anim.poses?.[cmd.id]?.[cmd.bone];
+      if (!keys?.some((k) => k.frame === cmd.frame)) return { doc, created: [] };
+      const arm = { ...anim.poses![cmd.id], [cmd.bone]: keys.filter((k) => k.frame !== cmd.frame) };
+      if (!arm[cmd.bone].length) delete arm[cmd.bone];
+      return { doc: { ...doc, animation: { ...anim, poses: { ...anim.poses, [cmd.id]: arm } } }, created: [] };
+    }
+
+    case 'clearPoseKeys': {
+      const anim = animationOf(doc);
+      if (!anim.poses?.[cmd.id]) return { doc, created: [] };
+      const poses = { ...anim.poses };
+      if (cmd.bone === null) delete poses[cmd.id];
+      else {
+        const arm = { ...poses[cmd.id] };
+        delete arm[cmd.bone];
+        poses[cmd.id] = arm;
+      }
+      return { doc: { ...doc, animation: { ...anim, poses } }, created: [] };
+    }
+
+    case 'setSkin': {
+      if (cmd.armature === null) {
+        const o = requireObj(doc, cmd.id);
+        const { skin: _drop, ...rest } = o;
+        void _drop;
+        return { doc: withObject(doc, rest), created: [] };
+      }
+      requireArmature(doc, cmd.armature);
+      const o = asMesh(requireObj(doc, cmd.id));
+      return { doc: withObject(doc, { ...o, skin: { armature: cmd.armature } }), created: [] };
     }
 
     case 'editMesh': {
@@ -487,6 +582,49 @@ export function validateMeshData(v: unknown): MeshData {
   return { vertices, faces, smooth: v.smooth === true };
 }
 
+const BONE_NAME = /^[A-Za-z0-9 _.\-]{1,64}$/;
+
+export function validateArmature(v: unknown): ArmatureData {
+  if (!isRecord(v) || !Array.isArray(v.bones) || !v.bones.length || v.bones.length > 256) fail('armature needs 1..256 bones');
+  const names = new Set<string>();
+  const bones: Bone[] = v.bones.map((b, i) => {
+    if (!isRecord(b) || typeof b.name !== 'string' || !BONE_NAME.test(b.name)) fail(`bone ${i}: name invalid (letters, digits, space _ . -)`);
+    if (names.has(b.name)) fail(`bone "${b.name}" appears twice`);
+    names.add(b.name);
+    if (!isVec3(b.head) || !isVec3(b.tail)) fail(`bone "${b.name}": head and tail must be [x,y,z]`);
+    if (Math.hypot(b.tail[0] - b.head[0], b.tail[1] - b.head[1], b.tail[2] - b.head[2]) < 1e-5) fail(`bone "${b.name}" has zero length`);
+    const out: Bone = { name: b.name, parent: null, head: [...b.head] as Vec3, tail: [...b.tail] as Vec3 };
+    if (b.parent !== undefined && b.parent !== null) {
+      if (typeof b.parent !== 'string') fail(`bone "${b.name}": parent must be a bone name`);
+      out.parent = b.parent;
+    }
+    if (b.roll !== undefined) out.roll = inRange(b.roll, -360, 360) ? (b.roll as number) : fail(`bone "${b.name}": roll must be -360..360`);
+    if (b.deform !== undefined) out.deform = typeof b.deform === 'boolean' ? b.deform : fail(`bone "${b.name}": deform must be true/false`);
+    return out;
+  });
+  for (const b of bones) if (b.parent && !names.has(b.parent)) fail(`bone "${b.name}": parent "${b.parent}" not found`);
+  // No cycles
+  const byName = new Map(bones.map((b) => [b.name, b]));
+  for (const b of bones) {
+    let cur = b.parent, steps = 0;
+    while (cur && steps++ <= bones.length) cur = byName.get(cur)?.parent ?? null;
+    if (steps > bones.length) fail(`bone "${b.name}": parent loop`);
+  }
+  return { bones };
+}
+
+function validatePose(v: unknown): Record<string, BonePose> {
+  if (!isRecord(v)) fail('pose must be { boneName: { rotation: [x,y,z] } }');
+  const out: Record<string, BonePose> = {};
+  for (const [name, p] of Object.entries(v)) {
+    if (!BONE_NAME.test(name) || !isRecord(p)) fail(`pose.${name} invalid`);
+    const rotation = p.rotation === undefined ? ([0, 0, 0] as Vec3) : isVec3(p.rotation) ? ([...p.rotation] as Vec3) : fail(`pose.${name}.rotation must be [x,y,z] degrees`);
+    out[name] = { rotation };
+    if (p.location !== undefined) out[name].location = isVec3(p.location) ? ([...p.location] as Vec3) : fail(`pose.${name}.location must be [x,y,z]`);
+  }
+  return out;
+}
+
 const SELECT_MODES_ = ['vert', 'edge', 'face'];
 
 function validateEditStep(raw: unknown, i: number): EditStep {
@@ -589,6 +727,14 @@ export function validateSceneObject(raw: unknown): SceneObject {
   if (obj.type === 'mesh' && v.modifiers !== undefined) obj.modifiers = validateModifiers(v.modifiers);
   if (obj.type === 'light') obj.light = { ...DEFAULT_LIGHT.point, ...validateLight(v.light, false) } as LightData;
   if (obj.type === 'model') obj.asset = typeof v.asset === 'string' && ASSET_ID.test(v.asset) ? v.asset : fail(`object ${v.id}: asset invalid`);
+  if (obj.type === 'armature') {
+    obj.armature = validateArmature(v.armature);
+    if (v.pose !== undefined) obj.pose = validatePose(v.pose);
+  }
+  if (obj.type === 'mesh' && v.skin !== undefined) {
+    if (!isRecord(v.skin) || !isId(v.skin.armature)) fail(`object ${v.id}: skin invalid`);
+    obj.skin = { armature: v.skin.armature as string };
+  }
   return obj;
 }
 
@@ -656,7 +802,25 @@ export function validateAnimation(v: unknown, objects: Record<string, SceneObjec
         return { frame: k.frame, position: [...k.position] as Vec3, target: [...k.target] as Vec3, easing: isEasing(k.easing) ? k.easing : 'ease' as Easing };
       }).sort((a, b) => a.frame - b.frame)
     : fail('animation.camera invalid');
-  return { fps, start, end, tracks, camera };
+  let poses: Animation['poses'];
+  if (v.poses !== undefined) {
+    if (!isRecord(v.poses)) fail('animation.poses invalid');
+    poses = {};
+    for (const [id, bones] of Object.entries(v.poses)) {
+      if (!objects[id] || !isRecord(bones)) continue;
+      poses[id] = {};
+      for (const [bone, keys] of Object.entries(bones)) {
+        if (!Array.isArray(keys) || keys.length > 100000) fail(`pose keys ${id}.${bone} invalid`);
+        poses[id][bone] = keys
+          .map((k, i) => {
+            if (!isRecord(k) || !isFrame(k.frame) || !isVec3(k.rotation) || (k.location !== undefined && !isVec3(k.location))) fail(`pose key ${id}.${bone}[${i}] invalid`);
+            return { frame: k.frame, rotation: [...k.rotation] as Vec3, ...(k.location ? { location: [...(k.location as Vec3)] as Vec3 } : {}), easing: isEasing(k.easing) ? k.easing : ('ease' as Easing) };
+          })
+          .sort((a, b) => a.frame - b.frame);
+      }
+    }
+  }
+  return { fps, start, end, tracks, camera, ...(poses ? { poses } : {}) };
 }
 
 const REF_ID = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -695,6 +859,7 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (cmd.primitive === 'mesh') cmd.mesh = validateMeshData(v.mesh);
       if (cmd.primitive === 'model') cmd.asset = typeof v.asset === 'string' && ASSET_ID.test(v.asset) ? v.asset : fail('model needs an asset id from the library (see docs/LIBRARY.md)');
       if (v.light !== undefined) cmd.light = validateLight(v.light, true);
+      if (cmd.primitive === 'armature' && v.armature !== undefined) cmd.armature = validateArmature(v.armature);
       return cmd;
     }
     case 'delete':
@@ -738,6 +903,26 @@ export function validateCommand(v: unknown, depth = 0): Command {
       else if (m.subdivision !== undefined) out.subdivision = validateModifiers({ subdivision: m.subdivision }).subdivision;
       return { type: 'setModifiers', id: v.id, modifiers: out };
     }
+    case 'setArmature':
+      if (!isId(v.id)) fail('setArmature needs id');
+      return { type: 'setArmature', id: v.id, armature: validateArmature(v.armature) };
+    case 'setPose':
+      if (!isId(v.id)) fail('setPose needs id');
+      return { type: 'setPose', id: v.id, pose: validatePose(v.pose), ...(v.reset === true ? { reset: true } : {}) };
+    case 'setPoseKey': {
+      if (!isId(v.id) || typeof v.bone !== 'string' || !isFrame(v.frame)) fail('setPoseKey needs id, bone and frame');
+      const p = validatePose({ [v.bone]: { rotation: v.rotation, location: v.location } })[v.bone];
+      return { type: 'setPoseKey', id: v.id, bone: v.bone, frame: v.frame as number, rotation: p.rotation, ...(p.location ? { location: p.location } : {}), ...(isEasing(v.easing) ? { easing: v.easing } : {}) };
+    }
+    case 'deletePoseKey':
+      if (!isId(v.id) || typeof v.bone !== 'string' || !isFrame(v.frame)) fail('deletePoseKey needs id, bone and frame');
+      return { type: 'deletePoseKey', id: v.id, bone: v.bone, frame: v.frame as number };
+    case 'clearPoseKeys':
+      if (!isId(v.id) || !(v.bone === null || v.bone === undefined || typeof v.bone === 'string')) fail('clearPoseKeys needs id');
+      return { type: 'clearPoseKeys', id: v.id, bone: (v.bone as string | undefined) ?? null };
+    case 'setSkin':
+      if (!isId(v.id) || !(v.armature === null || isId(v.armature))) fail('setSkin needs id and armature (or null)');
+      return { type: 'setSkin', id: v.id, armature: v.armature as string | null };
     case 'editMesh': {
       if (!isId(v.id) || !Array.isArray(v.steps) || !v.steps.length || v.steps.length > 500) fail('editMesh needs id and 1..500 steps');
       const steps = v.steps.map((raw, i) => validateEditStep(raw, i));
