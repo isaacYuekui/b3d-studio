@@ -53,7 +53,10 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
     onClose();
     // Frame once library models have loaded, so the shot includes them.
     const vp = ctx.viewport();
-    void vp?.settle().then(() => vp.viewCamera() || vp.frame(true));
+void vp?.settle().then(() => {
+  vp.frame(true);
+  window.setTimeout(() => vp.viewCamera(), 80);
+});
   };
 
   return (
