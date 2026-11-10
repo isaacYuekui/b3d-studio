@@ -823,6 +823,17 @@ const setNumber = async (page, scope, label, value) => {
   await page.waitForTimeout(800);
   const orbit = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; return { keys: d.animation?.camera.length ?? 0, cameraView: window.__b3d.store.getState().cameraView }; });
   check('v1.3: Animation → Camera Move: Orbit keys the camera across the timeline', orbit.keys > 20 && orbit.cameraView === true, JSON.stringify(orbit));
+  // Quality on this device (v1.5): Fast draws fewer pixels and is remembered after reload.
+  const before = await page.evaluate(() => window.__b3d.viewport().engine.getHardwareScalingLevel());
+  await page.evaluate(() => window.__b3d.store.select(null));
+  await page.selectOption('#quality', 'fast');
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => ({ q: window.__b3d.store.getState().quality, scaling: window.__b3d.viewport().engine.getHardwareScalingLevel() }));
+  await page.reload();
+  await page.waitForFunction(() => !!window.__b3d);
+  const kept = await page.evaluate(() => window.__b3d.store.getState().quality);
+  check('v1.5: Quality → Fast lowers resolution and is remembered on this device', after.q === 'fast' && after.scaling >= before && kept === 'fast', JSON.stringify({ before, ...after, kept }));
+  await page.evaluate(() => window.__b3d.store.setQuality('balanced'));
   check('v1.3: no errors (camera moves)', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }

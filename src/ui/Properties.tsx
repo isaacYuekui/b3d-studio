@@ -11,6 +11,7 @@ import { runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
 import { guessUnitScale, isUserAsset } from '../engine/userModels';
 import { TIMES } from '../core/sky';
+import type { Quality } from '../core/store';
 import type { TimeOfDay } from '../core/sky';
 import { worldOf } from '../core/types';
 import { EASINGS, isAnimated, transformAt, transformEdit } from '../core/animation';
@@ -279,6 +280,7 @@ function WorldSection() {
   const raw = useApp((s) => s.doc.world); // stable reference; worldOf() fills defaults
   const w = worldOf({ objects: {}, order: [], world: raw });
   const shading = useApp((s) => s.shading);
+  const quality = useApp((s) => s.quality);
   const catalog = useCatalog();
   const set = (world: Partial<typeof w>) => store.dispatch({ type: 'setWorld', world }, { select: false });
   const num = (label: string, value: number, min: number, max: number, key: 'strength' | 'rotation' | 'exposure' | 'bloom' | 'fog', step: number) => (
@@ -350,6 +352,15 @@ function WorldSection() {
         <span>Ambient occlusion</span>
         <input type="checkbox" checked={w.ao} onChange={(e) => set({ ao: e.target.checked })} />
       </label>
+      <label className="prop-row">
+        <span>Quality (this device)</span>
+        <select id="quality" aria-label="Quality on this device" value={quality} onChange={(e) => store.setQuality(e.target.value as Quality)}>
+          <option value="fast">Fast: smooth on phones</option>
+          <option value="balanced">Balanced</option>
+          <option value="best">Best: sharpest, soft shadows</option>
+        </select>
+      </label>
+      <p className="prop-hint">Videos always render at Best. Fast turns off ambient occlusion and bloom and draws fewer pixels.</p>
       {shading !== 'rendered' && (
         <button className="btn" onClick={() => store.setShading('rendered')}>Show Rendered view</button>
       )}
