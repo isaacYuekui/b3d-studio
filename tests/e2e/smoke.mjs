@@ -795,6 +795,12 @@ const setNumber = async (page, scope, label, value) => {
   await page.selectOption('#world-time', 'sunset');
   const tod = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; return { time: d.world.time, hdri: d.world.hdri, shading: window.__b3d.store.getState().shading, suns: Object.values(d.objects).filter((o) => o.light?.type === 'sun').length }; });
   check('v1.2: World → Time of day switches sky and keeps one sun', tod.time === 'sunset' && tod.hdri === 'qwantani_sunset_puresky' && tod.shading === 'rendered' && tod.suns === 1, JSON.stringify(tod));
+  // Camera move from the Animation menu: an orbit over the whole timeline.
+  await page.click('[data-menu="Animation"]');
+  await page.click('.menu [data-action="anim.camOrbit"]');
+  await page.waitForTimeout(800);
+  const orbit = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; return { keys: d.animation?.camera.length ?? 0, cameraView: window.__b3d.store.getState().cameraView }; });
+  check('v1.3: Animation → Camera Move: Orbit keys the camera across the timeline', orbit.keys > 20 && orbit.cameraView === true, JSON.stringify(orbit));
   await page.evaluate(() => window.__b3d.viewport().viewCamera());
   await page.waitForTimeout(2500);
   await page.screenshot({ path: `${shots}/village.png` });

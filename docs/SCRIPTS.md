@@ -167,3 +167,19 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
 - `addWater` — `size` [x, y] m, `level` (water height z), optional `position` [x, y], `color`,
   `clarity` (0–1), `waves` (ripple size in m), `speed` (m/s). For a lake, lower the ground under it
   with an `addTerrain` flat (`"height": -1.5`) and keep scatter out with an `avoid` disc.
+
+## Camera moves (v1.3)
+
+```json
+{"type":"cameraMove","move":"orbit","target":[0,-12,4],"start":1,"end":240,"distance":30,"height":12,"heading":290,"degrees":140}
+{"type":"cameraMove","move":"flyover","on":"h1","start":241,"end":360,"distance":40}
+```
+
+- `move`: `orbit` (circle the target by `degrees`), `dollyIn` / `dollyOut` (push in / pull back
+  along `heading`), `flyover` (straight pass over the target from the `heading` side), `crane`
+  (rise from near the ground), `pan` (camera still, view sweeps `degrees`).
+- `target` [x, y, z] or `on` (an object id); `start` / `end` frames (default: the timeline);
+  `distance` (horizontal, m), `height` (above the target, m), `heading` (degrees; 0 = +X,
+  270 = front / −Y), `degrees`, `smooth` (ease in and out, default true).
+- It replaces camera keys between `start` and `end`, keeps the others, extends the timeline if
+  needed, sets the scene camera to the first frame, and stays at least 2 m above any terrain.

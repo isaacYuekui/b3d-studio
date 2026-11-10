@@ -5,6 +5,11 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Camera moves (v1.3)
+
+- **Animation → Camera Move**: Orbit, Dolly In, Flyover, Crane Up. Starts from your current view, circles the selected object (or the point you're looking at) across the whole timeline, eased in and out. Then press play or File → Export Video
+- `cameraMove` in scripts: `orbit`, `dollyIn`, `dollyOut`, `flyover`, `crane`, `pan`, with distance, height, heading and degrees. Over terrain the camera never dips into a hill
+
 ## Time of day and water (v1.2)
 
 - `setTimeOfDay`: sunrise, morning, noon, late afternoon, sunset, dusk, night, overcast, misty. Each sets a matching sky, a sun (or moon) light aimed where that sky's sun is, exposure and distance haze. `heading` turns the sun to any compass direction. Also in the World panel as **Time of day**

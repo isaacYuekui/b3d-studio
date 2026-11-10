@@ -15,8 +15,10 @@ import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
 import { EDIT_OPS, runEditSteps } from './mesh/script';
 import { DEFAULT_OUTFIT, HUMAN_PRESETS, humanPreset } from './humans';
-import { generateTerrain, scatterOn } from './terrain';
+import { generateTerrain, scatterOn, terrainSample } from './terrain';
 import { PLANT_KINDS, makePlant } from './plants';
+import { CAMERA_MOVES, sampleCameraMove } from './cameraMoves';
+import type { CameraMoveKind } from './cameraMoves';
 import { TIME_PRESETS, TIMES, rotationFor, skyAzimuth, sunRotation } from './sky';
 import type { TimeOfDay } from './sky';
 import { ROOFS, makeBuilding } from './buildings';
@@ -95,6 +97,8 @@ export type Command =
   /** Model with Edit Mode operators: each step selects elements by a query and applies an op. */
   | { type: 'editMesh'; id: string; steps: EditStep[] }
   | { type: 'setWorld'; world: Partial<World> }
+  /** Ready-made camera move (orbit, dolly, flyover, crane, pan) as camera keys between start and end. */
+  | { type: 'cameraMove'; move: CameraMoveKind; target?: Vec3; on?: string; start?: number; end?: number; distance?: number; height?: number; heading?: number; degrees?: number; smooth?: boolean }
   /** Lake / sea / river surface: a flat plane at z = level with animated ripples. */
   | { type: 'addWater'; id: string; name?: string; size: [number, number]; level: number; position?: [number, number]; color?: string; clarity?: number; waves?: number; speed?: number }
   /** Sky, sun light, exposure and haze for a time of day; heading turns the sky so the sun shines from that azimuth (degrees). */
@@ -562,6 +566,32 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       // Picking another sky by hand leaves the time-of-day preset.
       if (cmd.world.hdri !== undefined && cmd.world.time === undefined) delete world.time;
       return { doc: { ...doc, world }, created: [] };
+    }
+
+    case 'cameraMove': {
+      const anim = animationOf(doc);
+      const start = cmd.start ?? anim.start;
+      const end = cmd.end ?? Math.max(start + 24, anim.end);
+      if (end <= start) throw new CommandError('cameraMove end must be after start');
+      let target = cmd.target;
+      if (!target && cmd.on) target = transformAt(doc, requireObj(doc, cmd.on).id, start)!.position;
+      target ??= doc.camera?.target ?? [0, 0, 0];
+      const samples = sampleCameraMove({ move: cmd.move, target, start, end, distance: cmd.distance, height: cmd.height, heading: cmd.heading, degrees: cmd.degrees, smooth: cmd.smooth });
+      // Never dip into a hill: keep the camera at least 2 m above any terrain under it.
+      const grounds = Object.values(doc.objects).filter((o) => o.terrain);
+      if (grounds.length)
+        for (const k of samples) {
+          let floor = -Infinity;
+          for (const g of grounds) {
+            const z = terrainSample(g, k.position[0], k.position[1])?.z;
+            if (z !== undefined) floor = Math.max(floor, z + 2);
+          }
+          if (k.position[2] < floor) k.position = [k.position[0], k.position[1], Math.round(floor * 1000) / 1000];
+        }
+      const kept = anim.camera.filter((k) => k.frame < start || k.frame > end);
+      const camera = [...kept, ...samples.map((s) => ({ ...s, easing: 'linear' as Easing }))].sort((a, b) => a.frame - b.frame);
+      const next = withAnimation(doc, { ...anim, camera, end: Math.max(anim.end, end) });
+      return { doc: { ...next, camera: { position: samples[0].position, target: samples[0].target } }, created: [] };
     }
 
     case 'addWater': {
@@ -1268,6 +1298,18 @@ export function validateCommand(v: unknown, depth = 0): Command {
       return { type: 'applyModifiers', id: v.id };
     case 'setWorld':
       return { type: 'setWorld', world: validateWorld(v.world) };
+    case 'cameraMove': {
+      if (!(CAMERA_MOVES as readonly unknown[]).includes(v.move)) fail(`cameraMove move must be one of ${CAMERA_MOVES.join(', ')}`);
+      const cmd: Extract<Command, { type: 'cameraMove' }> = { type: 'cameraMove', move: v.move as CameraMoveKind };
+      if (v.target !== undefined) cmd.target = isVec3(v.target) ? ([...v.target] as Vec3) : fail('cameraMove target must be [x,y,z]');
+      if (v.on !== undefined) cmd.on = isId(v.on) ? v.on : fail('cameraMove on must be an object id');
+      if (v.start !== undefined) cmd.start = isFrame(v.start) ? v.start : fail('cameraMove start must be a frame');
+      if (v.end !== undefined) cmd.end = isFrame(v.end) ? v.end : fail('cameraMove end must be a frame');
+      for (const k of ['distance', 'height'] as const) if (v[k] !== undefined) cmd[k] = inRange(v[k], k === 'height' ? -1000 : 0.1, 5000) ? (v[k] as number) : fail(`cameraMove ${k} out of range`);
+      for (const k of ['heading', 'degrees'] as const) if (v[k] !== undefined) cmd[k] = inRange(v[k], -3600, 3600) ? (v[k] as number) : fail(`cameraMove ${k} must be degrees`);
+      if (v.smooth !== undefined) cmd.smooth = typeof v.smooth === 'boolean' ? v.smooth : fail('cameraMove smooth must be true/false');
+      return cmd;
+    }
     case 'addWater': {
       if (typeof v.id !== 'string' || !REF_ID.test(v.id)) fail('addWater needs an id');
       if (!Array.isArray(v.size) || v.size.length !== 2 || !v.size.every((n) => inRange(n, 0.1, 20000))) fail('addWater size must be [x, y] metres (0.1..20000)');

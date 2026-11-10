@@ -16,7 +16,7 @@ import { Vector3, Quaternion, Matrix } from '@babylonjs/core/Maths/math.vector';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
-import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
+import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import type { LinesMesh } from '@babylonjs/core/Meshes/linesMesh';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Node } from '@babylonjs/core/node';
@@ -1395,6 +1395,22 @@ export class Viewport {
   }
 
   /** The current viewpoint in Blender coordinates, for "Set Scene Camera to View". */
+  /** World-space centre of an object's visible geometry (Blender coordinates), or null. */
+  objectCenter(id: string): Vec3 | null {
+    const e = this.entries.get(id);
+    if (!e) return null;
+    const meshes = [e.node, ...e.node.getChildMeshes(false)].filter((m): m is AbstractMesh => m instanceof AbstractMesh && m.isEnabled() && m.getTotalVertices() > 0);
+    if (!meshes.length) return fromBabylonVec([e.node.absolutePosition.x, e.node.absolutePosition.y, e.node.absolutePosition.z].map((v) => clean(v, 3)) as Vec3);
+    let min = new Vector3(Infinity, Infinity, Infinity), max = new Vector3(-Infinity, -Infinity, -Infinity);
+    for (const m of meshes) {
+      const b = m.getBoundingInfo().boundingBox;
+      min = Vector3.Minimize(min, b.minimumWorld);
+      max = Vector3.Maximize(max, b.maximumWorld);
+    }
+    const c = min.add(max).scale(0.5);
+    return fromBabylonVec([clean(c.x, 3), clean(c.y, 3), clean(c.z, 3)]);
+  }
+
   currentView(): { position: Vec3; target: Vec3 } {
     const r = (v: Vector3): Vec3 => fromBabylonVec([clean(v.x, 3), clean(v.y, 3), clean(v.z, 3)]);
     return { position: r(this.camera.position), target: r(this.camera.target) };
