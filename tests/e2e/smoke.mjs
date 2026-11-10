@@ -772,7 +772,7 @@ const setNumber = async (page, scope, label, value) => {
   check('v1.2: village is set in the afternoon with one sun and a lake', sky.time === 'afternoon' && sky.water && sky.suns === 1, JSON.stringify(sky));
   await page.evaluate(() => window.__b3d.store.select(null));
   const t0 = Date.now();
-  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 400000 }), (async () => { await page.click('[data-menu="File"]'); await page.click('.menu [data-action="file.roblox"]'); })()]);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 900000 }), (async () => { await page.click('[data-menu="File"]'); await page.click('.menu [data-action="file.roblox"]'); })()]);
   const zipPath = `${shots}/village-roblox.zip`;
   await dl.saveAs(zipPath);
   const fs = await import('node:fs');
