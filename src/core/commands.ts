@@ -26,7 +26,7 @@ import type { RoofKind } from './buildings';
 import type { PlantKind } from './plants';
 import type { ScatterParams, TerrainParams } from './terrain';
 import type { Outfit } from './humans';
-import { ACTIONS, playAction, standPose } from './motion';
+import { ACTIONS, playAction, polylineRoute, standPose } from './motion';
 import type { ActionName } from './motion';
 import type { EditStep } from './mesh/script';
 import { MeshOpError } from './mesh/ops';
@@ -94,6 +94,8 @@ export type Command =
   | { type: 'addPlant'; id: string; name?: string; kind: PlantKind; seed: number; height?: number; colors?: { wood?: string; leaves?: string }; transform?: Partial<Transform> }
   /** Animate an armature with a built-in action (walk, run, idle, wave, jump, sit…). */
   | { type: 'playAction'; id: string; action: ActionName; start: number; cycles?: number; speed?: number; travel?: boolean }
+  /** Walk or run a human rig along a path of [x, y] points, turning at corners and following any terrain. */
+  | { type: 'walkPath'; id: string; points: [number, number][]; start: number; action?: 'walk' | 'run'; speed?: number }
   /** Model with Edit Mode operators: each step selects elements by a query and applies an op. */
   | { type: 'editMesh'; id: string; steps: EditStep[] }
   | { type: 'setWorld'; world: Partial<World> }
@@ -538,6 +540,33 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       const res = playAction(doc, o, cmd.action, cmd.start, { cycles: cmd.cycles, speed: cmd.speed, travel: cmd.travel });
       let next = doc;
       for (const c of res) next = applyCommand(next, c, idGen).doc;
+      return { doc: next, created: [] };
+    }
+
+    case 'walkPath': {
+      const o = requireArmature(doc, cmd.id);
+      const grounds = Object.values(doc.objects).filter((g) => g.terrain);
+      const ground = grounds.length
+        ? (x: number, y: number) => {
+            let z: number | null = null;
+            for (const g of grounds) {
+              const h = terrainSample(g, x, y)?.z;
+              if (h !== undefined && (z === null || h > z)) z = h;
+            }
+            return z;
+          }
+        : undefined;
+      let res: Command[];
+      try {
+        res = playAction(doc, o, cmd.action ?? 'walk', cmd.start, { speed: cmd.speed, route: polylineRoute(cmd.points, ground) });
+      } catch (e) {
+        throw new CommandError(e instanceof Error ? e.message : String(e));
+      }
+      let next = doc;
+      for (const c of res) next = applyCommand(next, c, idGen).doc;
+      const last = Math.max(...res.map((c) => ('frame' in c ? c.frame : 0)));
+      const anim = animationOf(next);
+      if (last > anim.end) next = withAnimation(next, { ...anim, end: last });
       return { doc: next, created: [] };
     }
 
@@ -1280,6 +1309,14 @@ export function validateCommand(v: unknown, depth = 0): Command {
         for (const k of ['position', 'rotation', 'scale'] as const) if (v.transform[k] !== undefined) t[k] = isVec3(v.transform[k]) ? (v.transform[k] as Vec3) : fail(`addPlant transform.${k} must be [x,y,z]`);
         cmd.transform = t;
       }
+      return cmd;
+    }
+    case 'walkPath': {
+      if (!isId(v.id) || !isFrame(v.start)) fail('walkPath needs id and start frame');
+      if (!Array.isArray(v.points) || v.points.length < 2 || v.points.length > 500 || !v.points.every((p) => Array.isArray(p) && p.length === 2 && p.every((n) => inRange(n, -100000, 100000)))) fail('walkPath points must be 2..500 [x, y] pairs');
+      const cmd: Extract<Command, { type: 'walkPath' }> = { type: 'walkPath', id: v.id, start: v.start as number, points: (v.points as number[][]).map((p) => [p[0], p[1]] as [number, number]) };
+      if (v.action !== undefined) cmd.action = v.action === 'walk' || v.action === 'run' ? v.action : fail('walkPath action must be walk or run');
+      if (v.speed !== undefined) cmd.speed = inRange(v.speed, 0.25, 4) ? (v.speed as number) : fail('walkPath speed must be 0.25..4');
       return cmd;
     }
     case 'playAction': {
