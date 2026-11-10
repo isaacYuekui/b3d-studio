@@ -56,6 +56,7 @@ import { babylonQuatToEulerDeg, clean, eulerDegToBabylonQuat, fromBabylonVec, to
 import { buildVertexData } from './geometry';
 import { subtree } from '../core/commands';
 import { EditOverlay } from './EditOverlay';
+import { rippleNormalTexture } from './water';
 import { TerrainPlugin } from './terrainMaterial';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import { Matrix as BMatrix } from '@babylonjs/core/Maths/math.vector';
@@ -113,6 +114,7 @@ export class Viewport {
   private studio: Light[] = [];
   private studioEnv!: RawCubeTexture;
   private hdris = new Map<string, HDRCubeTexture>();
+  private waters = new Map<string, { tex: Texture; water: { waves: number; speed: number } }>();
   private skybox: Mesh | null = null;
   private skyKey = '';
   private pipeline: DefaultRenderingPipeline | null = null;
@@ -225,6 +227,15 @@ export class Viewport {
     });
 
     scene.onBeforeRenderObservable.add(() => this.stepTween());
+    scene.onBeforeRenderObservable.add(() => {
+      if (!this.waters.size) return;
+      const dt = Math.min(0.1, this.engine.getDeltaTime() / 1000);
+      for (const { tex, water } of this.waters.values()) {
+        const k = (dt * water.speed) / (water.waves * 16);
+        tex.uOffset = (tex.uOffset + k * 0.8) % 1;
+        tex.vOffset = (tex.vOffset + k * 0.6) % 1;
+      }
+    });
     this.engine.runRenderLoop(() => scene.render());
     this.resizeObs = new ResizeObserver(() => this.engine.resize());
     this.resizeObs.observe(canvas);
@@ -728,6 +739,8 @@ export class Viewport {
       if (!doc.objects[id]) {
         this.disposeEntry(e);
         this.entries.delete(id);
+        this.waters.get(id)?.tex.dispose();
+        this.waters.delete(id);
         structure = true;
       }
     }
@@ -1134,6 +1147,20 @@ export class Viewport {
       mat.alpha = m.alpha;
       mat.transparencyMode = m.alpha < 1 ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
     }
+    if (e.material && o.water && (o.water !== prev?.water || o.material !== prev?.material)) {
+      const mat = e.material;
+      let tex = this.waters.get(o.id)?.tex;
+      if (!tex) tex = rippleNormalTexture(this.scene);
+      tex.uScale = tex.vScale = 1 / (o.water.waves * 16);
+      tex.level = 0.45;
+      mat.bumpTexture = tex;
+      mat.environmentIntensity = 1.2;
+      this.waters.set(o.id, { tex, water: o.water });
+    } else if (!o.water && this.waters.has(o.id)) {
+      if (e.material) e.material.bumpTexture = null;
+      this.waters.get(o.id)!.tex.dispose();
+      this.waters.delete(o.id);
+    }
     if (e.light && o.light) {
       const l = o.light;
       e.light.diffuse = Color3.FromHexString(l.color);
@@ -1214,6 +1241,18 @@ export class Viewport {
       }
       this.skyKey = skyKey;
     }
+    // The skybox shows a clone of the environment: keep its rotation in step with the lighting.
+    const skyTex = (this.skybox?.material as { reflectionTexture?: { rotationY: number } } | null)?.reflectionTexture;
+    if (skyTex && 'rotationY' in env) skyTex.rotationY = (env as unknown as { rotationY: number }).rotationY;
+    if (this.skybox) this.skybox.applyFog = false;
+    // Distance haze (rendered only): EXP2 fog, half-hidden at w.fog metres.
+    if (rendered && w.fog > 0) {
+      scene.fogMode = 2; // Scene.FOGMODE_EXP2
+      scene.fogDensity = Math.sqrt(Math.LN2) / w.fog;
+      // The fog colour is blended before exposure / tone mapping: undo exposure so the haze
+      // meets the sky's horizon colour on screen.
+      scene.fogColor = Color3.FromHexString(w.fogColor).toLinearSpace().scale(1 / Math.max(0.05, w.exposure));
+    } else scene.fogMode = 0;
     scene.clearColor = rendered ? Color4.FromColor3(Color3.FromHexString(w.color), 1) : BG;
     // Rendered view shows the scene as it will look: no grid, no light/empty helpers.
     for (const g of this.grid) g.setEnabled(!rendered);
@@ -1554,7 +1593,9 @@ export class Viewport {
   async exportRoblox(ids?: Set<string>) {
     const doc = this.store.getState().doc;
     const terrains = Object.values(doc.objects).filter((o) => o.terrain && o.mesh && (!ids || ids.has(o.id)));
-    const exclude = new Set(terrains.map((t) => t.id));
+    const waters = Object.values(doc.objects).filter((o) => o.water && o.mesh && (!ids || ids.has(o.id)));
+    // Terrain and water become Roblox Terrain (heightmap, Sea Level) rather than meshes.
+    const exclude = new Set([...terrains, ...waters].map((t) => t.id));
     const [{ toRobloxGlb }, { terrainHeightmap, encodePng }, { zipSync, zlibSync, strToU8 }] = await Promise.all([
       import('./robloxExport'),
       import('../core/robloxTerrain'),
@@ -1588,7 +1629,15 @@ export class Viewport {
       );
       return { name: t.name, ...hm };
     });
-    files['README.txt'] = strToU8(robloxReadme(report, notes));
+    const S = 1 / 0.28;
+    const r1 = (x: number) => Math.round(x * 10) / 10;
+    const waterNotes = waters.map((o) => {
+      const xs = o.mesh!.vertices.map((v) => v[0] * o.transform.scale[0]), ys = o.mesh!.vertices.map((v) => v[1] * o.transform.scale[1]);
+      const [px, py, pz] = o.transform.position;
+      const w = Math.max(...xs) - Math.min(...xs), d = Math.max(...ys) - Math.min(...ys);
+      return `Water "${o.name}": Position X ${r1(px * S)}  Y ${r1(pz * S - 2)}  Z ${r1(-py * S)}   Size X ${r1(w * S)}  Y 4  Z ${r1(d * S)}`;
+    });
+    files['README.txt'] = strToU8(robloxReadme(report, notes, waterNotes, worldOf(doc).time));
     const zip = zipSync(files, { level: 0 });
     return { blob: new Blob([zip as BlobPart], { type: 'application/zip' }), report, terrains: heightmaps.length, files: Object.keys(files) };
   }
@@ -1614,7 +1663,20 @@ function simplifyMesh(m: Mesh, ratio: number) {
   if (out.length >= 3) m.setIndices(Array.from(out));
 }
 
-function robloxReadme(report: { parts: number; triangles: number; maxTriangles: number } | null, terrain: string[]): string {
+/** Roblox Lighting.ClockTime for each B3D time of day (starting points, tweak to taste). */
+const ROBLOX_CLOCK: Record<string, { clock: number; density: number; haze: number }> = {
+  sunrise: { clock: 6.3, density: 0.38, haze: 2 },
+  morning: { clock: 8.5, density: 0.3, haze: 1 },
+  noon: { clock: 12, density: 0.25, haze: 0 },
+  afternoon: { clock: 16, density: 0.3, haze: 1 },
+  sunset: { clock: 17.7, density: 0.38, haze: 2.5 },
+  dusk: { clock: 18.4, density: 0.4, haze: 2 },
+  night: { clock: 0, density: 0.35, haze: 0 },
+  overcast: { clock: 13, density: 0.45, haze: 3 },
+  misty: { clock: 7.5, density: 0.65, haze: 6 },
+};
+
+function robloxReadme(report: { parts: number; triangles: number; maxTriangles: number } | null, terrain: string[], water: string[] = [], time?: string): string {
   const lines = [
     'B3D Studio → Roblox Studio',
     '==========================',
@@ -1645,9 +1707,26 @@ function robloxReadme(report: { parts: number; triangles: number; maxTriangles: 
       '   (Prefer a plain mesh? Import terrain_mesh_optional.glb the same way as models.glb instead.)',
       '',
     );
+  if (water.length)
+    lines.push(
+      'WATER',
+      '   Studio: Terrain Editor → Sea Level. Type the position and size, then Create.',
+      '   (Roblox fills the box with real terrain water: waves, swimming, reflections.)',
+      '',
+      ...water.map((l) => '   ' + l),
+      '',
+    );
+  const look = time ? ROBLOX_CLOCK[time] : undefined;
   lines.push(
     'LOOK',
-    '   Lighting → Technology: Future, and add an Atmosphere + Sky for the B3D look.',
+    '   Lighting → Technology: Future. Add an Atmosphere (Insert → Atmosphere) and a Sky.',
+    ...(look
+      ? [
+          `   This scene is set at "${time}". Matching starting values:`,
+          `     Lighting.ClockTime = ${look.clock}`,
+          `     Atmosphere.Density = ${look.density}   Atmosphere.Haze = ${look.haze}`,
+        ]
+      : []),
     '   Terrain Editor → Settings → Decoration: ON adds swaying grass.',
   );
   return lines.join('\n') + '\n';

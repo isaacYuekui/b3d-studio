@@ -5,6 +5,14 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Time of day and water (v1.2)
+
+- `setTimeOfDay`: sunrise, morning, noon, late afternoon, sunset, dusk, night, overcast, misty. Each sets a matching sky, a sun (or moon) light aimed where that sky's sun is, exposure and distance haze. `heading` turns the sun to any compass direction. Also in the World panel as **Time of day**
+- World **Haze**: distance fog that fades far hills and trees into the sky colour
+- `addWater`: lakes, rivers and sea with moving ripples and sky reflections
+- Roblox export: water becomes real Roblox terrain water (Sea Level numbers in the README), and the README gives Lighting/Atmosphere values matching the time of day
+- Fixed: the visible sky didn't turn with World → Rotation (only the lighting did)
+
 ## Environments and Roblox export (v1.1)
 
 - `addTerrain`: hills with levelled clearings and paths, blending grass, path and rock textures

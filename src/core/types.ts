@@ -132,6 +132,8 @@ export interface SceneObject {
   terrain?: import('./terrain').TerrainData;
   /** Scatter objects: many copies of one library model, each [x, y, z, yaw°, scale] in world space. */
   scatter?: { asset?: string; source?: string; items: import('./terrain').ScatterItem[] };
+  /** Water surfaces: animated ripples (size of the waves in metres, speed in m/s). */
+  water?: { waves: number; speed: number };
 }
 
 export const BACKGROUNDS = ['color', 'hdri', 'blurred'] as const;
@@ -151,6 +153,11 @@ export interface World {
   bloom: number;
   /** Ambient occlusion: soft contact shadows in corners and creases. */
   ao: boolean;
+  /** Distance haze: metres at which things are half hidden (0 = off). */
+  fog: number;
+  fogColor: string;
+  /** Time-of-day preset this world came from (informational; set by setTimeOfDay). */
+  time?: string;
 }
 
 /** The scene's composed viewpoint (Blender's camera view, key 0). Blender coordinates. */
@@ -178,6 +185,8 @@ export const DEFAULT_WORLD: World = {
   exposure: 1,
   bloom: 0,
   ao: true,
+  fog: 0,
+  fogColor: '#b9cde6',
 };
 
 export const worldOf = (doc: SceneDoc): World => ({ ...DEFAULT_WORLD, ...doc.world });
