@@ -8,6 +8,7 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 ## Camera moves (v1.3)
 
 - **Animation → Camera Move**: Orbit, Dolly In, Flyover, Crane Up. Starts from your current view, circles the selected object (or the point you're looking at) across the whole timeline, eased in and out. Then press play or File → Export Video
+- Camera moves fly over trees and houses in their way instead of through them (v1.4)
 - `cameraMove` in scripts: `orbit`, `dollyIn`, `dollyOut`, `flyover`, `crane`, `pan`, with distance, height, heading and degrees. Over terrain the camera never dips into a hill
 
 ## Time of day and water (v1.2)

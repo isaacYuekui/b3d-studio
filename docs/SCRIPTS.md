@@ -183,3 +183,6 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   270 = front / −Y), `degrees`, `smooth` (ease in and out, default true).
 - It replaces camera keys between `start` and `end`, keeps the others, extends the timeline if
   needed, sets the scene camera to the first frame, and stays at least 2 m above any terrain.
+- Clearance (v1.4): the path rises smoothly over trees, rocks, houses and every scatter copy it
+  would otherwise pass through or graze (1.5 m above them). The object being filmed is not
+  counted, so close orbits stay close. `"clearance": false` turns it off.

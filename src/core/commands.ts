@@ -17,7 +17,7 @@ import { EDIT_OPS, runEditSteps } from './mesh/script';
 import { DEFAULT_OUTFIT, HUMAN_PRESETS, humanPreset } from './humans';
 import { generateTerrain, scatterOn, terrainSample } from './terrain';
 import { PLANT_KINDS, makePlant } from './plants';
-import { CAMERA_MOVES, sampleCameraMove } from './cameraMoves';
+import { CAMERA_MOVES, liftOverObstacles, sampleCameraMove, sceneObstacles } from './cameraMoves';
 import type { CameraMoveKind } from './cameraMoves';
 import { TIME_PRESETS, TIMES, rotationFor, skyAzimuth, sunRotation } from './sky';
 import type { TimeOfDay } from './sky';
@@ -98,7 +98,7 @@ export type Command =
   | { type: 'editMesh'; id: string; steps: EditStep[] }
   | { type: 'setWorld'; world: Partial<World> }
   /** Ready-made camera move (orbit, dolly, flyover, crane, pan) as camera keys between start and end. */
-  | { type: 'cameraMove'; move: CameraMoveKind; target?: Vec3; on?: string; start?: number; end?: number; distance?: number; height?: number; heading?: number; degrees?: number; smooth?: boolean }
+  | { type: 'cameraMove'; move: CameraMoveKind; target?: Vec3; on?: string; start?: number; end?: number; distance?: number; height?: number; heading?: number; degrees?: number; smooth?: boolean; clearance?: boolean }
   /** Lake / sea / river surface: a flat plane at z = level with animated ripples. */
   | { type: 'addWater'; id: string; name?: string; size: [number, number]; level: number; position?: [number, number]; color?: string; clarity?: number; waves?: number; speed?: number }
   /** Sky, sun light, exposure and haze for a time of day; heading turns the sky so the sun shines from that azimuth (degrees). */
@@ -577,6 +577,8 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       if (!target && cmd.on) target = transformAt(doc, requireObj(doc, cmd.on).id, start)!.position;
       target ??= doc.camera?.target ?? [0, 0, 0];
       const samples = sampleCameraMove({ move: cmd.move, target, start, end, distance: cmd.distance, height: cmd.height, heading: cmd.heading, degrees: cmd.degrees, smooth: cmd.smooth });
+      // Fly over trees and houses rather than through them.
+      if (cmd.clearance !== false) liftOverObstacles(samples, sceneObstacles(doc).filter((ob) => Math.hypot(ob.x - target![0], ob.y - target![1]) > ob.r + 0.5)); // not what we're filming
       // Never dip into a hill: keep the camera at least 2 m above any terrain under it.
       const grounds = Object.values(doc.objects).filter((o) => o.terrain);
       if (grounds.length)
@@ -1308,6 +1310,7 @@ export function validateCommand(v: unknown, depth = 0): Command {
       for (const k of ['distance', 'height'] as const) if (v[k] !== undefined) cmd[k] = inRange(v[k], k === 'height' ? -1000 : 0.1, 5000) ? (v[k] as number) : fail(`cameraMove ${k} out of range`);
       for (const k of ['heading', 'degrees'] as const) if (v[k] !== undefined) cmd[k] = inRange(v[k], -3600, 3600) ? (v[k] as number) : fail(`cameraMove ${k} must be degrees`);
       if (v.smooth !== undefined) cmd.smooth = typeof v.smooth === 'boolean' ? v.smooth : fail('cameraMove smooth must be true/false');
+      if (v.clearance !== undefined) cmd.clearance = typeof v.clearance === 'boolean' ? v.clearance : fail('cameraMove clearance must be true/false');
       return cmd;
     }
     case 'addWater': {
