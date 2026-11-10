@@ -10,6 +10,8 @@ import { isRenderable } from '../core/types';
 import { runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
 import { guessUnitScale, isUserAsset } from '../engine/userModels';
+import { TIMES } from '../core/sky';
+import type { TimeOfDay } from '../core/sky';
 import { worldOf } from '../core/types';
 import { EASINGS, isAnimated, transformAt, transformEdit } from '../core/animation';
 import type { Easing } from '../core/animation';
@@ -269,6 +271,8 @@ export function Properties() {
   );
 }
 
+const TIME_LABEL: Record<TimeOfDay, string> = { sunrise: 'Sunrise', morning: 'Morning', noon: 'Noon', afternoon: 'Late afternoon', sunset: 'Sunset', dusk: 'Dusk', night: 'Night (moon)', overcast: 'Overcast', misty: 'Misty morning' };
+
 /** Scene-wide look for Rendered shading: HDRI sky, exposure, bloom, ambient occlusion. */
 function WorldSection() {
   const { store } = useCtx();
@@ -277,7 +281,7 @@ function WorldSection() {
   const shading = useApp((s) => s.shading);
   const catalog = useCatalog();
   const set = (world: Partial<typeof w>) => store.dispatch({ type: 'setWorld', world }, { select: false });
-  const num = (label: string, value: number, min: number, max: number, key: 'strength' | 'rotation' | 'exposure' | 'bloom', step: number) => (
+  const num = (label: string, value: number, min: number, max: number, key: 'strength' | 'rotation' | 'exposure' | 'bloom' | 'fog', step: number) => (
     <NumberField
       key={key}
       label={label}
@@ -294,6 +298,24 @@ function WorldSection() {
   );
   return (
     <Section title="World">
+      <label className="prop-row">
+        <span>Time of day</span>
+        <select
+          id="world-time"
+          aria-label="Time of day"
+          value={w.time ?? ''}
+          onChange={(e) => {
+            if (!e.target.value) return set({ time: undefined });
+            store.dispatch({ type: 'setTimeOfDay', time: e.target.value as TimeOfDay }, { select: false });
+            if (store.getState().shading !== 'rendered') store.setShading('rendered');
+          }}
+        >
+          <option value="">Custom</option>
+          {TIMES.map((t) => (
+            <option key={t} value={t}>{TIME_LABEL[t]}</option>
+          ))}
+        </select>
+      </label>
       <label className="prop-row">
         <span>Sky (HDRI)</span>
         <select id="world-hdri" aria-label="Sky" value={w.hdri ?? ''} onChange={(e) => set({ hdri: e.target.value || null, ...(e.target.value && w.background === 'color' ? { background: 'hdri' as Background } : {}) })}>
@@ -323,6 +345,7 @@ function WorldSection() {
       {w.hdri && num('Rotation °', w.rotation, -3600, 3600, 'rotation', 1)}
       {num('Exposure', w.exposure, 0, 20, 'exposure', 0.05)}
       {num('Bloom', w.bloom, 0, 1, 'bloom', 0.01)}
+      {num('Haze (m, 0 = off)', w.fog, 0, 100000, 'fog', 10)}
       <label className="prop-row">
         <span>Ambient occlusion</span>
         <input type="checkbox" checked={w.ao} onChange={(e) => set({ ao: e.target.checked })} />

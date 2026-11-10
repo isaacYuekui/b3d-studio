@@ -11,7 +11,7 @@ any device (iPad included) and opened on the computer that runs Studio.
 | `models.glb` | Everything except terrain: houses, plants, scatter copies (one part each, sharing meshes), imported models. |
 | `<terrain>_heightmap.png`, `<terrain>_colormap.png` | Each terrain as Roblox Terrain: grey heights, and colours from Roblox's colormap key (grass → Grass, paths → Ground, cliffs → Rock). |
 | `terrain_mesh_optional.glb` | The same terrain as plain meshes, if you'd rather not use Roblox Terrain. |
-| `README.txt` | The steps below with this scene's exact numbers. |
+| `README.txt` | The steps below with this scene's exact numbers, including water (Sea Level box) and lighting values for the scene's time of day. |
 
 What the export does for Roblox:
 
@@ -30,8 +30,12 @@ What the export does for Roblox:
    *Insert Using Scene Position* and *Anchored*, then Import.
 2. **Terrain:** Home → Terrain Editor → Import. Pick the heightmap and the colormap, type the
    size and position from `README.txt`, and generate.
-3. **Look:** Lighting → Technology *Future*; add an Atmosphere and a Sky; Terrain decoration on
-   for swaying grass.
+3. **Water:** Terrain Editor → Sea Level, with the position and size from `README.txt`. Roblox
+   fills it with real terrain water (waves, swimming, reflections). Water surfaces are left out of
+   `models.glb` for this reason.
+4. **Look:** Lighting → Technology *Future*; add an Atmosphere and a Sky. `README.txt` gives
+   `ClockTime`, `Density` and `Haze` values matching the scene's time of day. Terrain decoration
+   on for swaying grass.
 
 ## Known limits
 

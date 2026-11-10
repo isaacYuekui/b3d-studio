@@ -7,7 +7,7 @@
 //   - a safe surface for AI: Claude emits JSON commands, never JavaScript
 //   - easy unit testing
 
-import { BACKGROUNDS, DEFAULT_LIGHT, DEFAULT_MATERIAL, DEFAULT_WORLD, IDENTITY, LIGHT_TYPES, OBJECT_TYPES, PRIMITIVES } from './types';
+import { BACKGROUNDS, DEFAULT_LIGHT, DEFAULT_MATERIAL, DEFAULT_WORLD, IDENTITY, worldOf, LIGHT_TYPES, OBJECT_TYPES, PRIMITIVES } from './types';
 import { DEFAULT_ANIMATION, EASINGS, animationOf, transformAt, upsertKey } from './animation';
 import type { Animation, Easing, PoseKey } from './animation';
 import type { ArmatureData, Bone, BonePose, Background, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
@@ -17,6 +17,8 @@ import { EDIT_OPS, runEditSteps } from './mesh/script';
 import { DEFAULT_OUTFIT, HUMAN_PRESETS, humanPreset } from './humans';
 import { generateTerrain, scatterOn } from './terrain';
 import { PLANT_KINDS, makePlant } from './plants';
+import { TIME_PRESETS, TIMES, rotationFor, skyAzimuth, sunRotation } from './sky';
+import type { TimeOfDay } from './sky';
 import { ROOFS, makeBuilding } from './buildings';
 import type { RoofKind } from './buildings';
 import type { PlantKind } from './plants';
@@ -93,6 +95,10 @@ export type Command =
   /** Model with Edit Mode operators: each step selects elements by a query and applies an op. */
   | { type: 'editMesh'; id: string; steps: EditStep[] }
   | { type: 'setWorld'; world: Partial<World> }
+  /** Lake / sea / river surface: a flat plane at z = level with animated ripples. */
+  | { type: 'addWater'; id: string; name?: string; size: [number, number]; level: number; position?: [number, number]; color?: string; clarity?: number; waves?: number; speed?: number }
+  /** Sky, sun light, exposure and haze for a time of day; heading turns the sky so the sun shines from that azimuth (degrees). */
+  | { type: 'setTimeOfDay'; time: TimeOfDay; heading?: number; fog?: number }
   | { type: 'setCamera'; position: Vec3; target: Vec3 }
   | { type: 'setKeyframe'; id: string; frame: number; transform?: Transform; easing?: Easing }
   | { type: 'deleteKeyframe'; id: string; frame: number }
@@ -551,8 +557,43 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       return { doc: withObject(doc, next), created: [] };
     }
 
-    case 'setWorld':
-      return { doc: { ...doc, world: { ...DEFAULT_WORLD, ...doc.world, ...cmd.world } }, created: [] };
+    case 'setWorld': {
+      const world = { ...DEFAULT_WORLD, ...doc.world, ...cmd.world };
+      // Picking another sky by hand leaves the time-of-day preset.
+      if (cmd.world.hdri !== undefined && cmd.world.time === undefined) delete world.time;
+      return { doc: { ...doc, world }, created: [] };
+    }
+
+    case 'addWater': {
+      if (doc.objects[cmd.id]) throw new CommandError(`Id already in use: ${cmd.id}`);
+      const [w, d] = cmd.size;
+      const mesh: MeshData = { vertices: [[-w / 2, -d / 2, 0], [w / 2, -d / 2, 0], [w / 2, d / 2, 0], [-w / 2, d / 2, 0]], faces: [[0, 1, 2, 3]], smooth: false };
+      const [x, y] = cmd.position ?? [0, 0];
+      const clarity = cmd.clarity ?? 0.35;
+      const r = applyCommand(doc, { type: 'add', primitive: 'mesh', id: cmd.id, name: cmd.name ?? 'Water', mesh, material: { baseColor: cmd.color ?? '#1d4f5c', roughness: 0.03, metallic: 0, alpha: Math.round((1 - clarity * 0.6) * 100) / 100 }, transform: { position: [x, y, cmd.level] } }, idGen);
+      return { doc: withObject(r.doc, { ...r.doc.objects[cmd.id], water: { waves: cmd.waves ?? 1.2, speed: cmd.speed ?? 0.25 } }), created: r.created };
+    }
+
+    case 'setTimeOfDay': {
+      const t = TIME_PRESETS[cmd.time];
+      const cur = worldOf(doc);
+      const rotation = cmd.heading !== undefined ? rotationFor(t.sun?.u ?? 0.6, cmd.heading) : cur.rotation;
+      const sub: Command[] = [
+        { type: 'setWorld', world: { hdri: t.hdri, strength: t.strength, exposure: t.exposure, background: 'hdri', rotation, bloom: t.bloom, fog: cmd.fog ?? t.fog, fogColor: t.fogColor, time: cmd.time } },
+      ];
+      const sun = doc.order.map((id) => doc.objects[id]).find((o) => o?.type === 'light' && o.light?.type === 'sun');
+      if (t.sun) {
+        const rot = sunRotation(skyAzimuth(t.sun.u, rotation), t.sun.elevation);
+        const light = { color: t.sun.color, power: t.sun.power, shadows: t.sun.shadows };
+        if (sun) sub.push({ type: 'transform', id: sun.id, rotation: rot }, { type: 'setLight', id: sun.id, light }, { type: 'setVisible', id: sun.id, visible: true });
+        else {
+          let id = 'sun';
+          for (let k = 2; doc.objects[id]; k++) id = `sun-${k}`;
+          sub.push({ type: 'add', primitive: 'light', id, name: 'Sun', light: { type: 'sun', spotAngle: 45, ...light }, transform: { position: [0, 0, 30], rotation: rot, scale: [1, 1, 1] } });
+        }
+      } else if (sun) sub.push({ type: 'setVisible', id: sun.id, visible: false });
+      return applyCommand(doc, { type: 'batch', commands: sub }, idGen);
+    }
 
     case 'setCamera':
       return { doc: { ...doc, camera: { position: [...cmd.position], target: [...cmd.target] } }, created: [] };
@@ -676,6 +717,9 @@ export function validateWorld(v: unknown): Partial<World> {
   if (v.exposure !== undefined) w.exposure = inRange(v.exposure, 0, 20) ? v.exposure : fail('world.exposure must be 0..20');
   if (v.bloom !== undefined) w.bloom = inRange(v.bloom, 0, 1) ? v.bloom : fail('world.bloom must be 0..1');
   if (v.ao !== undefined) w.ao = typeof v.ao === 'boolean' ? v.ao : fail('world.ao must be true/false');
+  if (v.fog !== undefined) w.fog = inRange(v.fog, 0, 100000) ? v.fog : fail('world.fog must be 0..100000 m (0 = off)');
+  if (v.fogColor !== undefined) w.fogColor = isColor(v.fogColor) ? v.fogColor : fail('world.fogColor must be #rrggbb');
+  if (v.time !== undefined) w.time = (TIMES as readonly unknown[]).includes(v.time) ? (v.time as string) : fail(`world.time must be one of ${TIMES.join(', ')}`);
   return w;
 }
 
@@ -884,6 +928,11 @@ export function validateSceneObject(raw: unknown): SceneObject {
   }
   if (obj.type === 'mesh' && v.skin !== undefined) {
     obj.skin = validateSkin(v.skin, `object ${v.id}`);
+  }
+  if (obj.type === 'mesh' && v.water !== undefined) {
+    const w = v.water;
+    if (!isRecord(w) || !inRange(w.waves, 0.05, 50) || !inRange(w.speed, 0, 20)) fail(`object ${v.id}: water invalid`);
+    obj.water = { waves: w.waves as number, speed: w.speed as number };
   }
   return obj;
 }
@@ -1219,6 +1268,26 @@ export function validateCommand(v: unknown, depth = 0): Command {
       return { type: 'applyModifiers', id: v.id };
     case 'setWorld':
       return { type: 'setWorld', world: validateWorld(v.world) };
+    case 'addWater': {
+      if (typeof v.id !== 'string' || !REF_ID.test(v.id)) fail('addWater needs an id');
+      if (!Array.isArray(v.size) || v.size.length !== 2 || !v.size.every((n) => inRange(n, 0.1, 20000))) fail('addWater size must be [x, y] metres (0.1..20000)');
+      if (!inRange(v.level, -10000, 10000)) fail('addWater level must be the water height z in metres');
+      const cmd: Extract<Command, { type: 'addWater' }> = { type: 'addWater', id: v.id, size: [v.size[0] as number, v.size[1] as number], level: v.level as number };
+      if (v.name !== undefined) cmd.name = isStr(v.name, 100) ? v.name : fail('addWater name invalid');
+      if (v.position !== undefined) cmd.position = Array.isArray(v.position) && v.position.length === 2 && v.position.every((n) => inRange(n, -100000, 100000)) ? [v.position[0] as number, v.position[1] as number] : fail('addWater position must be [x, y]');
+      if (v.color !== undefined) cmd.color = isColor(v.color) ? v.color : fail('addWater color must be #rrggbb');
+      if (v.clarity !== undefined) cmd.clarity = inRange(v.clarity, 0, 1) ? (v.clarity as number) : fail('addWater clarity must be 0..1');
+      if (v.waves !== undefined) cmd.waves = inRange(v.waves, 0.05, 50) ? (v.waves as number) : fail('addWater waves must be 0.05..50 m');
+      if (v.speed !== undefined) cmd.speed = inRange(v.speed, 0, 20) ? (v.speed as number) : fail('addWater speed must be 0..20 m/s');
+      return cmd;
+    }
+    case 'setTimeOfDay': {
+      if (!(TIMES as readonly unknown[]).includes(v.time)) fail(`setTimeOfDay time must be one of ${TIMES.join(', ')}`);
+      const cmd: Extract<Command, { type: 'setTimeOfDay' }> = { type: 'setTimeOfDay', time: v.time as TimeOfDay };
+      if (v.heading !== undefined) cmd.heading = inRange(v.heading, -3600, 3600) ? (v.heading as number) : fail('setTimeOfDay heading must be degrees');
+      if (v.fog !== undefined) cmd.fog = inRange(v.fog, 0, 100000) ? (v.fog as number) : fail('setTimeOfDay fog must be 0..100000 m');
+      return cmd;
+    }
     case 'setCamera':
       if (!isVec3(v.position) || !isVec3(v.target)) fail('setCamera needs position and target as [x,y,z]');
       return { type: 'setCamera', position: [...v.position], target: [...v.target] };

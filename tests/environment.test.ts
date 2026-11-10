@@ -205,3 +205,61 @@ describe('pasting scripts', () => {
     expect(() => parseScript('{"hello":1}')).toThrow(/No commands found/);
   });
 });
+
+describe('time of day and water', async () => {
+  const { TIME_PRESETS, skyAzimuth, rotationFor, sunRotation } = await import('../src/core/sky');
+  const { validateSceneDoc } = await import('../src/core/commands');
+  /** Direction a light with this Blender XYZ euler shines along (its local −Z). */
+  const shine = ([rx, , rz]: number[]) => {
+    const a = (rx * Math.PI) / 180, c = (rz * Math.PI) / 180;
+    const v = [0, Math.sin(a), -Math.cos(a)]; // Rx · (0, 0, −1)
+    return [v[0] * Math.cos(c) - v[1] * Math.sin(c), v[0] * Math.sin(c) + v[1] * Math.cos(c), v[2]];
+  };
+
+  it('points the sun light from the requested azimuth and elevation', () => {
+    for (const [az, el] of [[0, 30], [90, 10], [200, 49.7], [315, 70]]) {
+      const d = shine(sunRotation(az, el));
+      const from = [-d[0], -d[1], -d[2]];
+      expect(Math.atan2(from[2], Math.hypot(from[0], from[1])) * (180 / Math.PI)).toBeCloseTo(el, 1);
+      expect(((Math.atan2(from[1], from[0]) * 180) / Math.PI + 360) % 360).toBeCloseTo(az, 1);
+    }
+  });
+
+  it('turns the sky so the sun comes from the heading', () => {
+    for (const h of [0, 120, 240]) expect(skyAzimuth(0.6, rotationFor(0.6, h))).toBeCloseTo(h, 6);
+  });
+
+  it('setTimeOfDay sets the sky, haze and one sun; overcast hides it; heading persists', () => {
+    let doc = run(createDefaultDoc(), { type: 'setTimeOfDay', time: 'sunset', heading: 250 });
+    const suns = () => Object.values(doc.objects).filter((o) => o.light?.type === 'sun');
+    expect(doc.world!.hdri).toBe(TIME_PRESETS.sunset.hdri);
+    expect(doc.world!.fog).toBe(TIME_PRESETS.sunset.fog);
+    expect(doc.world!.time).toBe('sunset');
+    expect(suns()).toHaveLength(1);
+    const d = shine(suns()[0].transform.rotation);
+    expect(((Math.atan2(-d[1], -d[0]) * 180) / Math.PI + 360) % 360).toBeCloseTo(250, 0);
+    doc = run(doc, { type: 'setTimeOfDay', time: 'overcast' });
+    expect(suns()).toHaveLength(1);
+    expect(suns()[0].visible).toBe(false);
+    doc = run(doc, { type: 'setTimeOfDay', time: 'noon' });
+    expect(suns()[0].visible).toBe(true);
+    const d2 = shine(suns()[0].transform.rotation);
+    expect(((Math.atan2(-d2[1], -d2[0]) * 180) / Math.PI + 360) % 360).toBeCloseTo(250, 0); // same compass direction
+    doc = run(doc, { type: 'setWorld', world: { hdri: 'lebombo' } });
+    expect(doc.world!.time).toBeUndefined();
+    expect(() => validateCommand({ type: 'setTimeOfDay', time: 'teatime' })).toThrow(/time must be/);
+  });
+
+  it('addWater makes an animated, translucent surface that survives a save', () => {
+    const doc = run(createDefaultDoc(), { type: 'addWater', id: 'lake', size: [40, 30], level: 0.5, position: [5, -6], waves: 2 });
+    const o = doc.objects.lake;
+    expect(o.water).toEqual({ waves: 2, speed: 0.25 });
+    expect(o.transform.position).toEqual([5, -6, 0.5]);
+    expect(o.material!.alpha).toBeLessThan(1);
+    expect(o.material!.roughness).toBeLessThan(0.1);
+    const back = validateSceneDoc(JSON.parse(JSON.stringify({ ...doc, world: { fog: 300, fogColor: '#aabbcc' } })));
+    expect(back.objects.lake.water).toEqual({ waves: 2, speed: 0.25 });
+    expect(back.world!.fog).toBe(300);
+    expect(() => validateCommand({ type: 'addWater', id: 'w', size: [10], level: 0 })).toThrow(/size/);
+  });
+});

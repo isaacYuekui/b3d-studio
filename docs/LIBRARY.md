@@ -94,6 +94,15 @@ Size is the real-world bounding box in metres (X × Y × Z, Z up) at scale 1. Mo
 | `qwantani_dusk_2` | Qwantani Dusk 2 | outdoor, natural light, nature |
 | `lebombo` | Lebombo | indoor, urban, morning-afternoon |
 | `dikhololo_night` | Dikhololo Night | outdoor, nature, night |
+| `qwantani_sunrise_puresky` | Qwantani Sunrise (Pure Sky) | outdoor, natural light, nature |
+| `qwantani_morning_puresky` | Qwantani Morning (Pure Sky) | outdoor, natural light, nature |
+| `qwantani_noon_puresky` | Qwantani Noon (Pure Sky) | outdoor, natural light, nature |
+| `qwantani_late_afternoon_puresky` | Qwantani Late Afternoon (Pure Sky) | outdoor, natural light, nature |
+| `qwantani_sunset_puresky` | Qwantani Sunset (Pure Sky) | outdoor, natural light, nature |
+| `qwantani_dusk_2_puresky` | Qwantani Dusk 2 (Pure Sky) | outdoor, natural light, nature |
+| `qwantani_night_puresky` | Qwantani Night (Pure Sky) | outdoor, natural light, nature |
+| `kloofendal_overcast_puresky` | Kloofendal Overcast (Pure Sky) | outdoor, skies, nature |
+| `kloofendal_misty_morning_puresky` | Kloofendal Misty Morning (Pure Sky) | outdoor, skies, natural light |
 
 ## Textures (PBR materials)
 

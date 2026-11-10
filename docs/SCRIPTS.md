@@ -148,3 +148,22 @@ cheat sheet: [CHARACTERS.md](CHARACTERS.md). Example: `examples/generators/chara
   `roofColor`, `trimColor`, `doorColor`}, `transform`. Stands on its z, front faces −Y.
 
 Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
+
+## Time of day, haze and water (v1.2)
+
+```json
+{"type":"setTimeOfDay","time":"sunset","heading":240}
+{"type":"addWater","id":"lake","size":[44,40],"level":0.3,"position":[-6,-40]}
+{"type":"setWorld","world":{"fog":300,"fogColor":"#c9ccd2"}}
+```
+
+- `setTimeOfDay` — `time`: `sunrise`, `morning`, `noon`, `afternoon`, `sunset`, `dusk`, `night`,
+  `overcast`, `misty`. Sets the sky (a matched Poly Haven set), exposure, bloom and haze, and adds
+  or updates one sun light aimed where that sky's sun is (hidden for dusk / overcast / misty).
+  `heading` (degrees, 0 = +X, 90 = +Y) turns the whole sky so the sun shines from there; later
+  times keep the same heading. Optional `fog` overrides the haze distance.
+- `world.fog` — haze: the distance in metres at which things are half hidden (0 = off);
+  `world.fogColor`. Rendered view only.
+- `addWater` — `size` [x, y] m, `level` (water height z), optional `position` [x, y], `color`,
+  `clarity` (0–1), `waves` (ripple size in m), `speed` (m/s). For a lake, lower the ground under it
+  with an `addTerrain` flat (`"height": -1.5`) and keep scatter out with an `avoid` disc.

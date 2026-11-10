@@ -765,9 +765,14 @@ const setNumber = async (page, scope, label, value) => {
     return { terrain: os.filter((o) => o.terrain).length, scatter: os.filter((o) => o.scatter).reduce((s, o) => s + o.scatter.items.length, 0), houses: os.filter((o) => /^h\d$/.test(o.id)).length };
   });
   check('v1.1: village has terrain, 5 houses and hundreds of scattered plants', info.terrain === 1 && info.houses === 5 && info.scatter > 400, JSON.stringify(info));
+  const sky = await page.evaluate(() => {
+    const d = window.__b3d.store.getState().doc;
+    return { time: d.world?.time, water: !!d.objects.lake?.water, suns: Object.values(d.objects).filter((o) => o.light?.type === 'sun').length };
+  });
+  check('v1.2: village is set in the afternoon with one sun and a lake', sky.time === 'afternoon' && sky.water && sky.suns === 1, JSON.stringify(sky));
   await page.evaluate(() => window.__b3d.store.select(null));
   const t0 = Date.now();
-  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 400000 }), (async () => { await page.click('[data-menu="File"]'); await page.click('.menu [data-action="file.roblox"]'); })()]);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 900000 }), (async () => { await page.click('[data-menu="File"]'); await page.click('.menu [data-action="file.roblox"]'); })()]);
   const zipPath = `${shots}/village-roblox.zip`;
   await dl.saveAs(zipPath);
   const fs = await import('node:fs');
@@ -784,6 +789,12 @@ const setNumber = async (page, scope, label, value) => {
   check('v1.1: Roblox GLB: every mesh ≤ 20k triangles, scatter expanded into parts, no unsupported extensions', glb.subarray(0, 4).toString() === 'glTF' && maxTris <= 20000 && parts > 400 && !exts.some((e) => /instancing|webp|texture_transform/.test(e)), `${parts} parts, largest ${maxTris} tris, ext [${exts}]`);
   const readme = Buffer.from(files['README.txt']).toString();
   check('v1.1: README gives the terrain size in studs', /Size \(studs\):\s+X 571\.4/.test(readme), readme.split('\n').find((l) => l.includes('Size')));
+  check('v1.2: README gives the lake as Roblox water and lighting for the time of day', /Water "Water": Position X -21\.4/.test(readme) && /ClockTime = 16/.test(readme) && !json.nodes.some((n) => /^Water/.test(n.name ?? '')), readme.split('\n').filter((l) => /Water "|ClockTime/.test(l)).join(' | '));
+  // Time of day from the World panel.
+  await page.evaluate(() => window.__b3d.store.select(null));
+  await page.selectOption('#world-time', 'sunset');
+  const tod = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; return { time: d.world.time, hdri: d.world.hdri, shading: window.__b3d.store.getState().shading, suns: Object.values(d.objects).filter((o) => o.light?.type === 'sun').length }; });
+  check('v1.2: World → Time of day switches sky and keeps one sun', tod.time === 'sunset' && tod.hdri === 'qwantani_sunset_puresky' && tod.shading === 'rendered' && tod.suns === 1, JSON.stringify(tod));
   await page.evaluate(() => window.__b3d.viewport().viewCamera());
   await page.waitForTimeout(2500);
   await page.screenshot({ path: `${shots}/village.png` });

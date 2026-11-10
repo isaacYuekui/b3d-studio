@@ -90,7 +90,16 @@
     "venice_sunset",
     "qwantani_dusk_2",
     "lebombo",
-    "dikhololo_night"
+    "dikhololo_night",
+    "qwantani_sunrise_puresky",
+    "qwantani_morning_puresky",
+    "qwantani_noon_puresky",
+    "qwantani_late_afternoon_puresky",
+    "qwantani_sunset_puresky",
+    "qwantani_dusk_2_puresky",
+    "qwantani_night_puresky",
+    "kloofendal_overcast_puresky",
+    "kloofendal_misty_morning_puresky"
   ],
   "textures": [
     "brown_planks_05",
