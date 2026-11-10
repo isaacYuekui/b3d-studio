@@ -10,6 +10,7 @@ import { animationOf, keyFrames } from '../core/animation';
 import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit, togglePose } from './editing';
 import { poseAt } from '../core/rig';
 import { subtree } from '../core/commands';
+import type { CameraMoveKind } from '../core/cameraMoves';
 import type { MeshOpId } from './editing';
 
 export interface Ctx {
@@ -514,6 +515,10 @@ export const actions = {
       c.store.notify(`Camera keyframe at frame ${frame}`);
     },
   },
+  'anim.camOrbit': cameraMoveAction('anim.camOrbit', 'Camera Move: Orbit', 'orbit'),
+  'anim.camDolly': cameraMoveAction('anim.camDolly', 'Camera Move: Dolly In', 'dollyIn'),
+  'anim.camFlyover': cameraMoveAction('anim.camFlyover', 'Camera Move: Flyover', 'flyover'),
+  'anim.camCrane': cameraMoveAction('anim.camCrane', 'Camera Move: Crane Up', 'crane'),
   'anim.nextKey': {
     id: 'anim.nextKey',
     label: 'Jump to Next Keyframe',
@@ -551,6 +556,34 @@ export const actions = {
 } satisfies Record<string, Action>;
 
 export type ActionId = keyof typeof actions;
+
+/**
+ * A ready-made camera move over the whole timeline, starting from the current view: it circles
+ * (or pushes in, flies over, cranes up to) the selected object, or the point the view looks at.
+ */
+function cameraMoveAction(id: string, label: string, move: CameraMoveKind): Action {
+  return {
+    id,
+    label,
+    run: (c) => {
+      const vp = c.viewport();
+      const v = vp?.currentView();
+      if (!v) return;
+      const { doc, selection } = c.store.getState();
+      const anim = animationOf(doc);
+      const target = selection && doc.objects[selection] ? (vp!.objectCenter?.(selection) ?? doc.objects[selection].transform.position) : v.target;
+      const dx = v.position[0] - target[0], dy = v.position[1] - target[1];
+      const distance = Math.max(0.5, Math.hypot(dx, dy));
+      c.store.dispatch(
+        { type: 'cameraMove', move, target, start: anim.start, end: anim.end, distance, height: v.position[2] - target[2], heading: (Math.atan2(dy, dx) * 180) / Math.PI, degrees: 120 },
+        { select: false },
+      );
+      c.store.setFrame(anim.start);
+      vp!.viewCamera();
+      c.store.notify(`${label.replace('Camera Move: ', '')} over frames ${anim.start}–${anim.end}. Press play, or File → Export Video.`);
+    },
+  };
+}
 
 export function runAction(c: Ctx, id: ActionId) {
   const a: Action = actions[id];

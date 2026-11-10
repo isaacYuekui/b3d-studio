@@ -15,7 +15,7 @@ const MENUS: { label: string; items: MenuItem[] }[] = [
   { label: 'Object', items: ['mode.edit', '-', 'mesh.smooth', 'mesh.flat', '-', 'mod.mirrorX', 'mod.subdiv1', 'mod.subdiv2', 'mod.subdiv3', 'mod.subdiv0', 'mod.apply'] },
   {
     label: 'Animation',
-    items: ['anim.play', '-', 'anim.insertKey', 'anim.deleteKey', 'anim.clear', '-', 'anim.cameraKey', 'view.camera', '-', 'anim.prevKey', 'anim.nextKey', '-', 'file.video'],
+    items: ['anim.play', '-', 'anim.insertKey', 'anim.deleteKey', 'anim.clear', '-', 'anim.cameraKey', 'anim.camOrbit', 'anim.camDolly', 'anim.camFlyover', 'anim.camCrane', 'view.camera', '-', 'anim.prevKey', 'anim.nextKey', '-', 'file.video'],
   },
   {
     label: 'View',
