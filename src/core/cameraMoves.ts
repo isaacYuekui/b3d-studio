@@ -2,7 +2,8 @@
 // into dense camera keys (linear between keys) so curved paths stay smooth, with an optional
 // ease-in/out applied along the whole move. Blender coordinates (metres, Z up).
 
-import type { Vec3 } from './types';
+import type { SceneDoc, SceneObject, Vec3 } from './types';
+import { applyModifiers } from './mesh/modifiers';
 
 export const CAMERA_MOVES = ['orbit', 'dollyIn', 'dollyOut', 'flyover', 'crane', 'pan'] as const;
 export type CameraMoveKind = (typeof CAMERA_MOVES)[number];
@@ -81,4 +82,104 @@ export function sampleCameraMove(p: CameraMoveParams): CameraSample[] {
     if (f >= p.end) break;
   }
   return out;
+}
+
+// ---------------------------------------------------------------- clearance
+
+interface Obstacle {
+  x: number;
+  y: number;
+  r: number;
+  top: number;
+}
+
+/** Bounds of an object and its children in its own frame (child rotations ignored: conservative enough). */
+function localBounds(doc: SceneDoc, o: SceneObject, kids: Map<string, SceneObject[]>, hidden = false): { min: Vec3; max: Vec3 } | null {
+  let min: Vec3 = [Infinity, Infinity, Infinity], max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  const grow = (p: Vec3) => {
+    for (let k = 0; k < 3; k++) {
+      min[k] = Math.min(min[k], p[k]);
+      max[k] = Math.max(max[k], p[k]);
+    }
+  };
+  if (o.mesh) for (const v of (o.modifiers ? applyModifiers(o.mesh, o.modifiers) : o.mesh).vertices) grow(v);
+  else if (o.type !== 'empty' && o.type !== 'scatter' && o.type !== 'light' && o.type !== 'armature' && o.type !== 'model') grow([-1, -1, -1]), grow([1, 1, 1]);
+  for (const c of kids.get(o.id) ?? []) {
+    if (c.visible === false && !hidden) continue;
+    const b = localBounds(doc, c, kids, hidden);
+    if (!b) continue;
+    const { position: P, scale: S } = c.transform;
+    grow([P[0] + Math.min(b.min[0] * S[0], b.max[0] * S[0]), P[1] + Math.min(b.min[1] * S[1], b.max[1] * S[1]), P[2] + Math.min(b.min[2] * S[2], b.max[2] * S[2])]);
+    grow([P[0] + Math.max(b.min[0] * S[0], b.max[0] * S[0]), P[1] + Math.max(b.min[1] * S[1], b.max[1] * S[1]), P[2] + Math.max(b.min[2] * S[2], b.max[2] * S[2])]);
+  }
+  return Number.isFinite(min[0]) ? { min, max } : null;
+}
+
+/** Things a camera move should fly over: buildings, plants, rocks and every scatter copy (terrain and water excluded). */
+export function sceneObstacles(doc: SceneDoc): Obstacle[] {
+  const kids = new Map<string, SceneObject[]>();
+  for (const o of Object.values(doc.objects)) if (o.parentId) kids.set(o.parentId, [...(kids.get(o.parentId) ?? []), o]);
+  const out: Obstacle[] = [];
+  const footprint = (b: { min: Vec3; max: Vec3 }, S: Vec3) => ({
+    cx: ((b.min[0] + b.max[0]) / 2) * S[0],
+    cy: ((b.min[1] + b.max[1]) / 2) * S[1],
+    // Round-ish things (crowns, rocks): the larger half-extent, not the box diagonal.
+    r: Math.max(Math.abs((b.max[0] - b.min[0]) * S[0]), Math.abs((b.max[1] - b.min[1]) * S[1])) / 2,
+  });
+  for (const o of Object.values(doc.objects)) {
+    if (o.terrain || o.water) continue;
+    if (o.type === 'scatter' && o.scatter?.source) {
+      const src = doc.objects[o.scatter.source];
+      if (!src) continue;
+      const b = localBounds(doc, src, kids, true); // the template is hidden; its copies are not
+      if (!b) continue;
+      const f = footprint(b, src.transform.scale);
+      for (const [x, y, z, , k] of o.scatter.items) out.push({ x: x + f.cx * k, y: y + f.cy * k, r: f.r * k, top: z + b.max[2] * src.transform.scale[2] * k });
+      continue;
+    }
+    if (o.parentId || o.visible === false) continue;
+    const b = localBounds(doc, o, kids);
+    if (!b) continue;
+    const { position: P, scale: S } = o.transform;
+    const f = footprint(b, S);
+    out.push({ x: P[0] + f.cx, y: P[1] + f.cy, r: f.r, top: P[2] + b.max[2] * S[2] });
+  }
+  return out;
+}
+
+/**
+ * Raise the camera smoothly wherever its path passes over (or into) an obstacle: it keeps
+ * `clearance` metres above anything within `margin` metres of it.
+ */
+export function liftOverObstacles(samples: CameraSample[], obstacles: Obstacle[], clearance = 1.5, margin = 1): void {
+  if (!obstacles.length || !samples.length) return;
+  // Bucket obstacles on a coarse grid so long scatters stay fast.
+  const cell = 8;
+  const grid = new Map<string, Obstacle[]>();
+  let maxR = 0;
+  for (const ob of obstacles) {
+    maxR = Math.max(maxR, ob.r);
+    const key = `${Math.floor(ob.x / cell)},${Math.floor(ob.y / cell)}`;
+    grid.set(key, [...(grid.get(key) ?? []), ob]);
+  }
+  const reach = Math.ceil((maxR + margin) / cell);
+  const need = samples.map(({ position: [x, y] }) => {
+    let z = -Infinity;
+    const gx = Math.floor(x / cell), gy = Math.floor(y / cell);
+    for (let i = -reach; i <= reach; i++)
+      for (let j = -reach; j <= reach; j++)
+        for (const ob of grid.get(`${gx + i},${gy + j}`) ?? []) if (Math.hypot(x - ob.x, y - ob.y) < ob.r + margin) z = Math.max(z, ob.top + clearance);
+    return z;
+  });
+  // Spread each lift to its neighbours, then smooth, so the camera rises before it gets there.
+  const w = 4;
+  const spread = need.map((_, i) => Math.max(...need.slice(Math.max(0, i - w), i + w + 1)));
+  const lifted = spread.map((z, i) => Math.max(samples[i].position[2], z));
+  const smoothZ = lifted.map((_, i) => {
+    const win = lifted.slice(Math.max(0, i - w), i + w + 1);
+    return Math.max(lifted[i], win.reduce((s, v) => s + v, 0) / win.length);
+  });
+  samples.forEach((s, i) => {
+    if (smoothZ[i] > s.position[2] + 1e-6) s.position = [s.position[0], s.position[1], Math.round(smoothZ[i] * 1000) / 1000];
+  });
 }

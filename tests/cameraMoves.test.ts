@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { applyCommand, validateCommand } from '../src/core/commands';
 import { createDefaultDoc } from '../src/core/store';
 import { evaluateCamera } from '../src/core/animation';
-import { sampleCameraMove } from '../src/core/cameraMoves';
+import { sampleCameraMove, sceneObstacles } from '../src/core/cameraMoves';
 import { terrainSample } from '../src/core/terrain';
 import type { SceneDoc } from '../src/core/types';
 
@@ -70,5 +70,34 @@ describe('camera moves over terrain', () => {
       const g = terrainSample(doc.objects.land, k.position[0], k.position[1]);
       if (g) expect(k.position[2]).toBeGreaterThanOrEqual(g.z + 1.99);
     }
+  });
+});
+
+describe('camera clearance', () => {
+  it('flies over a scatter forest and houses on its path, smoothly, and not over the subject', () => {
+    let doc = run(createDefaultDoc(), { type: 'addTerrain', id: 'land', size: [120, 120], resolution: 60, height: 0.5, seed: 1 });
+    doc = run(doc, { type: 'addPlant', id: 'pine', kind: 'pine', seed: 1, height: 10 });
+    doc = run(doc, { type: 'scatter', id: 'trees', source: 'pine', on: 'land', count: 300, seed: 2, spacing: 3, avoid: [{ center: [0, 0], radius: 12 }] });
+    doc = run(doc, { type: 'addBuilding', id: 'house', width: 6, depth: 6, floors: 2, transform: { position: [0, 0, 0] } });
+    const free = run(doc, { type: 'cameraMove', move: 'orbit', target: [0, 0, 2], start: 1, end: 200, distance: 25, height: 2, degrees: 360, clearance: false });
+    const lifted = run(doc, { type: 'cameraMove', move: 'orbit', target: [0, 0, 2], start: 1, end: 200, distance: 25, height: 2, degrees: 360 });
+    const zFree = free.animation!.camera.map((k) => k.position[2]);
+    const z = lifted.animation!.camera.map((k) => k.position[2]);
+    expect(Math.max(...zFree)).toBeLessThan(6);
+    // Wherever a pine (or the house) is under or beside the camera, the camera is above it.
+    const obs = sceneObstacles(doc).filter((ob) => Math.hypot(ob.x, ob.y) > ob.r + 0.5);
+    let near = 0;
+    for (const k of lifted.animation!.camera)
+      for (const ob of obs)
+        if (Math.hypot(k.position[0] - ob.x, k.position[1] - ob.y) < ob.r + 1) {
+          near++;
+          expect(k.position[2]).toBeGreaterThanOrEqual(ob.top + 1.49);
+        }
+    expect(near).toBeGreaterThan(20);
+    expect(Math.max(...z)).toBeGreaterThan(10);
+    for (let i = 1; i < z.length; i++) expect(Math.abs(z[i] - z[i - 1])).toBeLessThan(3); // no sudden jumps
+    // A close orbit of the house itself is not lifted over the house.
+    const close = run(doc, { type: 'cameraMove', move: 'orbit', target: [0, 0, 2], start: 1, end: 60, distance: 7, height: 1, degrees: 90 });
+    expect(Math.max(...close.animation!.camera.map((k) => k.position[2]))).toBeLessThan(4);
   });
 });
