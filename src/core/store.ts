@@ -17,6 +17,19 @@ export interface EditState {
 export type ToolMode = 'select' | 'move' | 'rotate' | 'scale';
 export type Shading = 'solid' | 'rendered';
 
+export const QUALITIES = ['fast', 'balanced', 'best'] as const;
+export type Quality = (typeof QUALITIES)[number];
+const QUALITY_KEY = 'b3d.quality';
+function loadQuality(): Quality {
+  try {
+    const q = localStorage.getItem(QUALITY_KEY);
+    if (q && (QUALITIES as readonly string[]).includes(q)) return q as Quality;
+  } catch {
+    /* storage blocked */
+  }
+  return 'balanced';
+}
+
 export interface AppState {
   doc: SceneDoc;
   selection: string | null;
@@ -31,6 +44,8 @@ export interface AppState {
   shading: Shading;
   /** Looking through the scene camera (follows its animation during playback). */
   cameraView: boolean;
+  /** Render quality on this device (not saved in the scene): resolution, shadows, AO, bloom. */
+  quality: Quality;
   /** Edit mode (null = Object mode). */
   edit: EditState | null;
   /** See-through display: select hidden vertices too. */
@@ -75,6 +90,7 @@ export class Store {
       playing: false,
       shading: 'solid',
       cameraView: false,
+      quality: loadQuality(),
       edit: null,
       xray: false,
       addSelect: false,
@@ -237,6 +253,15 @@ export class Store {
 
   setShading(shading: Shading) {
     this.set({ shading });
+  }
+
+  setQuality(quality: Quality) {
+    try {
+      localStorage.setItem(QUALITY_KEY, quality);
+    } catch {
+      /* private mode: per session only */
+    }
+    this.set({ quality });
   }
 
   setPlaying(playing: boolean) {

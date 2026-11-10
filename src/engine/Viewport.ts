@@ -44,7 +44,7 @@ import '@babylonjs/core/PostProcesses/RenderPipeline/postProcessRenderPipelineMa
 import '@babylonjs/core/Rendering/prePassRendererSceneComponent'; // SSAO2
 import '@babylonjs/core/Rendering/geometryBufferRendererSceneComponent'; // SSAO2
 
-import type { Store, AppState, ToolMode, Shading } from '../core/store';
+import type { Store, AppState, ToolMode, Shading, Quality } from '../core/store';
 import type { Material as SceneMaterial, SceneObject, SceneDoc, Vec3, World } from '../core/types';
 import { isRenderable, worldOf } from '../core/types';
 import { catalogNow, hdriUrl, loadCatalog, modelUrl, textureUrl } from './library';
@@ -114,6 +114,7 @@ export class Viewport {
   private studio: Light[] = [];
   private studioEnv!: RawCubeTexture;
   private hdris = new Map<string, HDRCubeTexture>();
+  private ssaoQuality: Quality | null = null;
   private waters = new Map<string, { tex: Texture; water: { waves: number; speed: number } }>();
   private skybox: Mesh | null = null;
   private skyKey = '';
@@ -131,8 +132,7 @@ export class Viewport {
 
   constructor(private canvas: HTMLCanvasElement, private store: Store) {
     this.engine = new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: true, powerPreference: 'high-performance', adaptToDeviceRatio: false });
-    // Cap pixel ratio at 2: retina iPads at 3x would quadruple fill cost for little gain.
-    this.engine.setHardwareScalingLevel(1 / Math.min(window.devicePixelRatio || 1, 2));
+    this.engine.setHardwareScalingLevel(pixelScaling(store.getState().quality));
 
     const scene = (this.scene = new Scene(this.engine));
     scene.clearColor = BG;
@@ -285,6 +285,13 @@ export class Viewport {
   // ---------------------------------------------------------------- scene sync
 
   private lastFrame = -1;
+  private lastQuality: Quality | null = null;
+  /** Video export renders at Best whatever this device's setting is. */
+  private forceBest = false;
+  private recording = false;
+  private quality(): Quality {
+    return this.forceBest ? 'best' : this.store.getState().quality;
+  }
   private animated = new Set<string>();
   private lastCameraView = false;
 
@@ -300,6 +307,17 @@ export class Viewport {
       this.lastCameraView = state.cameraView;
     }
     const world = worldOf(state.doc);
+    const quality = this.quality();
+    if (quality !== this.lastQuality) {
+      this.lastQuality = quality;
+      if (!this.recording) this.engine.setHardwareScalingLevel(pixelScaling(quality));
+      // Shadow maps are rebuilt at the new size; post effects re-chosen below.
+      for (const e of this.entries.values()) {
+        e.shadow?.dispose();
+        e.shadow = undefined;
+      }
+      this.lastWorld = null;
+    }
     if (state.shading !== this.lastShading || JSON.stringify(world) !== JSON.stringify(this.lastWorld)) {
       this.lastShading = state.shading;
       this.lastWorld = world;
@@ -1195,8 +1213,10 @@ export class Viewport {
       if (wantShadow) {
         shadowCount++;
         if (!e.shadow) {
-          const sg = new ShadowGenerator(1024, e.light as DirectionalLight | SpotLight);
-          sg.usePercentageCloserFiltering = true;
+          const q = this.quality();
+          const sg = new ShadowGenerator(q === 'best' ? 2048 : 1024, e.light as DirectionalLight | SpotLight);
+          sg.usePercentageCloserFiltering = q !== 'fast';
+          if (q === 'best') sg.filteringQuality = ShadowGenerator.QUALITY_HIGH;
           sg.bias = 0.0008;
           sg.normalBias = 0.02;
           e.shadow = sg;
@@ -1268,17 +1288,24 @@ export class Viewport {
         this.pipeline.bloomKernel = 48;
         this.pipeline.bloomScale = 0.5;
       }
-      this.pipeline.bloomEnabled = w.bloom > 0;
+      const q = this.quality();
+      this.pipeline.bloomEnabled = w.bloom > 0 && q !== 'fast';
       this.pipeline.bloomWeight = w.bloom;
-      if (w.ao && !this.ssao && SSAO2RenderingPipeline.IsSupported) {
+      const wantAo = w.ao && q !== 'fast';
+      if (this.ssao && this.ssaoQuality !== q) {
+        this.ssao.dispose(true);
+        this.ssao = null;
+      }
+      if (wantAo && !this.ssao && SSAO2RenderingPipeline.IsSupported) {
         const ssao = new SSAO2RenderingPipeline('ao', scene, { ssaoRatio: 0.5, blurRatio: 0.5 }, [this.camera], true);
         ssao.radius = 0.5;
         ssao.totalStrength = 1.1;
-        ssao.samples = 16;
+        ssao.samples = q === 'best' ? 16 : 8;
         ssao.maxZ = 60;
-        ssao.expensiveBlur = true;
+        ssao.expensiveBlur = q === 'best';
         this.ssao = ssao;
-      } else if (!w.ao && this.ssao) {
+        this.ssaoQuality = q;
+      } else if (!wantAo && this.ssao) {
         this.ssao.dispose(true);
         this.ssao = null;
       }
@@ -1518,6 +1545,10 @@ export class Viewport {
 
     const st0 = this.store.getState();
     const restore = { shading: st0.shading, selection: st0.selection, frame: st0.frame, cameraView: st0.cameraView, scaling: this.engine.getHardwareScalingLevel() };
+    // Videos always render at Best (soft shadows, full AO and bloom), whatever this device's setting.
+    this.recording = true;
+    this.forceBest = true;
+    this.sync(this.store.getState());
     const hasCamera = !!st0.doc.camera || (st0.doc.animation?.camera.length ?? 0) > 0;
 
     // Look the way the final video should: rendered shading, no selection, through the scene camera.
@@ -1563,6 +1594,9 @@ export class Viewport {
       const buf = (output.target as InstanceType<typeof BufferTarget>).buffer!;
       return { blob: new Blob([buf], { type: 'video/mp4' }), codec };
     } finally {
+      this.forceBest = false;
+      this.recording = false;
+      this.sync(this.store.getState());
       this.engine.setHardwareScalingLevel(restore.scaling);
       this.engine.resize();
       this.resizeObs.observe(this.canvas);
@@ -1691,6 +1725,12 @@ const ROBLOX_CLOCK: Record<string, { clock: number; density: number; haze: numbe
   overcast: { clock: 13, density: 0.45, haze: 3 },
   misty: { clock: 7.5, density: 0.65, haze: 6 },
 };
+
+/** Hardware scaling per quality: Fast draws at 1× pixels, Balanced up to 1.5×, Best up to 2×. */
+function pixelScaling(q: Quality): number {
+  const dpr = window.devicePixelRatio || 1;
+  return 1 / Math.min(dpr, q === 'fast' ? 1 : q === 'balanced' ? 1.5 : 2);
+}
 
 function robloxReadme(report: { parts: number; triangles: number; maxTriangles: number } | null, terrain: string[], water: string[] = [], time?: string): string {
   const lines = [

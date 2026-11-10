@@ -5,6 +5,11 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Quality setting (v1.5)
+
+- World panel → **Quality (this device)**: Fast, Balanced (default) or Best. Fast draws at 1× pixels with hard shadows and no ambient occlusion or bloom, about 4× cheaper than Best on the village scene. Best uses up to 2× pixels and 2048 px soft shadows. Saved per device, not in the scene
+- Video export always renders at Best
+
 ## Camera moves (v1.3)
 
 - **Animation → Camera Move**: Orbit, Dolly In, Flyover, Crane Up. Starts from your current view, circles the selected object (or the point you're looking at) across the whole timeline, eased in and out. Then press play or File → Export Video
