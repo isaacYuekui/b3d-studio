@@ -43,6 +43,7 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
     await prepareCommands(script.commands);
     const commands: Command[] = clear && store.getState().doc.order.length ? [{ type: 'delete', ids: [...store.getState().doc.order] }, ...script.commands] : script.commands;
     const before = store.getState().doc;
+    const had = new Set(before.order.length && !clear ? Object.keys(before.objects) : []);
     store.dispatch({ type: 'batch', commands }, { select: false });
     if (store.getState().doc === before) {
       setRunError(store.getState().notice ?? 'The script did not change the scene.');
@@ -51,12 +52,16 @@ export function ScriptDialog({ onClose }: { onClose: () => void }) {
     store.select(null);
     store.notify(`Ran script${parsed.value.title ? ` “${parsed.value.title}”` : ''}: ${parsed.value.count} commands (one undo step)`);
     onClose();
-    // Frame once library models have loaded, so the shot includes them.
+    // Once library models have loaded: show the script's own camera if it set one; otherwise
+    // frame what the script added (an older scene camera may point somewhere else entirely).
     const vp = ctx.viewport();
-void vp?.settle().then(() => {
-  vp.frame(true);
-  window.setTimeout(() => vp.viewCamera(), 80);
-});
+    const setsCamera = script.commands.some((c) => c.type === 'setCamera' || c.type === 'setCameraKey');
+    const added = Object.keys(store.getState().doc.objects).filter((id) => !had.has(id));
+    void vp?.settle().then(() => {
+      if (setsCamera && vp.viewCamera()) return;
+      store.setCameraView(false);
+      vp.frame(true, added.length && had.size ? added : undefined);
+    });
   };
 
   return (

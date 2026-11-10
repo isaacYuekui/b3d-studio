@@ -787,6 +787,18 @@ const setNumber = async (page, scope, label, value) => {
   await page.evaluate(() => window.__b3d.viewport().viewCamera());
   await page.waitForTimeout(2500);
   await page.screenshot({ path: `${shots}/village.png` });
+  // A model script with no camera, pasted after a scene that set one, must be framed, not
+  // viewed through the old scene camera 45 m away.
+  await page.click('[data-testid="script-btn"]');
+  await page.fill('[data-testid="script-text"]', '{"commands":[{"type":"add","primitive":"torus","name":"Pasted"}]}');
+  await page.click('[data-testid="script-run"]');
+  await page.waitForTimeout(2500);
+  const view = await page.evaluate(() => {
+    const vp = window.__b3d.viewport();
+    const t = vp.camera.target;
+    return { radius: vp.camera.radius, dist: Math.hypot(t.x, t.y, t.z), objects: Object.keys(window.__b3d.store.getState().doc.objects).length };
+  });
+  check('v1.1: pasted model without a camera is framed (not the old scene camera)', view.objects === 1 && view.radius < 12 && view.dist < 2, JSON.stringify(view));
   check('v1.1: no errors (environments)', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }
