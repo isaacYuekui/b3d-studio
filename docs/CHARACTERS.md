@@ -60,3 +60,19 @@ its rotation, press **I** to keyframe it. Animated bones auto-key when changed.
 ## Render check
 
 `node scripts/render-check.mjs examples/character-walk.b3d-script.json sheet.png --focus body`
+
+## Walking a path (v1.6)
+
+```json
+{"type":"addHuman","id":"ana","preset":"female"}
+{"type":"walkPath","id":"ana","points":[[-26,-9],[-12,-3.5],[0,0],[10,4.5]],"start":1}
+```
+
+- `points`: 2 to 500 `[x, y]` positions in metres. The person starts at the first point and stops
+  exactly at the last, at 1.45 m per walk cycle (30 frames) or the run's stride.
+- `action`: `walk` (default) or `run`. `speed`: 0.25 to 4 (1 = normal).
+- Facing follows the path. Headings blend over about a metre around each corner and always turn
+  the short way.
+- On a terrain the feet follow the ground. Elsewhere they stay at the person's starting height.
+- The timeline end grows to fit. Chain other actions after the last frame with `playAction`,
+  for example `wave` or `sit`.

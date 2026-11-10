@@ -271,15 +271,64 @@ const DEFS: Record<ActionName, ActionDef> = {
 };
 
 /** Commands that key an action on an armature from `start`. */
-export function playAction(doc: SceneDoc, arm: SceneObject, action: ActionName, start: number, opts: { cycles?: number; speed?: number; travel?: boolean } = {}): Command[] {
+/** A route for root motion: position and facing at a distance along it, and the ground height. */
+export interface Route {
+  length: number;
+  at(d: number): { x: number; y: number; heading: number };
+  ground?(x: number, y: number): number | null;
+}
+
+/** Polyline route with headings blended over `turn` metres around each corner. */
+export function polylineRoute(points: [number, number][], ground?: (x: number, y: number) => number | null, turn = 0.9): Route {
+  const seg: { a: [number, number]; d: [number, number]; len: number; s0: number; h: number }[] = [];
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len < 1e-6) continue;
+    const d: [number, number] = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    // Rigs face −Y: heading θ walks along (sin θ, −cos θ).
+    seg.push({ a, d, len, s0: total, h: Math.atan2(d[0], -d[1]) });
+    total += len;
+  }
+  if (!seg.length) throw new Error('walkPath needs at least two different points');
+  // Unwrap headings so turns take the short way round.
+  for (let i = 1; i < seg.length; i++) {
+    while (seg[i].h - seg[i - 1].h > Math.PI) seg[i].h -= 2 * Math.PI;
+    while (seg[i].h - seg[i - 1].h < -Math.PI) seg[i].h += 2 * Math.PI;
+  }
+  const find = (d: number) => {
+    let i = 0;
+    while (i < seg.length - 1 && d > seg[i].s0 + seg[i].len) i++;
+    return i;
+  };
+  return {
+    length: total,
+    ground,
+    at(dist: number) {
+      const d = Math.min(total, Math.max(0, dist));
+      const i = find(d);
+      const s = seg[i];
+      const u = d - s.s0;
+      let h = s.h;
+      // Blend into the next / from the previous segment's heading near corners.
+      if (i < seg.length - 1 && s.len - u < turn) h += (seg[i + 1].h - s.h) * 0.5 * (1 - (s.len - u) / turn);
+      if (i > 0 && u < turn) h += (seg[i - 1].h - s.h) * 0.5 * (1 - u / turn);
+      return { x: s.a[0] + s.d[0] * u, y: s.a[1] + s.d[1] * u, heading: h };
+    },
+  };
+}
+
+export function playAction(doc: SceneDoc, arm: SceneObject, action: ActionName, start: number, opts: { cycles?: number; speed?: number; travel?: boolean; route?: Route } = {}): Command[] {
   const bones = arm.armature!.bones;
   if (!isHumanRig(bones)) throw new Error(`${arm.name} is not a human rig (add one with addHuman)`);
   const def = DEFS[action];
   const rig = rigInfo(bones);
   const speed = opts.speed ?? 1;
-  const cycles = def.loop ? opts.cycles ?? 2 : 1;
+  const route = def.loop && def.travel > 0 ? opts.route : undefined;
+  const cycles = def.loop ? (route ? route.length / def.travel : opts.cycles ?? 2) : 1;
   const len = Math.max(2, Math.round(def.frames / speed));
-  const total = Math.round(len * cycles);
+  const total = Math.max(1, Math.round(len * cycles));
   const step = Math.max(1, Math.round(def.step / Math.max(speed, 0.5)));
   const out: Command[] = [];
   // Root motion relative to where the armature is at the start frame, along its facing (−Y local).
@@ -304,6 +353,8 @@ export function playAction(doc: SceneDoc, arm: SceneObject, action: ActionName, 
     return Math.min(...contacts.map(([b, p]) => apply(skin.get(b)!, p)[2]));
   };
   const restGround = Math.min(...contacts.map(([, p]) => p[2]));
+  // On a route over terrain the feet follow the ground; elsewhere they keep the start height.
+  const baseZ = t0.position[2];
   for (let f = 0; f <= total; f += step) {
     const g = f + step > total ? total : f;
     const ph = def.loop ? (g / len) % 1 : Math.min(1, g / len);
@@ -316,8 +367,15 @@ export function playAction(doc: SceneDoc, arm: SceneObject, action: ActionName, 
     let fwd = travel * ((def.loop ? Math.floor(g / len) : 0) + fr.fwd);
     const up = restGround - groundOf(pose) + Math.max(0, fr.up);
     if (action === 'sit') fwd -= thighLen * smooth(Math.min(1, ph / 0.9)) * 0.95;
-    const pos: V = [t0.position[0] + dir[0] * fwd, t0.position[1] + dir[1] * fwd, t0.position[2] + up];
-    out.push({ type: 'setKeyframe', id: arm.id, frame, easing: 'linear', transform: { position: pos.map((x) => Math.round(x * 1e4) / 1e4) as V, rotation: [...t0.rotation], scale: [...t0.scale] } });
+    let pos: V = [t0.position[0] + dir[0] * fwd, t0.position[1] + dir[1] * fwd, t0.position[2] + up];
+    let rotation: V = [...t0.rotation];
+    if (route) {
+      const r = route.at(fwd);
+      const gz = route.ground?.(r.x, r.y);
+      pos = [r.x, r.y, (gz ?? baseZ) + up];
+      rotation = [t0.rotation[0], t0.rotation[1], Math.round(((r.heading * 180) / Math.PI) * 100) / 100];
+    }
+    out.push({ type: 'setKeyframe', id: arm.id, frame, easing: 'linear', transform: { position: pos.map((x) => Math.round(x * 1e4) / 1e4) as V, rotation, scale: [...t0.scale] } });
     if (g === total) break;
   }
   return out;
