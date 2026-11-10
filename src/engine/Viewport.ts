@@ -1591,6 +1591,17 @@ export class Viewport {
    * and a README with the exact import numbers.
    */
   async exportRoblox(ids?: Set<string>) {
+    // The scene doesn't need to be drawn while exporting: pause rendering so the work
+    // (serialising, splitting, texture encoding) gets the whole device.
+    this.engine.stopRenderLoop();
+    try {
+      return await this.buildRobloxPack(ids);
+    } finally {
+      this.engine.runRenderLoop(() => this.scene.render());
+    }
+  }
+
+  private async buildRobloxPack(ids?: Set<string>) {
     const doc = this.store.getState().doc;
     const terrains = Object.values(doc.objects).filter((o) => o.terrain && o.mesh && (!ids || ids.has(o.id)));
     const waters = Object.values(doc.objects).filter((o) => o.water && o.mesh && (!ids || ids.has(o.id)));
