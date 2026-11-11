@@ -10,6 +10,7 @@ import { animationOf, keyFrames } from '../core/animation';
 import { loadFont } from '../engine/fonts';
 import { bakePhysics, freePhysics } from './physicsUi';
 import { FIELD_PRESETS } from '../core/fields';
+import { canQuick, quickExplode, quickFloat, quickParticles } from './quickEffects';
 import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit, togglePose } from './editing';
 import { poseAt } from '../core/rig';
 import { subtree } from '../core/commands';
@@ -444,6 +445,10 @@ export const actions = {
     label: 'Free Physics Bake',
     run: (c) => freePhysics(c.store),
   },
+  'quick.explode': { id: 'quick.explode', label: 'Quick Explode', enabled: (c) => canQuick(c.store), run: (c) => void quickExplode(c.store) },
+  'quick.fire': { id: 'quick.fire', label: 'Quick Fire', enabled: (c) => canQuick(c.store), run: (c) => quickParticles(c.store, 'fire') },
+  'quick.smoke': { id: 'quick.smoke', label: 'Quick Smoke', enabled: (c) => canQuick(c.store), run: (c) => quickParticles(c.store, 'smoke') },
+  'quick.float': { id: 'quick.float', label: 'Quick Float (on water)', enabled: (c) => hasSel(c), run: (c) => quickFloat(c.store) },
   'add.field.blast': addField('blast'),
   'add.field.push': addField('push'),
   'add.field.wind': addField('wind'),

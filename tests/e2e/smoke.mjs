@@ -1013,6 +1013,37 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Quick Effects (v3.11): Object → Quick Effects → Quick Explode in one tap.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'crate', name: 'Crate', transform: { position: [0, 0, 1] } },
+      { type: 'setAnimation', start: 1, end: 60 },
+    ] });
+    s.select('crate');
+    s.setFrame(12);
+  });
+  await page.click('[data-menu="Object"]');
+  await page.hover('.menu-item:has-text("Quick Effects")');
+  await page.click('.menu [data-action="quick.explode"]');
+  await page.waitForFunction(() => Object.values(window.__b3d.store.getState().doc.objects).filter((o) => o.rigid?.type === 'active').length > 10, null, { timeout: 90000 });
+  const r = await page.evaluate(() => {
+    const d = window.__b3d.store.getState().doc;
+    const pieces = Object.values(d.objects).filter((o) => o.rigid?.type === 'active');
+    const flew = pieces.filter((o) => { const k = d.animation.tracks[o.id]; return k && Math.hypot(k[k.length - 1].transform.position[0], k[k.length - 1].transform.position[1]) > 1.5; }).length;
+    return { pieces: pieces.length, flew, ground: Object.values(d.objects).some((o) => o.rigid?.type === 'passive'), field: Object.values(d.objects).some((o) => o.field?.start === 12), shake: d.animation.shakes?.[0]?.start };
+  });
+  check('v3.11: Quick Explode fractures, blasts, bakes and shakes in one go', r.pieces >= 12 && r.flew > r.pieces / 2 && r.ground && r.field && r.shake === 12, JSON.stringify(r));
+  await page.keyboard.press('Control+z');
+  const undone = await page.evaluate(() => !!window.__b3d.store.getState().doc.objects.crate && Object.keys(window.__b3d.store.getState().doc.objects).length === 1);
+  check('v3.11: one undo removes the whole effect', undone);
+  check('v3.11: no errors (quick effects)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Animated rigid bodies (v3.10): a keyed passive paddle shoves an active box in the bake.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });

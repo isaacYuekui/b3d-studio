@@ -5,6 +5,10 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Quick Effects (v3.11)
+
+- **Object → Quick Effects** (also in the long-press menu), like Blender's: **Quick Explode** (breaks the object into pieces, blasts them apart at the current frame with a fireball and camera shake, adds a floor if needed, bakes — one undo removes it all), **Quick Fire**, **Quick Smoke**, **Quick Float** (adds a sea if there's none)
+
 ## Animated rigid bodies (v3.10)
 
 - Physics → Rigid body → Passive → **Animated (follows its keys)**: a keyframed object (wrecking ball, bulldozer, meteor) that smashes into active objects during the bake, like Blender's Animated option

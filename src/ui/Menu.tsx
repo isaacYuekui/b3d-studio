@@ -146,6 +146,7 @@ export const OBJECT_CONTEXT: MenuItem[] = [
   'mesh.smooth',
   'mesh.flat',
   { label: 'Modifiers', items: ['mod.mirrorX', 'mod.subdiv1', 'mod.subdiv2', 'mod.subdiv3', 'mod.subdiv0', 'mod.apply'] },
+  { label: 'Quick Effects', items: ['quick.explode', 'quick.fire', 'quick.smoke', 'quick.float'] },
   '-',
   'view.frameSelected',
   '-',
