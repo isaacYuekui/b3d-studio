@@ -422,11 +422,12 @@ export class Viewport {
   /** Water with wave height: a fine grid moved by Gerstner waves for this frame (Ocean modifier). */
   private syncOcean(state: AppState) {
     const doc = state.doc;
-    const t = state.frame / animationOf(doc).fps;
+    const fps = animationOf(doc).fps;
+    const t = state.frame / fps;
     for (const id of doc.order) {
       const o = doc.objects[id];
       const e = this.entries.get(id);
-      const want = !!o?.water && (o.water.height ?? 0) > 0 && !!o.mesh && e?.node instanceof Mesh;
+      const want = !!o?.water && ((o.water.height ?? 0) > 0 || !!o.water.surge) && !!o.mesh && e?.node instanceof Mesh;
       if (!want) {
         if (this.oceans.has(id)) {
           this.oceans.delete(id);
@@ -470,7 +471,7 @@ export class Viewport {
       const pos = new Float32Array(n * 3);
       for (let k = 0; k < n; k++) {
         const x = g.xy[k * 2], y = g.xy[k * 2 + 1];
-        const [dx, dy, dz] = oceanDisplace(x, y, t, w);
+        const [dx, dy, dz] = oceanDisplace(x, y, t, w, fps);
         // Blender (x, y, z) → Babylon (x, z, y)
         pos[k * 3] = x + dx;
         pos[k * 3 + 1] = dz;

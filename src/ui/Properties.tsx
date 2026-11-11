@@ -18,7 +18,8 @@ import { loadFont } from '../engine/fonts';
 import { RIGID_SHAPES, RIGID_TYPES } from '../core/physics';
 import { PARTICLE_PRESETS, PARTICLE_SHAPES } from '../core/particles';
 import type { ParticleSettings } from '../core/particles';
-import type { WaterSettings } from '../core/ocean';
+import type { Surge, WaterSettings } from '../core/ocean';
+import { DEFAULT_SURGE } from '../core/ocean';
 import { SHAKE_PRESETS } from '../core/shake';
 import type { RigidBody } from '../core/physics';
 import { bakePhysics, freePhysics } from './physicsUi';
@@ -1052,7 +1053,7 @@ function WaterSection({ id }: { id: string }) {
   const { store } = useCtx();
   const w = useApp((s) => s.doc.objects[id].water)!;
   const set = (water: Partial<WaterSettings>) => store.dispatch({ type: 'setWater', id, water }, { select: false });
-  const field = (key: keyof WaterSettings, label: string, lo: number, hi: number, step: number, suffix: string) => (
+  const field = (key: 'waves' | 'speed' | 'height' | 'direction', label: string, lo: number, hi: number, step: number, suffix: string) => (
     <NumberField
       label={label}
       value={w[key] ?? 0}
@@ -1088,7 +1089,50 @@ function WaterSection({ id }: { id: string }) {
       {field('direction', 'Direction', -3600, 3600, 5, '°')}
       {field('speed', 'Ripple speed', 0, 20, 0.05, ' m/s')}
       <p className="prop-hint">Wave height moves the surface itself, frame by frame (like Blender's Ocean modifier): rolling swells for boats, storms and floods. Wave size sets how long they are. Calm water keeps just the ripples.</p>
+      <SurgeRows id={id} />
     </Section>
+  );
+}
+
+/** One giant travelling wave across the water (tsunami / surge). */
+function SurgeRows({ id }: { id: string }) {
+  const { store } = useCtx();
+  const w = useApp((s) => s.doc.objects[id].water)!;
+  const frame = useApp((s) => s.frame);
+  const g = w.surge;
+  const set = (surge: Surge | null) => store.dispatch({ type: 'setWater', id, water: { surge } }, { select: false });
+  const num = (key: keyof Surge, label: string, lo: number, hi: number, step: number, suffix: string, int = false) => (
+    <NumberField
+      label={label}
+      value={g![key]}
+      step={step}
+      dragRate={step / 10}
+      suffix={suffix}
+      onPreview={(v) => store.preview({ type: 'setWater', id, water: { surge: { ...g!, [key]: clampN(v, lo, hi, int) } } })}
+      onCommit={(v) => {
+        store.preview({ type: 'setWater', id, water: { surge: { ...g!, [key]: clampN(v, lo, hi, int) } } });
+        store.commitPreview();
+      }}
+      onCancel={() => store.cancelPreview()}
+    />
+  );
+  return (
+    <>
+      <label className="prop-row">
+        <span>Giant wave (tsunami)</span>
+        <input type="checkbox" data-testid="surge-toggle" checked={!!g} onChange={(e) => set(e.target.checked ? { ...DEFAULT_SURGE, start: frame } : null)} />
+      </label>
+      {g && (
+        <>
+          {num('height', 'Wave height', 0.1, 100, 0.5, ' m')}
+          {num('start', 'Starts at frame', -100000, 100000, 1, '', true)}
+          {num('speed', 'Speed', 0.1, 300, 1, ' m/s')}
+          {num('width', 'Length', 1, 1000, 1, ' m')}
+          {num('from', 'Starts from', -10000, 10000, 5, ' m')}
+          <p className="prop-hint">A single wall of water that runs across the sea in the Direction above, lifting and carrying anything that floats. It starts "Starts from" metres behind the centre — move it further back to see it come in.</p>
+        </>
+      )}
+    </>
   );
 }
 

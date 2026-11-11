@@ -1013,6 +1013,34 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Tsunami surge (v3.8): a giant wave crosses the water and lifts what floats.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'addWater', id: 'sea', size: [120, 40], level: 0, direction: 0 },
+      { type: 'add', primitive: 'cube', id: 'raft', name: 'Raft', transform: { position: [0, 0, 0], scale: [1, 1, 0.2] } },
+      { type: 'setFloat', id: 'raft', float: { offset: 0 } },
+    ] });
+    s.select('sea');
+    s.setFrame(1);
+  });
+  await page.click('[data-prop-tab="data"]');
+  await page.click('[data-testid="surge-toggle"]');
+  const surge = await page.evaluate(() => window.__b3d.store.getState().doc.objects.sea.water.surge);
+  const lift = await page.evaluate(() => {
+    const s = window.__b3d.store, raft = window.__b3d.viewport().entries.get('raft').node;
+    const at = (f) => { s.setFrame(f); return Math.round(raft.position.y * 100) / 100; };
+    const zs = [1, 40, 80, 100, 120].map(at);
+    return { zs, x: Math.round(raft.position.x * 100) / 100 };
+  });
+  check('v3.8: Giant wave lifts the floating raft as it passes and carries it along', surge?.height === 8 && Math.max(...lift.zs) > 4 && lift.zs[0] < 1 && lift.x > 1, JSON.stringify({ surge, lift }));
+  check('v3.8: no errors (tsunami)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Camera shake and floating on water (v3.7).
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });

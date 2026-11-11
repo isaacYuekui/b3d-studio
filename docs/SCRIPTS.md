@@ -286,6 +286,18 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   Exact per frame (time = frame / fps). The surface is up to ~40,000 vertices, so very large seas get
   coarser — keep the sea around the camera.
 
+## Tsunami / giant wave (v3.8)
+
+```json
+{"type":"setWater","id":"sea","water":{"surge":{"height":9,"start":24,"speed":14,"width":24,"from":-60}}}
+{"type":"setWater","id":"sea","water":{"surge":null}}
+```
+
+- `surge`: `height` (m above the sea), `start` (frame it sets off), `speed` (m/s), `width` (front-to-back
+  length, m), `from` (m along the water's `direction` from the water object's origin; negative = behind).
+  A sech² wall that leans forward a little. Floating objects (`setFloat`) are lifted and carried while
+  it passes, and stop at the water's edge. Combine with `addCameraShake` for the impact.
+
 ## Camera shake and floating (v3.7)
 
 ```json

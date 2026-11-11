@@ -5,6 +5,12 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Tsunami / giant wave (v3.8)
+
+- Water tab → **Giant wave (tsunami)**: one wall of water (height, speed, length, start frame) runs across the sea in the wave direction, lifting and carrying everything that floats. Run the water on under the land and the wave floods over the shore
+- New example: *Tsunami harbour* — boats lifted and swept to the quay while the camera shakes
+- Water is a surface, not a fluid simulation: no splashing or breaking, and floating objects pass through buildings
+
 ## Camera shake and floating (v3.7)
 
 - **Scene → Camera shake**: Impact, Explosion, Earthquake or Rumble at the current frame — a sharp jolt that dies away, seen through the scene camera and in videos (like a Noise modifier on the camera in Blender's Graph Editor)

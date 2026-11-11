@@ -20,7 +20,8 @@ import { DEFAULT_RIGID, RIGID_SHAPES, RIGID_TYPES, simulate } from './physics';
 import { fracturePieces } from './fracture';
 import { DEFAULT_PARTICLES, PARTICLE_GROUND, PARTICLE_SHAPES } from './particles';
 import type { ParticleSettings } from './particles';
-import type { FloatSettings, WaterSettings } from './ocean';
+import type { FloatSettings, Surge, WaterSettings } from './ocean';
+import { DEFAULT_SURGE } from './ocean';
 import type { CameraShake } from './shake';
 import type { RigidBody } from './physics';
 import type { FontId, TextAlign, TextData } from './text';
@@ -127,7 +128,7 @@ export type Command =
   /** Lake / sea / river surface: a flat plane at z = level with animated ripples. */
   | { type: 'addWater'; id: string; name?: string; size: [number, number]; level: number; position?: [number, number]; color?: string; clarity?: number; waves?: number; speed?: number; height?: number; direction?: number }
   /** Change a water surface: ripple size and speed, ocean wave height and direction. */
-  | { type: 'setWater'; id: string; water: Partial<WaterSettings> }
+  | { type: 'setWater'; id: string; water: Partial<Omit<WaterSettings, 'surge'>> & { surge?: Surge | null } }
   /** Sky, sun light, exposure and haze for a time of day; heading turns the sky so the sun shines from that azimuth (degrees). */
   | { type: 'setTimeOfDay'; time: TimeOfDay; heading?: number; fog?: number }
   | { type: 'setCamera'; position: Vec3; target: Vec3 }
@@ -894,7 +895,9 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
     case 'setWater': {
       const o = requireObj(doc, cmd.id);
       if (!o.water) throw new CommandError(`${o.name} isn't water (add water with Add → Water or addWater)`);
-      return { doc: withObject(doc, { ...o, water: { ...o.water, ...cmd.water } }), created: [] };
+      const water: WaterSettings = { ...o.water, ...(cmd.water as Partial<WaterSettings>) };
+      if (cmd.water.surge === null) delete water.surge;
+      return { doc: withObject(doc, { ...o, water }), created: [] };
     }
 
     case 'setTimeOfDay': {
@@ -1396,6 +1399,7 @@ export function validateSceneObject(raw: unknown): SceneObject {
     const w = v.water;
     if (!isRecord(w)) fail(`object ${v.id}: water invalid`);
     obj.water = validateWater(w, false) as WaterSettings;
+    if (obj.water.surge === null) delete obj.water.surge;
   }
   return obj;
 }
@@ -1439,10 +1443,17 @@ export function validateSceneDoc(v: unknown): SceneDoc {
 }
 
 /** Water settings; `partial` checks only the fields given. */
-export function validateWater(v: unknown, partial: boolean): Partial<WaterSettings> {
+export function validateWater(v: unknown, partial: boolean): Partial<Omit<WaterSettings, 'surge'>> & { surge?: Surge | null } {
   if (!isRecord(v)) fail('water must be an object');
-  const out: Partial<WaterSettings> = {};
-  for (const k of Object.keys(v)) if (!['waves', 'speed', 'height', 'direction'].includes(k)) fail(`water has no setting "${k}" (use waves, speed, height, direction)`);
+  const out: Partial<Omit<WaterSettings, 'surge'>> & { surge?: Surge | null } = {};
+  for (const k of Object.keys(v)) if (!['waves', 'speed', 'height', 'direction', 'surge'].includes(k)) fail(`water has no setting "${k}" (use waves, speed, height, direction, surge)`);
+  if (v.surge === null && partial) out.surge = null;
+  else if (v.surge !== undefined) {
+    const g = v.surge;
+    if (!isRecord(g)) fail('water.surge must be {height, start, speed, width, from} or null');
+    const pick = (k: keyof Surge, lo: number, hi: number, msg: string) => (g[k] === undefined ? DEFAULT_SURGE[k] : inRange(g[k], lo, hi) ? (g[k] as number) : fail(`water.surge.${k} must be ${msg}`));
+    out.surge = { height: pick('height', 0.1, 100, '0.1..100 m'), start: pick('start', -100000, 100000, 'a frame'), speed: pick('speed', 0.1, 300, '0.1..300 m/s'), width: pick('width', 1, 1000, '1..1000 m'), from: pick('from', -10000, 10000, 'metres') };
+  }
   if (v.waves !== undefined) out.waves = inRange(v.waves, 0.05, 50) ? (v.waves as number) : fail('water.waves must be 0.05..50 m');
   if (v.speed !== undefined) out.speed = inRange(v.speed, 0, 20) ? (v.speed as number) : fail('water.speed must be 0..20 m/s');
   if (v.height !== undefined) out.height = inRange(v.height, 0, 30) ? (v.height as number) : fail('water.height must be 0..30 m');

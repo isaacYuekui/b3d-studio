@@ -78,3 +78,35 @@ describe('float on water', () => {
     expect(() => applyCommand(doc, validateCommand({ type: 'setFloat', id: 'sea', float: { offset: 0 } }))).toThrow(/Water can't float/);
   });
 });
+
+describe('tsunami surge', () => {
+  it('a sech² wall that travels at its speed, from its start frame', async () => {
+    const { oceanDisplace } = await import('../src/core/ocean');
+    const w = { waves: 1, speed: 0, surge: { height: 10, start: 25, speed: 20, width: 20, from: -50 } };
+    // before it starts (frame 13 → t 0.5 s) it sits at −50
+    expect(oceanDisplace(-50, 0, 0.5, w)[2]).toBeCloseTo(10, 6);
+    expect(oceanDisplace(0, 0, 0.5, w)[2]).toBeLessThan(0.01);
+    // frame 25 is its start: 2 s later (t = 1 + 2 = 3 s) the crest is at −50 + 40 = −10
+    expect(oceanDisplace(-10, 0, 3, w)[2]).toBeCloseTo(10, 6);
+    expect(oceanDisplace(-10, 30, 3, w)[2]).toBeCloseTo(10, 6); // a straight front
+    expect(oceanDisplace(20, 0, 3, w)[2]).toBeLessThan(0.5);
+  });
+
+  it('carries floating objects along and validates', async () => {
+    const { floatTransform } = await import('../src/core/ocean');
+    let doc = createDefaultDoc();
+    doc = applyCommand(doc, validateCommand({ type: 'addWater', id: 'sea', size: [200, 60], level: 0 })).doc;
+    doc = applyCommand(doc, validateCommand({ type: 'setWater', id: 'sea', water: { surge: { height: 6, start: 1, speed: 15, width: 16, from: -60 } } })).doc;
+    doc = applyCommand(doc, validateCommand({ type: 'add', primitive: 'cube', id: 'boat', transform: { position: [-20, 0, 0] } })).doc;
+    doc = applyCommand(doc, validateCommand({ type: 'setFloat', id: 'boat', float: { offset: 0 } })).doc;
+    const at = (f: number) => floatTransform(doc, 'boat', f)!.position;
+    const peak = Math.max(...[30, 40, 50, 60, 70].map((f) => at(f)[2]));
+    expect(peak).toBeGreaterThan(3); // lifted by the wave
+    expect(at(120)[0]).toBeGreaterThan(-20 + 3); // and carried forward
+    expect(doc.objects.sea.water!.surge).toEqual({ height: 6, start: 1, speed: 15, width: 16, from: -60 });
+    expect(validateSceneDoc(JSON.parse(JSON.stringify(doc))).objects.sea.water!.surge).toEqual(doc.objects.sea.water!.surge);
+    doc = applyCommand(doc, validateCommand({ type: 'setWater', id: 'sea', water: { surge: null } })).doc;
+    expect(doc.objects.sea.water!.surge).toBeUndefined();
+    expect(() => validateCommand({ type: 'setWater', id: 'sea', water: { surge: { height: 500 } } })).toThrow(/surge.height/);
+  });
+});
