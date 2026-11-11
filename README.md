@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Graph Editor (v2.8)
+
+- **〰 Graph** (Timeline): the selected object's animation as curves — Location, Rotation, Scale X/Y/Z in red/green/blue, like Blender's F-curves. With nothing selected it shows the camera's (position and target)
+- Drag a key ● **up/down** to change that channel's value, **sideways** to retime the key; or tap it and type the value. **Interpolation** per key: Constant, Linear, Bézier (ease in & out), Ease in, Ease out
+- **Normalize** fits metres, degrees and scale on one graph; tap channel names to show or hide curves (only the ones that move show at first)
+- Keys hold every channel together, so retiming moves the whole key (Blender can move one channel's key alone); no Bézier handles yet
+
 ## Camera lens (v2.7)
 
 - **Camera** panel (Properties with nothing selected): focal length — 18, 24, 35, 50 (normal), 85, 135 mm or any value — like Blender's camera, on a 36 mm sensor

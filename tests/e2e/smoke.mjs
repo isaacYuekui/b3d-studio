@@ -974,6 +974,52 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Graph Editor (v2.8): curves per channel; drag a key up to change a value, sideways to retime.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'b', name: 'Bouncer' },
+      { type: 'setKeyframe', id: 'b', frame: 1, transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } },
+      { type: 'setKeyframe', id: 'b', frame: 25, transform: { position: [4, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } },
+      { type: 'setAnimation', start: 1, end: 60 },
+    ] });
+    s.select('b');
+  });
+  await page.click('[data-testid="tl-graph"]');
+  await page.waitForSelector('[data-testid="graph-svg"]');
+  const chans = await page.evaluate(() => ({ x: document.querySelector('[data-graph-ch="loc0"]').getAttribute('aria-pressed'), y: document.querySelector('[data-graph-ch="loc1"]').getAttribute('aria-pressed'), curves: document.querySelectorAll('[data-testid="graph-svg"] polyline').length }));
+  check('v2.8: Graph Editor shows the curve that moves (Location X), not the flat ones', chans.x === 'true' && chans.y === 'false' && chans.curves === 1, JSON.stringify(chans));
+  const key = async () => page.evaluate(() => window.__b3d.store.getState().doc.animation.tracks.b.map((k) => ({ f: k.frame, x: k.transform.position[0], y: k.transform.position[1], e: k.easing })));
+  let bb = await page.locator('[data-graph-key="loc0@25"]').boundingBox();
+  let cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(cx, cy - i * 5);
+  await page.mouse.up();
+  const up = await key();
+  check('v2.8: dragging a key up raises that channel only, in one undo step', up[1].f === 25 && up[1].x > 4.5 && up[1].y === 0, JSON.stringify(up));
+  await page.keyboard.press('Control+z');
+  const undone = await key();
+  bb = await page.locator('[data-graph-key="loc0@25"]').boundingBox();
+  cx = bb.x + bb.width / 2; cy = bb.y + bb.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(cx + i * 10, cy);
+  await page.mouse.up();
+  const moved = await key();
+  check('v2.8: undo restores it; dragging sideways retimes the key', undone[1].x === 4 && moved[1].f > 25 && moved[1].x === 4, JSON.stringify({ undone, moved }));
+  await page.selectOption('[data-testid="graph-easing"]', 'constant');
+  const eased = await key();
+  check('v2.8: the selected key gets Constant interpolation', eased.find((k) => k.f === moved[1].f)?.e === 'constant', JSON.stringify(eased));
+  await page.screenshot({ path: `${shots}/graph-editor.png` });
+  await page.click('[data-testid="tl-graph"]');
+  check('v2.8: no errors (graph editor)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Camera lens (v2.7): focal length and depth of field from the Camera panel.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 800 });
