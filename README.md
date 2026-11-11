@@ -5,6 +5,10 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Village walk example (v1.8)
+
+- Script → **Village walk (video)**: two villagers walk the paths at late afternoon, a follow camera trails one of them, then a crane shot rises over the village (25 s at 24 fps). Tap it, then File → Export Video
+
 ## Follow camera (v1.7)
 
 - `cameraMove` with `"move":"follow"` (third-person, behind the person) or `"track"` (side shot alongside them), `"on": "<person id>"`. The camera lags a touch like a real operator. Pair it with `walkPath` for walk-through videos
