@@ -11,5 +11,6 @@ export default defineConfig(({ mode }) => ({
     chunkSizeWarningLimit: 4000,
     target: 'es2020',
   },
-  test: { environment: 'node', include: ['tests/**/*.test.ts'] },
+  // quickhull3d ships extension-less ESM imports: let Vite resolve them in tests too.
+  test: { environment: 'node', include: ['tests/**/*.test.ts'], server: { deps: { inline: ['quickhull3d'] } } },
 }));

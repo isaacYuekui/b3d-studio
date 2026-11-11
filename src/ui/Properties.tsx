@@ -744,6 +744,7 @@ function PhysicsSection({ id }: { id: string }) {
     />
   );
   return (
+    <>
     <Section title="Physics" defaultOpen={!!r}>
       <label className="prop-row">
         <span>Rigid body</span>
@@ -765,7 +766,7 @@ function PhysicsSection({ id }: { id: string }) {
             <span>Shape</span>
             <select value={r.shape} onChange={(e) => set({ shape: e.target.value as RigidBody['shape'] })}>
               {RIGID_SHAPES.map((sh) => (
-                <option key={sh} value={sh}>{sh === 'auto' ? 'Auto (from the object)' : sh[0].toUpperCase() + sh.slice(1)}</option>
+                <option key={sh} value={sh}>{sh === 'auto' ? 'Auto (from the object)' : sh === 'hull' ? 'Convex hull' : sh[0].toUpperCase() + sh.slice(1)}</option>
               ))}
             </select>
           </label>
@@ -787,6 +788,49 @@ function PhysicsSection({ id }: { id: string }) {
           </p>
         </>
       )}
+    </Section>
+    <FractureSection id={id} />
+    </>
+  );
+}
+
+/** Cell Fracture: break the object into rigid pieces (Blender's Cell Fracture add-on). */
+function FractureSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const [pieces, setPieces] = useState(16);
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      await prepareBooleans();
+      store.dispatch({ type: 'fracture', id, pieces, seed: 1 + Math.floor(Math.random() * 9999) });
+    } catch {
+      store.notify("Couldn't load the fracture engine — check the connection and try again");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Section title="Fracture" defaultOpen={false}>
+      <div className="prop-row">
+        <span>Pieces</span>
+        <div className="seg-text" role="radiogroup" aria-label="Pieces">
+          {[8, 16, 32, 64].map((n) => (
+            <button key={n} role="radio" aria-checked={pieces === n} className={pieces === n ? 'active' : ''} data-pieces={n} onClick={() => setPieces(n)}>
+              {n}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="prop-actions">
+        <button className="btn primary" data-testid="fracture" disabled={busy} onClick={() => void run()}>
+          {busy ? 'Breaking…' : 'Break into pieces'}
+        </button>
+      </div>
+      <p className="prop-hint">
+        Splits the object into random chunks (Voronoi cells, like Blender's Cell Fracture), each an active rigid body with a convex-hull shape. Then add something to hit it and Bake physics. Needs a closed solid; one undo
+        puts it back.
+      </p>
     </Section>
   );
 }

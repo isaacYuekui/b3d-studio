@@ -9,6 +9,7 @@ import { transformAt } from './animation';
 import { applyModifiers } from './mesh/modifiers';
 import { primitiveMesh } from './mesh/primitives';
 import { m4ToQuat, quatToM4, rotEuler, toEuler } from './rig';
+import quickhull from 'quickhull3d';
 import type { MeshData, PrimitiveType, SceneDoc, SceneObject, Vec3 } from './types';
 import { PRIMITIVES } from './types';
 
@@ -28,14 +29,14 @@ export const registerPhysics = (m: Cannon) => void (C = m);
 export const isPhysicsLoaded = () => !!C;
 
 export const RIGID_TYPES = ['active', 'passive'] as const;
-export const RIGID_SHAPES = ['auto', 'box', 'sphere', 'cylinder'] as const;
+export const RIGID_SHAPES = ['auto', 'box', 'sphere', 'cylinder', 'hull'] as const;
 export type RigidType = (typeof RIGID_TYPES)[number];
 export type RigidShape = (typeof RIGID_SHAPES)[number];
 
 export interface RigidBody {
   /** Active: moved by the simulation. Passive: an obstacle that stays where it is. */
   type: RigidType;
-  /** Collision shape; auto = sphere for spheres, cylinder for cylinders and cones, else a box. */
+  /** Collision shape; auto = sphere for spheres, cylinder for cylinders and cones, else a box. Hull = the convex hull (Blender's default). */
   shape: RigidShape;
   /** kg (active only). */
   mass: number;
@@ -49,6 +50,8 @@ export interface RigidBody {
 
 export const DEFAULT_RIGID: RigidBody = { type: 'active', shape: 'auto', mass: 1, friction: 0.5, bounce: 0 };
 export const GRAVITY = 9.81;
+/** Physics steps per second, fixed whatever the frame rate (Blender: 10 substeps at 24 fps). */
+export const STEP_HZ = 240;
 
 export class PhysicsError extends Error {}
 
@@ -78,6 +81,48 @@ function unwrap(prev: Vec3 | null, e: Vec3): Vec3 {
   }) as Vec3;
 }
 
+/** Convex hull of the (scaled) geometry as a cannon shape; big meshes are thinned to 200 points first. */
+function hullShape(Cn: Cannon, geo: MeshData, s: Vec3): CannonNS.ConvexPolyhedron {
+  let pts = geo.vertices.map((v) => [v[0] * s[0], v[1] * s[1], v[2] * s[2]] as Vec3);
+  if (pts.length > 200) {
+    const step = pts.length / 200;
+    pts = Array.from({ length: 200 }, (_, i) => pts[Math.floor(i * step)]);
+  }
+  // Hull polygons (fewer faces and edges than triangles keep convex collisions fast), with
+  // corners on a straight line removed and each face turned outwards: cannon reads a face's
+  // normal from its first corners.
+  const cen = [0, 1, 2].map((k) => pts.reduce((a, p) => a + p[k], 0) / pts.length);
+  const cross = (o: Vec3, a: Vec3, b: Vec3) => {
+    const u = [a[0] - o[0], a[1] - o[1], a[2] - o[2]], v = [b[0] - o[0], b[1] - o[1], b[2] - o[2]];
+    return [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  };
+  const faces: number[][] = [];
+  for (const raw of quickhull(pts, { skipTriangulation: true })) {
+    let f = raw.filter((v, i) => {
+      const prev = raw[(i + raw.length - 1) % raw.length], next = raw[(i + 1) % raw.length];
+      const c = cross(pts[prev], pts[v], pts[next]);
+      return Math.hypot(c[0], c[1], c[2]) > 1e-10;
+    });
+    if (f.length < 3) continue;
+    let n = [0, 0, 0];
+    for (let i = 1; i < f.length - 1; i++) {
+      const c = cross(pts[f[0]], pts[f[i]], pts[f[i + 1]]);
+      n = [n[0] + c[0], n[1] + c[1], n[2] + c[2]];
+    }
+    const a = pts[f[0]];
+    if (n[0] * (a[0] - cen[0]) + n[1] * (a[1] - cen[1]) + n[2] * (a[2] - cen[2]) < 0) f = [...f].reverse();
+    faces.push(f);
+  }
+  // Only the points on the hull, re-indexed.
+  const used = [...new Set(faces.flat())];
+  const map = new Map(used.map((v, i) => [v, i]));
+  const poly = new Cn.ConvexPolyhedron({ vertices: used.map((i) => new Cn.Vec3(pts[i][0], pts[i][1], pts[i][2])), faces: faces.map((f) => f.map((v) => map.get(v)!)) });
+  // Separating-axis tests on face normals only (skipping every edge × edge pair): several times
+  // faster for piles of debris, at the cost of slightly early contacts at sharp edges.
+  poly.uniqueEdges = [];
+  return poly;
+}
+
 export interface BakeResult {
   /** New keys for each active body, frames start..end (stopping once it comes to rest). */
   tracks: Record<string, TransformKey[]>;
@@ -92,6 +137,9 @@ export function simulate(doc: SceneDoc, start: number, end: number, fps: number)
   (world.solver as CannonNS.GSSolver).iterations = 20;
   world.defaultContactMaterial.friction = 0.5;
   world.defaultContactMaterial.restitution = 0;
+  world.defaultContactMaterial.contactEquationStiffness = 1e8;
+  world.defaultContactMaterial.contactEquationRelaxation = 3;
+  world.defaultContactMaterial.frictionEquationStiffness = 1e8;
 
   const actives: { id: string; body: CannonNS.Body; scale: Vec3 }[] = [];
   let count = 0;
@@ -115,7 +163,8 @@ export function simulate(doc: SceneDoc, start: number, end: number, fps: number)
     const active = r.type === 'active';
     const body = new C.Body({ mass: active ? Math.max(0.001, r.mass) : 0, type: active ? C.Body.DYNAMIC : C.Body.STATIC, material });
     const shape = r.shape === 'auto' ? autoShape(o) : r.shape;
-    if (shape === 'sphere') body.addShape(new C.Sphere(Math.max(...half)), center);
+    if (shape === 'hull') body.addShape(hullShape(C, geo, s));
+    else if (shape === 'sphere') body.addShape(new C.Sphere(Math.max(...half)), center);
     else if (shape === 'cylinder') {
       // Cannon's cylinders run along Y; ours (Blender's) along Z.
       const q = new C.Quaternion();
@@ -158,7 +207,7 @@ export function simulate(doc: SceneDoc, start: number, end: number, fps: number)
   };
   record(start);
   // Fixed small steps (≈240 per second) keep stacks stable whatever the frame rate.
-  const sub = Math.max(1, Math.ceil(240 / fps));
+  const sub = Math.max(1, Math.ceil(STEP_HZ / fps));
   const dt = 1 / (fps * sub);
   for (let f = start + 1; f <= end; f++) {
     for (let i = 0; i < sub; i++) world.step(dt);

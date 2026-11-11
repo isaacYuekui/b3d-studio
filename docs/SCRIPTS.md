@@ -255,6 +255,19 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   linear keyframes for every active body, replacing its keys in that range. Bodies that come to
   rest stop getting keys (plus one at the end). Put it after the objects and their settings.
 
+## Cell Fracture (v3.3)
+
+```json
+{"type":"fracture","id":"wall","pieces":24,"seed":4}
+```
+
+- Replaces the object with about `pieces` (2–100) Voronoi chunks around random points inside it
+  (`seed` picks other points). Each chunk is a mesh object named "<name> piece N", with the same
+  material, its origin at its own centre, and an active rigid body with `shape: "hull"`; masses
+  share the original's mass by volume. Needs a closed solid. Follow with a moving object and
+  `bakePhysics`.
+- Rigid body `shape` can now be `hull` (convex hull of the object, at most 200 points).
+
 ## 3D text (v2.9)
 
 ```json

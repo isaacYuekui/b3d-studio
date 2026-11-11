@@ -983,6 +983,44 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Cell Fracture (v3.3): break a block into rigid pieces from the Physics tab, then bake.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'floor', name: 'Floor', transform: { position: [0, 0, -1], scale: [6, 6, 1] } },
+      { type: 'setRigidBody', id: 'floor', rigid: { type: 'passive' } },
+      { type: 'add', primitive: 'cube', id: 'block', name: 'Block', transform: { position: [0, 0, 2.5], rotation: [30, 20, 0], scale: [0.8, 0.8, 0.8] } },
+      { type: 'setAnimation', start: 1, end: 48 },
+    ] });
+    s.select('block');
+  });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('.prop-section-head:has-text("Fracture")');
+  await page.click('[data-pieces="8"]');
+  await page.click('[data-testid="fracture"]');
+  await page.waitForFunction(() => !window.__b3d.store.getState().doc.objects.block, null, { timeout: 60000 });
+  const pieces = await page.evaluate(() => Object.values(window.__b3d.store.getState().doc.objects).filter((o) => o.name.startsWith('Block piece')).map((o) => o.rigid?.shape));
+  check('v3.3: Break into pieces makes 8 rigid convex-hull pieces', pieces.length === 8 && pieces.every((x) => x === 'hull'), JSON.stringify(pieces));
+  await page.evaluate(() => window.__b3d.store.select(null));
+  await page.click('.prop-section-head:has-text("Physics")').catch(() => {});
+  await page.evaluate(async () => { await window.__b3d.prepare([{ type: 'bakePhysics' }]); window.__b3d.store.dispatch({ type: 'bakePhysics' }); });
+  const fell = await page.evaluate(() => {
+    const d = window.__b3d.store.getState().doc;
+    return Object.values(d.objects).filter((o) => o.name.startsWith('Block piece')).every((o) => { const k = d.animation.tracks[o.id]; return k && k[k.length - 1].transform.position[2] < 1.5; });
+  });
+  check('v3.3: baked pieces fall and land on the floor', fell);
+  await page.keyboard.press('Control+z');
+  await page.keyboard.press('Control+z');
+  const back = await page.evaluate(() => !!window.__b3d.store.getState().doc.objects.block);
+  check('v3.3: undo puts the block back in one piece', back);
+  await page.screenshot({ path: `${shots}/fracture.png` });
+  check('v3.3: no errors (fracture)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Wireframe shading (v3.2) and the What's new panel.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 800 });

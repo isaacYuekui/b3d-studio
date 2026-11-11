@@ -17,12 +17,13 @@ import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
 import { ALIGNS, DEFAULT_TEXT, FONTS, MAX_TEXT_LENGTH, textMesh } from './text';
 import { DEFAULT_RIGID, RIGID_SHAPES, RIGID_TYPES, simulate } from './physics';
+import { fracturePieces } from './fracture';
 import type { RigidBody } from './physics';
 import type { FontId, TextAlign, TextData } from './text';
 import { compact } from './mesh/topology';
 import { PATTERNS } from './patterns';
 import type { PatternType } from './patterns';
-import { apply as applyM4, invert as invertM4, mul as mulM4, worldMatrix } from './rig';
+import { apply as applyM4, invert as invertM4, mul as mulM4, rotEuler, worldMatrix } from './rig';
 import { EDIT_OPS, runEditSteps } from './mesh/script';
 import { DEFAULT_OUTFIT, HUMAN_PRESETS, humanPreset } from './humans';
 import { generateTerrain, scatterOn, terrainSample } from './terrain';
@@ -130,6 +131,8 @@ export type Command =
   | { type: 'setText'; id: string; text: Partial<TextData> }
   /** Rigid body settings for one object (null removes it from the simulation). */
   | { type: 'setRigidBody'; id: string; rigid: Partial<RigidBody> | null }
+  /** Cell Fracture: break an object into about `pieces` Voronoi pieces, each an active rigid body (convex hull). */
+  | { type: 'fracture'; id: string; pieces: number; seed?: number }
   /** Simulate the rigid bodies from start to end and write the result as keyframes (Bake to Keyframes). */
   | { type: 'bakePhysics'; start?: number; end?: number }
   /** Camera lens: focal length (mm), depth of field, f-stop, focus distance (m). null clears a setting. */
@@ -290,6 +293,45 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
         return { doc: withObject(doc, next), created: [] };
       }
       return { doc: withObject(doc, { ...o, rigid: { ...DEFAULT_RIGID, ...o.rigid, ...cmd.rigid } }), created: [] };
+    }
+
+    case 'fracture': {
+      const o = requireObj(doc, cmd.id);
+      const geo = o.type === 'mesh' && o.mesh ? applyModifiers(o.mesh, o.modifiers) : (PRIMITIVES as readonly string[]).includes(o.type) ? primitiveMesh(o.type as PrimitiveType, o.params) : null;
+      if (!geo) throw new CommandError(`${o.name}: only shapes and meshes can be fractured`);
+      let pieces;
+      try {
+        pieces = fracturePieces(geo, cmd.pieces, cmd.seed ?? 1, o.name);
+      } catch (e) {
+        throw new CommandError(e instanceof Error ? e.message : String(e));
+      }
+      if (pieces.length < 2) throw new CommandError(`${o.name} couldn't be broken up (is it a closed solid?)`);
+      const R = rotEuler(o.transform.rotation);
+      const sc = o.transform.scale;
+      const base = { ...DEFAULT_RIGID, ...o.rigid, type: 'active' as const, shape: 'hull' as const };
+      const ids: string[] = [];
+      const commands: Command[] = [];
+      pieces.forEach((pc, i) => {
+        let id = `${o.id}.${i + 1}`;
+        for (let k = 2; doc.objects[id] || ids.includes(id); k++) id = `${o.id}.${i + 1}.${k}`;
+        ids.push(id);
+        const off = applyM4(R, [pc.center[0] * sc[0], pc.center[1] * sc[1], pc.center[2] * sc[2]]);
+        const p = o.transform.position;
+        commands.push({
+          type: 'add',
+          primitive: 'mesh',
+          id,
+          name: `${o.name} piece ${i + 1}`,
+          mesh: pc.mesh,
+          material: o.material,
+          parentId: o.parentId,
+          transform: { position: [p[0] + off[0], p[1] + off[1], p[2] + off[2]].map((x) => Math.round(x * 1e5) / 1e5) as Vec3, rotation: [...o.transform.rotation], scale: [...sc] },
+        });
+        commands.push({ type: 'setRigidBody', id, rigid: { ...base, mass: Math.max(0.001, Math.round(base.mass * pc.share * 1000) / 1000) } });
+      });
+      commands.push({ type: 'delete', ids: [o.id] });
+      const r = applyCommand(doc, { type: 'batch', commands }, idGen);
+      return { doc: r.doc, created: ids };
     }
 
     case 'bakePhysics': {
@@ -1762,6 +1804,13 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (v.rigid === null) return { type: 'setRigidBody', id: v.id, rigid: null };
       if (!isRecord(v.rigid)) fail('setRigidBody needs rigid: {type?, shape?, mass?, friction?, bounce?, velocity?} or null');
       return { type: 'setRigidBody', id: v.id, rigid: validateRigid(v.rigid, true) };
+    case 'fracture': {
+      if (!isId(v.id)) fail('fracture needs id');
+      if (!(Number.isInteger(v.pieces) && inRange(v.pieces, 2, 100))) fail('fracture pieces must be a whole number 2..100');
+      const cmd: Extract<Command, { type: 'fracture' }> = { type: 'fracture', id: v.id, pieces: v.pieces as number };
+      if (v.seed !== undefined) cmd.seed = Number.isInteger(v.seed) && inRange(v.seed, 0, 99999) ? (v.seed as number) : fail('fracture seed must be a whole number 0..99999');
+      return cmd;
+    }
     case 'bakePhysics': {
       const cmd: Extract<Command, { type: 'bakePhysics' }> = { type: 'bakePhysics' };
       if (v.start !== undefined) cmd.start = isFrame(v.start) && Number.isInteger(v.start) ? v.start : fail('bakePhysics start must be a whole frame number');

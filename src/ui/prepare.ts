@@ -21,7 +21,7 @@ export async function prepareCommands(commands: unknown[]): Promise<void> {
     if (!c || typeof c !== 'object') return;
     const o = c as { type?: string; preset?: string; commands?: unknown[]; text?: { font?: unknown } };
     if (o.type === 'addHuman' && typeof o.preset === 'string') presets.add(o.preset);
-    if (o.type === 'boolean') needBooleans = true;
+    if (o.type === 'boolean' || o.type === 'fracture') needBooleans = true;
     if (o.type === 'bakePhysics') needPhysics = true;
     // setText without a font keeps the object's font; loading all three covers it (they're small).
     if (o.type === 'addText') fonts.add((FONTS as readonly unknown[]).includes(o.text?.font) ? (o.text!.font as FontId) : 'sans');

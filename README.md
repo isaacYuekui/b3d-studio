@@ -5,6 +5,12 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Cell Fracture (v3.3)
+
+- Physics tab → **Fracture → Break into pieces** (8 / 16 / 32 / 64): the object is split into random Voronoi chunks, each an active rigid body with a **convex hull** shape — Blender's Cell Fracture add-on plus rigid bodies in one step. Add something to hit it and **Bake physics**
+- New collision shape **Convex hull** (Blender's default) for any rigid body; convex collisions are now about 20× faster
+- New example: *Wall breach* — a fractured brick wall smashed by a wrecking ball
+
 ## Wireframe shading (v3.2)
 
 - **Wireframe** (first shading button, ⇧ Z): every polygon edge of shapes and meshes, see-through, selected object in orange — like Blender's wireframe mode. Library models show their triangles
