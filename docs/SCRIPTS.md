@@ -101,6 +101,11 @@ rejected and the error names the step.
 `loopcut {cuts, factor}` (through the first selected edge) · `subdivide` · `delete` · `merge` ·
 `mergeDistance {distance}` · `fill` · `flip` · `recalc` · `duplicate` · `move {by | along: "normal", distance}` ·
 `scale {by: number | [x,y,z], about}` · `rotate {by: [x°,y°,z°], about}` · `smooth {smooth}` · `select`.
+v2.6 adds: `dissolve` (in the select mode: faces merge into one, edges merge their two faces,
+vertices merge the faces around them) · `connect` (split faces between selected vertices, like J) ·
+`bridge` (two edge loops around holes, or two face patches → a band / tunnel) ·
+`smoothVerts {factor, repeat}` · `shrinkFatten {offset}` · `toSphere {factor}` · `triangulate` ·
+`trisToQuads {angle}` · `poke {offset}`.
 `move`, `scale` and `rotate` take `radius` for proportional editing (nearby vertices follow with a smooth falloff).
 
 Add `setModifiers` with `subdivision: {levels: 2}` after modelling for smooth, rounded results;
@@ -233,6 +238,53 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   its normals with smooth 3D noise. It runs after Subdivision, so subdivide for finer bumps.
 - Order in the stack: Mirror → Array → Solidify → Bevel → Subdivision → Displace (fixed; Blender
   lets you reorder). A patch changes only the settings you give, e.g. `{"array":{"count":12}}`.
+
+## Rigid body physics (v3.0)
+
+```json
+{"type":"setRigidBody","id":"floor","rigid":{"type":"passive","bounce":0.5}}
+{"type":"setRigidBody","id":"ball","rigid":{"mass":5,"bounce":0.8,"velocity":[6,0,2]}}
+{"type":"bakePhysics"}
+```
+
+- `rigid`: `type` (`active` falls and collides, `passive` stays put), `shape` (`auto`, `box`,
+  `sphere`, `cylinder`; auto picks from the object), `mass` (kg), `friction` and `bounce` (0–1;
+  the two surfaces' values multiply), `velocity` (starting m/s, an extension — Blender has none).
+  `null` removes it. Shapes and meshes only, not parented.
+- `bakePhysics {start?, end?}` (default: the animation range) simulates with gravity −Z and writes
+  linear keyframes for every active body, replacing its keys in that range. Bodies that come to
+  rest stop getting keys (plus one at the end). Put it after the objects and their settings.
+
+## 3D text (v2.9)
+
+```json
+{"type":"addText","id":"title","text":{"body":"THE END","font":"display","size":1.5,"depth":0.3},"material":{"baseColor":"#ffcc33","metallic":1,"roughness":0.25},"transform":{"position":[0,0,1]}}
+{"type":"setText","id":"title","text":{"body":"THE END?","align":"left"}}
+```
+
+- `text`: `body` (up to 500 characters; `\n` for new lines), `font` (`sans`, `serif`, `display`),
+  `size` (letter size in m, default 1), `depth` (thickness in m, default 0.2; 0 = flat),
+  `align` (`left`, `center` (default), `right`), `lineHeight` (default 1.2).
+- The text stands up facing −Y (towards the default front view) with its baseline at the object's
+  origin, unless `transform.rotation` is given. Letters the font lacks are left out (Latin only).
+- Any other change to its mesh (edit ops, sculpt, booleans, applying modifiers) makes it a plain
+  mesh, after which `setText` refuses.
+
+## Camera lens and depth of field (v2.7)
+
+```json
+{"type":"setLens","lens":{"focal":85,"dof":true,"fStop":1.4}}
+{"type":"setLens","lens":{"focus":4.5}}
+{"type":"setLens","lens":{"focal":null,"dof":null}}
+```
+
+- `focal` — focal length in mm on a 36 mm sensor, spanning the wider side of the picture (Blender's
+  defaults: Sensor 36 mm, Sensor Fit Auto). 50 mm ≈ the human eye, 85–135 mm portrait/telephoto,
+  18–24 mm wide. Without `focal`, the camera keeps the app's original wide view (≈ 24 mm in 16:9).
+- `dof` — depth of field on/off. `fStop` (default 2.8): lower blurs more. `focus` — focus distance in
+  metres; without it the camera focuses on its target, also while the camera moves.
+- Applies when looking through the scene camera in Rendered shading, and in videos. null clears a
+  setting. Not keyframed (one lens per scene).
 
 ## Editing keyframes (v2.1)
 

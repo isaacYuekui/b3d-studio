@@ -5,6 +5,39 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Rigid body physics (v3.0)
+
+- Properties → **Physics → Rigid body** (like Blender's Physics tab): **Active** objects fall and collide, **Passive** ones (floors, walls, ramps) stay put. Shape (auto / box / sphere / cylinder), mass, friction, bounciness
+- **Bake physics** (Physics panel or Animation menu) simulates the animation range and saves it as keyframes, so it plays, scrubs, shows in the Graph Editor and renders to video. **Free bake** removes them
+- New example: *Physics playground* — a wrecking ball, a plank tower, crates on a ramp and bouncy balls
+- Simplified shapes (boxes, spheres, cylinders — not exact mesh collisions); parented objects aren't simulated. Engine: cannon-es (MIT), loaded only when you bake
+
+## 3D text (v2.9)
+
+- **Add → Text**: standing 3D letters (Blender's Text object). In Properties → Text: type the words (several lines are fine), pick a font — Sans (Inter Bold), Serif (Playfair Display Bold) or Display (Bebas Neue) — size, thickness and alignment
+- Works with materials, modifiers (Bevel rounds the letter edges) and animation, so it's ready for video titles
+- Edit Mode or Sculpt turns it into a plain mesh, like Blender's Convert to Mesh. Fonts cover Latin letters, digits and punctuation for now
+- Fonts are bundled with the app under the SIL Open Font License
+
+## Graph Editor (v2.8)
+
+- **〰 Graph** (Timeline): the selected object's animation as curves — Location, Rotation, Scale X/Y/Z in red/green/blue, like Blender's F-curves. With nothing selected it shows the camera's (position and target)
+- Drag a key ● **up/down** to change that channel's value, **sideways** to retime the key; or tap it and type the value. **Interpolation** per key: Constant, Linear, Bézier (ease in & out), Ease in, Ease out
+- **Normalize** fits metres, degrees and scale on one graph; tap channel names to show or hide curves (only the ones that move show at first)
+- Keys hold every channel together, so retiming moves the whole key (Blender can move one channel's key alone); no Bézier handles yet
+
+## Camera lens (v2.7)
+
+- **Camera** panel (Properties with nothing selected): focal length — 18, 24, 35, 50 (normal), 85, 135 mm or any value — like Blender's camera, on a 36 mm sensor
+- **Depth of field**: f-stop (f/1.4 … f/11) and focus — on the camera's target (follows camera moves) or a set distance. Shows in Camera view with Rendered shading, and in videos
+
+## More Edit Mode tools (v2.6)
+
+- **Dissolve** (Mesh menu, Ctrl/⌘ X): removes vertices, edges or faces without leaving a hole — faces merge into one
+- **Connect Vertex Path** (J): cut a face between two selected vertices. **Bridge Edge Loops**: join two holes with a band of faces, or select two faces to punch a tunnel through
+- **Deform**: Smooth Vertices, Shrink/Fatten (⌥ S), To Sphere (⇧ ⌥ S). **Faces**: Poke, Triangulate (Ctrl/⌘ T), Tris to Quads (⌥ J)
+- Every tool has its settings in the Adjust Last Operation panel, and works in scripts (`editMesh`)
+
 ## More modifiers (v2.5)
 
 - Shape panel: **Array** (×2 to ×10, direction, gap, count), **Solidify** (thickness for flat surfaces), **Displace** (noise bumps; Low / Medium / High, bump size, New pattern)

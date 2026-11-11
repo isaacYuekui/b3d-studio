@@ -9,6 +9,7 @@ import { pickFile } from './actions';
 const EXAMPLES: { id: string; label: string; load: () => Promise<{ default: string }> }[] = [
   { id: 'materials', label: 'Materials showcase', load: () => import('../../examples/materials-showcase.b3d-script.json?raw') },
   { id: 'modifiers', label: 'Modifier garden', load: () => import('../../examples/modifier-garden.b3d-script.json?raw') },
+  { id: 'physics', label: 'Physics playground (video)', load: () => import('../../examples/physics-playground.b3d-script.json?raw') },
   { id: 'scout-mech', label: 'Scout mech (modelled)', load: () => import('../../examples/scout-mech.b3d-script.json?raw') },
   { id: 'village-walk', label: 'Village walk (video)', load: () => import('../../examples/village-walk.b3d-script.json?raw') },
   { id: 'village-valley', label: 'Village valley (Roblox-ready)', load: () => import('../../examples/village-valley.b3d-script.json?raw') },

@@ -12,9 +12,13 @@ import { DEFAULT_ANIMATION, EASINGS, animationOf, transformAt, upsertKey } from 
 import { KEY_OPS, editKeys as editKeysIn } from './dopesheet';
 import type { KeyOp, KeyRef } from './dopesheet';
 import type { Animation, Easing, PoseKey } from './animation';
-import type { ArmatureData, Bone, BonePose, Background, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
+import type { ArmatureData, Bone, BonePose, Background, CameraLens, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
+import { ALIGNS, DEFAULT_TEXT, FONTS, MAX_TEXT_LENGTH, textMesh } from './text';
+import { DEFAULT_RIGID, RIGID_SHAPES, RIGID_TYPES, simulate } from './physics';
+import type { RigidBody } from './physics';
+import type { FontId, TextAlign, TextData } from './text';
 import { compact } from './mesh/topology';
 import { PATTERNS } from './patterns';
 import type { PatternType } from './patterns';
@@ -120,6 +124,16 @@ export type Command =
   /** Sky, sun light, exposure and haze for a time of day; heading turns the sky so the sun shines from that azimuth (degrees). */
   | { type: 'setTimeOfDay'; time: TimeOfDay; heading?: number; fog?: number }
   | { type: 'setCamera'; position: Vec3; target: Vec3 }
+  /** 3D text: letters from a font, extruded (Blender's Add → Text). Stands up facing −Y unless a rotation is given. */
+  | { type: 'addText'; id?: string; name?: string; text: Partial<TextData> & { body: string }; transform?: Partial<Transform>; material?: Partial<Material>; parentId?: string | null }
+  /** Change a text object's words, font, size, thickness or alignment (rebuilds its mesh). */
+  | { type: 'setText'; id: string; text: Partial<TextData> }
+  /** Rigid body settings for one object (null removes it from the simulation). */
+  | { type: 'setRigidBody'; id: string; rigid: Partial<RigidBody> | null }
+  /** Simulate the rigid bodies from start to end and write the result as keyframes (Bake to Keyframes). */
+  | { type: 'bakePhysics'; start?: number; end?: number }
+  /** Camera lens: focal length (mm), depth of field, f-stop, focus distance (m). null clears a setting. */
+  | { type: 'setLens'; lens: { [K in keyof CameraLens]?: CameraLens[K] | null } }
   | { type: 'setKeyframe'; id: string; frame: number; transform?: Transform; easing?: Easing }
   | { type: 'deleteKeyframe'; id: string; frame: number }
   | { type: 'setCameraKey'; frame: number; position: Vec3; target: Vec3; easing?: Easing }
@@ -232,7 +246,79 @@ const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 // ---------------------------------------------------------------- apply
 
 export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = defaultIdGen): ApplyResult {
+  const r = applyCommandInner(doc, cmd, idGen);
+  if (r.doc === doc || cmd.type === 'setText' || cmd.type === 'addText' || cmd.type === 'batch') return r;
+  return { ...r, doc: dropStaleText(doc, r.doc) };
+}
+
+/** A text object whose mesh was changed by anything but setText is now a plain mesh (Blender: Convert to Mesh). */
+function dropStaleText(before: SceneDoc, after: SceneDoc): SceneDoc {
+  let objects = after.objects;
+  for (const [id, o] of Object.entries(after.objects)) {
+    if (!o.text || !before.objects[id] || before.objects[id].mesh === o.mesh) continue;
+    if (objects === after.objects) objects = { ...objects };
+    const rest = { ...o };
+    delete rest.text;
+    objects[id] = rest;
+  }
+  return objects === after.objects ? after : { ...after, objects };
+}
+
+function buildText(t: TextData): MeshData {
+  try {
+    return textMesh(t);
+  } catch (e) {
+    throw new CommandError(e instanceof Error ? e.message : String(e));
+  }
+}
+
+function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResult {
   switch (cmd.type) {
+    case 'addText': {
+      const t: TextData = { ...DEFAULT_TEXT, ...cmd.text };
+      const r = applyCommand(doc, { type: 'add', primitive: 'mesh', id: cmd.id, name: cmd.name ?? 'Text', mesh: buildText(t), parentId: cmd.parentId, material: cmd.material, transform: { rotation: [90, 0, 0], ...cmd.transform } }, idGen);
+      const id = r.created[0];
+      return { doc: withObject(r.doc, { ...r.doc.objects[id], text: t }), created: r.created };
+    }
+
+    case 'setRigidBody': {
+      const o = requireObj(doc, cmd.id);
+      if (o.type !== 'mesh' && !(PRIMITIVES as readonly string[]).includes(o.type)) throw new CommandError(`${o.name}: only shapes and meshes can be rigid bodies`);
+      if (cmd.rigid === null) {
+        const next = { ...o };
+        delete next.rigid;
+        return { doc: withObject(doc, next), created: [] };
+      }
+      return { doc: withObject(doc, { ...o, rigid: { ...DEFAULT_RIGID, ...o.rigid, ...cmd.rigid } }), created: [] };
+    }
+
+    case 'bakePhysics': {
+      const a = animationOf(doc);
+      const start = cmd.start ?? a.start, end = cmd.end ?? a.end;
+      if (end <= start) throw new CommandError('The bake needs an end frame after the start frame');
+      if (end - start > 10000) throw new CommandError('Bake at most 10,000 frames at a time');
+      let res;
+      try {
+        res = simulate(doc, start, end, a.fps);
+      } catch (e) {
+        throw new CommandError(e instanceof Error ? e.message : String(e));
+      }
+      if (!Object.keys(res.tracks).length) throw new CommandError('No active rigid bodies: turn on Physics → Rigid body (Active) for the objects that should fall');
+      const tracks = { ...a.tracks };
+      for (const [id, keys] of Object.entries(res.tracks)) {
+        const keep = (tracks[id] ?? []).filter((k) => k.frame < start || k.frame > end);
+        tracks[id] = [...keep, ...keys].sort((x, y) => x.frame - y.frame);
+      }
+      return { doc: withAnimation(doc, { ...a, tracks }), created: [] };
+    }
+
+    case 'setText': {
+      const o = requireObj(doc, cmd.id);
+      if (!o.text) throw new CommandError(`${o.name} isn't a text object (it was turned into a mesh)`);
+      const t: TextData = { ...o.text, ...cmd.text };
+      return { doc: withObject(doc, { ...o, text: t, mesh: buildText(t) }), created: [] };
+    }
+
     case 'add': {
       if (cmd.parentId) requireObj(doc, cmd.parentId);
       if (cmd.id !== undefined && doc.objects[cmd.id]) throw new CommandError(`Id already in use: ${cmd.id}`);
@@ -755,6 +841,17 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
     case 'setCamera':
       return { doc: { ...doc, camera: { position: [...cmd.position], target: [...cmd.target] } }, created: [] };
 
+    case 'setLens': {
+      const lens: Record<string, unknown> = { ...doc.lens };
+      for (const [k, v] of Object.entries(cmd.lens)) {
+        if (v === null) delete lens[k];
+        else if (v !== undefined) lens[k] = v;
+      }
+      const next: SceneDoc = { ...doc, lens: lens as CameraLens };
+      if (!Object.keys(lens).length) delete next.lens;
+      return { doc: next, created: [] };
+    }
+
     case 'setKeyframe': {
       requireObj(doc, cmd.id);
       const anim = animationOf(doc);
@@ -1163,6 +1260,8 @@ export function validateSceneObject(raw: unknown): SceneObject {
   if (v.params !== undefined) obj.params = validateParams(v.params);
   if (obj.type === 'mesh') obj.mesh = validateMeshData(v.mesh);
   if (obj.type === 'mesh' && v.modifiers !== undefined) obj.modifiers = validateModifiers(v.modifiers);
+  if (obj.type === 'mesh' && v.text !== undefined) obj.text = validateText(v.text, false) as TextData;
+  if (v.rigid !== undefined && (obj.type === 'mesh' || (PRIMITIVES as readonly string[]).includes(obj.type))) obj.rigid = validateRigid(v.rigid, false) as RigidBody;
   if (obj.type === 'light') obj.light = { ...DEFAULT_LIGHT.point, ...validateLight(v.light, false) } as LightData;
   if (obj.type === 'model') obj.asset = typeof v.asset === 'string' && ASSET_ID.test(v.asset) ? v.asset : fail(`object ${v.id}: asset invalid`);
   if (obj.type === 'armature') {
@@ -1222,7 +1321,64 @@ export function validateSceneDoc(v: unknown): SceneDoc {
     if (!isRecord(c) || !isVec3(c.position) || !isVec3(c.target)) fail('camera needs position and target [x,y,z]');
     doc.camera = { position: [...c.position], target: [...c.target] };
   }
+  if (v.lens !== undefined) {
+    const lens = validateLens(v.lens, false) as CameraLens;
+    if (Object.keys(lens).length) doc.lens = lens;
+  }
   return doc;
+}
+
+/** Rigid body settings; `partial` checks only the fields given. */
+export function validateRigid(v: unknown, partial: boolean): Partial<RigidBody> {
+  if (!isRecord(v)) fail('rigid must be an object');
+  const out: Partial<RigidBody> = {};
+  for (const k of Object.keys(v)) if (!['type', 'shape', 'mass', 'friction', 'bounce', 'velocity'].includes(k)) fail(`rigid has no setting "${k}" (use type, shape, mass, friction, bounce, velocity)`);
+  if (v.type !== undefined) out.type = (RIGID_TYPES as readonly unknown[]).includes(v.type) ? (v.type as RigidBody['type']) : fail(`rigid.type must be one of ${RIGID_TYPES.join(', ')}`);
+  if (v.shape !== undefined) out.shape = (RIGID_SHAPES as readonly unknown[]).includes(v.shape) ? (v.shape as RigidBody['shape']) : fail(`rigid.shape must be one of ${RIGID_SHAPES.join(', ')}`);
+  if (v.mass !== undefined) out.mass = inRange(v.mass, 0.001, 100000) ? (v.mass as number) : fail('rigid.mass must be 0.001..100000 kg');
+  if (v.friction !== undefined) out.friction = inRange(v.friction, 0, 1) ? (v.friction as number) : fail('rigid.friction must be 0..1');
+  if (v.bounce !== undefined) out.bounce = inRange(v.bounce, 0, 1) ? (v.bounce as number) : fail('rigid.bounce must be 0..1');
+  if (v.velocity !== undefined) out.velocity = isVec3In(v.velocity, 1000) ? ([...v.velocity] as Vec3) : fail('rigid.velocity must be [x, y, z] m/s, each -1000..1000');
+  if (!partial) return { ...DEFAULT_RIGID, ...out };
+  return out;
+}
+
+/** Text settings; `partial` checks only the fields given. */
+export function validateText(v: unknown, partial: boolean): Partial<TextData> {
+  if (!isRecord(v)) fail('text must be an object');
+  const out: Partial<TextData> = {};
+  for (const k of Object.keys(v)) if (!['body', 'font', 'size', 'depth', 'align', 'lineHeight'].includes(k)) fail(`text has no setting "${k}" (use body, font, size, depth, align, lineHeight)`);
+  if (v.body !== undefined) {
+    if (typeof v.body !== 'string' || !v.body.trim() || v.body.length > MAX_TEXT_LENGTH) fail(`text.body must be 1..${MAX_TEXT_LENGTH} characters`);
+    out.body = v.body;
+  }
+  if (v.font !== undefined) out.font = (FONTS as readonly unknown[]).includes(v.font) ? (v.font as FontId) : fail(`text.font must be one of ${FONTS.join(', ')}`);
+  if (v.size !== undefined) out.size = inRange(v.size, 0.01, 100) ? (v.size as number) : fail('text.size must be 0.01..100 m');
+  if (v.depth !== undefined) out.depth = inRange(v.depth, 0, 100) ? (v.depth as number) : fail('text.depth must be 0..100 m');
+  if (v.align !== undefined) out.align = (ALIGNS as readonly unknown[]).includes(v.align) ? (v.align as TextAlign) : fail(`text.align must be one of ${ALIGNS.join(', ')}`);
+  if (v.lineHeight !== undefined) out.lineHeight = inRange(v.lineHeight, 0.5, 5) ? (v.lineHeight as number) : fail('text.lineHeight must be 0.5..5');
+  if (!partial) {
+    for (const k of ['body', 'font', 'size', 'depth', 'align'] as const) if (out[k] === undefined) fail(`text.${k} is missing`);
+  }
+  return out;
+}
+
+/** Lens settings; with `allowNull` (setLens), null clears a setting. Unknown keys are refused. */
+function validateLens(v: unknown, allowNull: boolean): Record<string, unknown> {
+  if (!isRecord(v)) fail('lens must be an object');
+  const spec: Record<string, [(x: unknown) => boolean, string]> = {
+    focal: [(x) => inRange(x, 1, 5000), 'focal must be 1..5000 mm'],
+    dof: [(x) => typeof x === 'boolean', 'dof must be true/false'],
+    fStop: [(x) => inRange(x, 0.5, 128), 'fStop must be 0.5..128'],
+    focus: [(x) => inRange(x, 0.01, 100000), 'focus must be 0.01..100000 m'],
+  };
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (!spec[k]) fail(`lens has no setting "${k}" (use focal, dof, fStop, focus)`);
+    if (x === null && allowNull) out[k] = null;
+    else if (x !== undefined) out[k] = spec[k][0](x) ? x : fail(`lens ${spec[k][1]}`);
+  }
+  return out;
 }
 
 const isFrame = (v: unknown): v is number => isNum(v) && v >= -100000 && v <= 1000000;
@@ -1585,6 +1741,39 @@ export function validateCommand(v: unknown, depth = 0): Command {
     case 'setCamera':
       if (!isVec3(v.position) || !isVec3(v.target)) fail('setCamera needs position and target as [x,y,z]');
       return { type: 'setCamera', position: [...v.position], target: [...v.target] };
+    case 'addText': {
+      if (!isRecord(v.text)) fail('addText needs text: {body, font?, size?, depth?, align?}');
+      const cmd: Extract<Command, { type: 'addText' }> = { type: 'addText', text: validateText(v.text, true) as TextData };
+      if (typeof cmd.text.body !== 'string') fail('addText needs text.body (the words)');
+      if (v.id !== undefined) cmd.id = typeof v.id === 'string' && REF_ID.test(v.id) ? v.id : fail('id may only use letters, digits, _ . - (max 64)');
+      if (v.name !== undefined) cmd.name = isStr(v.name, 100) ? v.name : fail('name invalid');
+      if (v.parentId !== undefined && v.parentId !== null) cmd.parentId = isId(v.parentId) ? v.parentId : fail('parentId invalid');
+      if (v.material !== undefined) cmd.material = validateMaterial(v.material, true);
+      if (v.transform !== undefined) {
+        if (!isRecord(v.transform)) fail('transform invalid');
+        const tr: Partial<Transform> = {};
+        for (const k of ['position', 'rotation', 'scale'] as const) if (v.transform[k] !== undefined) tr[k] = isVec3(v.transform[k]) ? ([...v.transform[k]] as Vec3) : fail(`transform.${k} must be [x,y,z]`);
+        cmd.transform = tr;
+      }
+      return cmd;
+    }
+    case 'setRigidBody':
+      if (!isId(v.id)) fail('setRigidBody needs id');
+      if (v.rigid === null) return { type: 'setRigidBody', id: v.id, rigid: null };
+      if (!isRecord(v.rigid)) fail('setRigidBody needs rigid: {type?, shape?, mass?, friction?, bounce?, velocity?} or null');
+      return { type: 'setRigidBody', id: v.id, rigid: validateRigid(v.rigid, true) };
+    case 'bakePhysics': {
+      const cmd: Extract<Command, { type: 'bakePhysics' }> = { type: 'bakePhysics' };
+      if (v.start !== undefined) cmd.start = isFrame(v.start) && Number.isInteger(v.start) ? v.start : fail('bakePhysics start must be a whole frame number');
+      if (v.end !== undefined) cmd.end = isFrame(v.end) && Number.isInteger(v.end) ? v.end : fail('bakePhysics end must be a whole frame number');
+      return cmd;
+    }
+    case 'setText':
+      if (!isId(v.id) || !isRecord(v.text)) fail('setText needs id and text: {body?, font?, size?, depth?, align?}');
+      return { type: 'setText', id: v.id, text: validateText(v.text, true) };
+    case 'setLens':
+      if (!isRecord(v.lens)) fail('setLens needs lens: {focal?, dof?, fStop?, focus?}');
+      return { type: 'setLens', lens: validateLens(v.lens, true) as Extract<Command, { type: 'setLens' }>['lens'] };
     case 'setKeyframe': {
       if (!isId(v.id) || !isFrame(v.frame)) fail('setKeyframe needs id and frame');
       if (v.easing !== undefined && !isEasing(v.easing)) fail(`easing must be one of ${EASINGS.join(', ')}`);

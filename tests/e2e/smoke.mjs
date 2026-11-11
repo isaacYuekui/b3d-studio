@@ -974,6 +974,212 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Rigid body physics (v3.0): turn on Rigid body, bake, the box falls and lands.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'floor', name: 'Floor', transform: { position: [0, 0, -0.5], scale: [6, 6, 0.5] } },
+      { type: 'setRigidBody', id: 'floor', rigid: { type: 'passive' } },
+      { type: 'add', primitive: 'cube', id: 'crate', name: 'Crate', transform: { position: [0, 0, 3], rotation: [20, 10, 0], scale: [0.5, 0.5, 0.5] } },
+      { type: 'setAnimation', start: 1, end: 72 },
+    ] });
+    s.select('crate');
+  });
+  await page.click('.prop-section-head:has-text("Physics")');
+  await page.click('[data-testid="rigid-toggle"]');
+  const rigid = await page.evaluate(() => window.__b3d.store.getState().doc.objects.crate.rigid);
+  check('v3.0: Physics → Rigid body makes the crate an active body', rigid?.type === 'active' && rigid.mass === 1, JSON.stringify(rigid));
+  await page.click('[data-testid="physics-bake"]');
+  await page.waitForFunction(() => (window.__b3d.store.getState().doc.animation?.tracks.crate?.length ?? 0) > 10, null, { timeout: 60000 });
+  const res = await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const keys = s.getState().doc.animation.tracks.crate;
+    s.setFrame(72);
+    return { n: keys.length, first: keys[0].transform.position[2], last: keys[keys.length - 1].transform.position[2], lastFrame: keys[keys.length - 1].frame, notice: s.getState().notice };
+  });
+  check('v3.0: Bake drops it onto the floor as keyframes', res.first === 3 && Math.abs(res.last - 0.5) < 0.08 && res.lastFrame === 72, JSON.stringify(res));
+  await page.waitForTimeout(500);
+  const node = await page.evaluate(() => window.__b3d.viewport().entries.get('crate').node.position.y);
+  check('v3.0: scrubbing to the end shows it resting on the floor', Math.abs(node - 0.5) < 0.08, String(node));
+  await page.screenshot({ path: `${shots}/physics.png` });
+  await page.click('[data-menu="Animation"]');
+  await page.click('.menu [data-action="physics.free"]');
+  const freed = await page.evaluate(() => !window.__b3d.store.getState().doc.animation?.tracks.crate);
+  check('v3.0: Free bake removes the keys', freed);
+  check('v3.0: no errors (physics)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// 3D text (v2.9): Add → Text, edit the words, change font; mesh edits convert it.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'delete', ids: [...s.getState().doc.order] });
+  });
+  await page.click('[data-menu="Add"]');
+  await page.click('.menu [data-action="add.text"]');
+  await page.waitForFunction(() => Object.values(window.__b3d.store.getState().doc.objects).some((o) => o.text), null, { timeout: 30000 });
+  const t0 = await page.evaluate(() => { const o = Object.values(window.__b3d.store.getState().doc.objects).find((x) => x.text); return { id: o.id, body: o.text.body, faces: o.mesh.faces.length, rot: o.transform.rotation }; });
+  check('v2.9: Add → Text makes standing 3D letters', t0.body === 'Text' && t0.faces > 50 && t0.rot[0] === 90, JSON.stringify(t0));
+  await page.fill('[data-testid="text-body"]', 'Hello B3D');
+  await page.click('.prop-section-head:has-text("Text")'); // blur the box (commits), closes the section
+  await page.click('.prop-section-head:has-text("Text")');
+  await page.selectOption('[data-testid="text-font"]', 'display');
+  await page.waitForFunction((id) => window.__b3d.store.getState().doc.objects[id].text.font === 'display', t0.id, { timeout: 30000 });
+  const t1 = await page.evaluate((id) => { const o = window.__b3d.store.getState().doc.objects[id]; return { body: o.text.body, font: o.text.font, faces: o.mesh.faces.length }; }, t0.id);
+  check('v2.9: typing new words and picking another font rebuilds the letters', t1.body === 'Hello B3D' && t1.font === 'display' && t1.faces > t0.faces, JSON.stringify(t1));
+  await page.evaluate(() => window.__b3d.viewport().frame(false));
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: `${shots}/text-3d.png` });
+  await page.keyboard.press('Control+z');
+  const t2 = await page.evaluate((id) => window.__b3d.store.getState().doc.objects[id].text, t0.id);
+  check('v2.9: undo steps back one text change', t2.font === 'sans' && t2.body === 'Hello B3D', JSON.stringify(t2));
+  await page.click('[data-testid="mode-toggle"]');
+  await page.keyboard.press('Alt+s');
+  await page.click('[data-testid="mode-toggle"]');
+  const t3 = await page.evaluate((id) => !!window.__b3d.store.getState().doc.objects[id].text, t0.id);
+  check('v2.9: editing the mesh turns the text into a plain mesh', t3 === false);
+  check('v2.9: no errors (text)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Graph Editor (v2.8): curves per channel; drag a key up to change a value, sideways to retime.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'b', name: 'Bouncer' },
+      { type: 'setKeyframe', id: 'b', frame: 1, transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } },
+      { type: 'setKeyframe', id: 'b', frame: 25, transform: { position: [4, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } },
+      { type: 'setAnimation', start: 1, end: 60 },
+    ] });
+    s.select('b');
+  });
+  await page.click('[data-testid="tl-graph"]');
+  await page.waitForSelector('[data-testid="graph-svg"]');
+  const chans = await page.evaluate(() => ({ x: document.querySelector('[data-graph-ch="loc0"]').getAttribute('aria-pressed'), y: document.querySelector('[data-graph-ch="loc1"]').getAttribute('aria-pressed'), curves: document.querySelectorAll('[data-testid="graph-svg"] polyline').length }));
+  check('v2.8: Graph Editor shows the curve that moves (Location X), not the flat ones', chans.x === 'true' && chans.y === 'false' && chans.curves === 1, JSON.stringify(chans));
+  const key = async () => page.evaluate(() => window.__b3d.store.getState().doc.animation.tracks.b.map((k) => ({ f: k.frame, x: k.transform.position[0], y: k.transform.position[1], e: k.easing })));
+  let bb = await page.locator('[data-graph-key="loc0@25"]').boundingBox();
+  let cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(cx, cy - i * 5);
+  await page.mouse.up();
+  const up = await key();
+  check('v2.8: dragging a key up raises that channel only, in one undo step', up[1].f === 25 && up[1].x > 4.5 && up[1].y === 0, JSON.stringify(up));
+  await page.keyboard.press('Control+z');
+  const undone = await key();
+  bb = await page.locator('[data-graph-key="loc0@25"]').boundingBox();
+  cx = bb.x + bb.width / 2; cy = bb.y + bb.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(cx + i * 10, cy);
+  await page.mouse.up();
+  const moved = await key();
+  check('v2.8: undo restores it; dragging sideways retimes the key', undone[1].x === 4 && moved[1].f > 25 && moved[1].x === 4, JSON.stringify({ undone, moved }));
+  await page.selectOption('[data-testid="graph-easing"]', 'constant');
+  const eased = await key();
+  check('v2.8: the selected key gets Constant interpolation', eased.find((k) => k.f === moved[1].f)?.e === 'constant', JSON.stringify(eased));
+  await page.screenshot({ path: `${shots}/graph-editor.png` });
+  await page.click('[data-testid="tl-graph"]');
+  check('v2.8: no errors (graph editor)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Camera lens (v2.7): focal length and depth of field from the Camera panel.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'sphere', id: 'near', name: 'Near', transform: { position: [0, -2, 1] } },
+      { type: 'add', primitive: 'cube', id: 'far', name: 'Far', transform: { position: [2, 8, 1] } },
+      { type: 'setCamera', position: [0, -9, 2], target: [0, -2, 1] },
+    ] });
+    s.select(null);
+  });
+  await page.click('.prop-section-head:has-text("Camera")');
+  await page.selectOption('[data-testid="lens-focal"]', '85');
+  await page.click('[data-testid="lens-dof"]');
+  await page.click('[data-fstop="1.4"]');
+  const lens = await page.evaluate(() => window.__b3d.store.getState().doc.lens);
+  check('v2.7: Camera panel sets an 85 mm lens with depth of field at f/1.4', lens?.focal === 85 && lens.dof === true && lens.fStop === 1.4, JSON.stringify(lens));
+  await page.evaluate(async () => {
+    const s = window.__b3d.store;
+    s.setShading('rendered');
+    window.__b3d.viewport().viewCamera();
+  });
+  await page.waitForTimeout(1200);
+  const cam = await page.evaluate(() => {
+    const vp = window.__b3d.viewport();
+    return { fov: vp.camera.fov, mode: vp.camera.fovMode, dof: vp.pipeline?.depthOfFieldEnabled, focus: vp.pipeline?.depthOfField.focusDistance, view: window.__b3d.store.getState().cameraView };
+  });
+  const want = 2 * Math.atan(18 / 85);
+  check('v2.7: through the camera the view is 85 mm across and focuses on the target', cam.view && Math.abs(cam.fov - want) < 1e-6 && cam.mode === 1 && cam.dof === true && Math.abs(cam.focus - 7071) < 5, JSON.stringify(cam));
+  await page.screenshot({ path: `${shots}/lens-dof.png` });
+  await page.evaluate(() => window.__b3d.store.setCameraView(false));
+  await page.waitForTimeout(300);
+  const free = await page.evaluate(() => ({ fov: window.__b3d.viewport().camera.fov, dof: window.__b3d.viewport().pipeline?.depthOfFieldEnabled }));
+  check('v2.7: the free viewport keeps its own view, without blur', Math.abs(free.fov - 0.8) < 1e-9 && !free.dof, JSON.stringify(free));
+  await page.evaluate(() => window.__b3d.store.setShading('solid'));
+  check('v2.7: no errors (lens)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// More Edit Mode tools (v2.6): connect, dissolve, triangulate / tris to quads, shrink/fatten.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'cube', id: 'c', name: 'Block' }] });
+    s.select('c');
+  });
+  await page.click('[data-testid="mode-toggle"]');
+  const faces = () => page.evaluate(() => window.__b3d.store.getState().doc.objects.c.mesh.faces.length);
+  // Two opposite corners of the top face, then J.
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const m = s.getState().doc.objects.c.mesh;
+    const top = m.faces.find((f) => f.every((v) => m.vertices[v][2] > 0.99));
+    s.setEdit({ ...s.getState().edit, mode: 'vert', sel: { verts: [top[0], top[2]], edges: [], faces: [] } });
+  });
+  await page.mouse.move(640, 400);
+  await page.keyboard.press('j');
+  const f1 = await faces();
+  check('v2.6: J connects two corners, splitting the face', f1 === 7, String(f1));
+  await page.keyboard.press('Control+x');
+  const f2 = await faces();
+  check('v2.6: Ctrl+X dissolves the new edge (faces merge back, no hole)', f2 === 6, String(f2));
+  await page.keyboard.press('3');
+  await page.keyboard.press('a');
+  await page.keyboard.press('Control+t');
+  const f3 = await faces();
+  await page.keyboard.press('Alt+j');
+  const f4 = await faces();
+  check('v2.6: Triangulate then Tris to Quads round-trips the cube', f3 === 12 && f4 === 6, `${f3} → ${f4}`);
+  const v0 = await page.evaluate(() => window.__b3d.store.getState().doc.objects.c.mesh.vertices[0].map(Math.abs));
+  await page.keyboard.press('a');
+  await page.keyboard.press('Alt+s');
+  const v1 = await page.evaluate(() => window.__b3d.store.getState().doc.objects.c.mesh.vertices[0].map(Math.abs));
+  const panel = await page.textContent('[data-testid="lastop"]').catch(() => '');
+  check('v2.6: Shrink/Fatten (Alt+S) pushes vertices out and shows its settings', v1[0] > v0[0] && /Shrink\/Fatten/.test(panel), JSON.stringify({ v0, v1, panel }));
+  await page.click('[data-menu="Mesh"]');
+  const inMenu = await page.isVisible('.menu [data-action="mesh.bridge"]');
+  await page.keyboard.press('Escape');
+  check('v2.6: Bridge Edge Loops and Dissolve are in the Mesh menu', inMenu);
+  await page.click('[data-testid="mode-toggle"]');
+  check('v2.6: no errors (edit tools 2)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // More modifiers (v2.5): Array, Solidify, Displace from the Shape panel.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 800 });

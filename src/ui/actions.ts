@@ -7,6 +7,8 @@ import { createDefaultDoc } from '../core/store';
 import { loadLocal, parseProject, saveLocal, serializeProject } from '../core/serialize';
 import type { LightType, ObjectType } from '../core/types';
 import { animationOf, keyFrames } from '../core/animation';
+import { loadFont } from '../engine/fonts';
+import { bakePhysics, freePhysics } from './physicsUi';
 import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit, togglePose } from './editing';
 import { poseAt } from '../core/rig';
 import { subtree } from '../core/commands';
@@ -312,6 +314,15 @@ export const actions = {
   'mesh.fill': meshOp('fill', 'Fill (Make Face)', 'F'),
   'mesh.flip': meshOp('flip', 'Flip Normals', '⌥ N'),
   'mesh.recalc': meshOp('recalc', 'Recalculate Normals', '⇧ N'),
+  'mesh.dissolve': meshOp('dissolve', 'Dissolve', `${MOD} X`),
+  'mesh.connect': meshOp('connect', 'Connect Vertex Path', 'J'),
+  'mesh.bridge': meshOp('bridge', 'Bridge Edge Loops'),
+  'mesh.smoothVerts': meshOp('smoothVerts', 'Smooth Vertices'),
+  'mesh.shrinkFatten': meshOp('shrinkFatten', 'Shrink/Fatten', '⌥ S'),
+  'mesh.toSphere': meshOp('toSphere', 'To Sphere', '⇧ ⌥ S'),
+  'mesh.triangulate': meshOp('triangulate', 'Triangulate Faces', `${MOD} T`),
+  'mesh.trisToQuads': meshOp('trisToQuads', 'Tris to Quads', '⌥ J'),
+  'mesh.poke': meshOp('poke', 'Poke Faces'),
   'mesh.separate': {
     id: 'mesh.separate',
     label: 'Separate Selection',
@@ -408,6 +419,29 @@ export const actions = {
   'add.torus': add('torus'),
   'add.capsule': add('capsule'),
   'add.empty': add('empty'),
+  'physics.bake': {
+    id: 'physics.bake',
+    label: 'Bake Rigid Body Physics',
+    run: (c) => void bakePhysics(c.store),
+  },
+  'physics.free': {
+    id: 'physics.free',
+    label: 'Free Physics Bake',
+    run: (c) => freePhysics(c.store),
+  },
+  'add.text': {
+    id: 'add.text',
+    label: 'Text',
+    run: async (c) => {
+      try {
+        await loadFont('sans');
+      } catch {
+        c.store.notify("Couldn't load the font — check the connection and try again");
+        return;
+      }
+      c.store.dispatch({ type: 'addText', text: { body: 'Text' } });
+    },
+  },
   'add.pointLight': addLight('point', 'Point'),
   'add.sunLight': addLight('sun', 'Sun'),
   'add.spotLight': addLight('spot', 'Spot'),
@@ -683,12 +717,16 @@ export function shortcutFor(e: KeyboardEvent, editMode = false): ActionId | null
     if (mod && !e.shiftKey) {
       if (k === 'b') return 'mesh.bevel';
       if (k === 'r') return 'mesh.loopcut';
+      if (k === 'x') return 'mesh.dissolve';
+      if (k === 't') return 'mesh.triangulate';
       if (k === 'i') return 'select.invert';
       if (k === 'l') return 'select.linked';
     }
     if (e.altKey && !mod) {
       if (code === 'KeyA') return 'select.none';
       if (code === 'KeyN') return 'mesh.flip';
+      if (code === 'KeyJ') return 'mesh.trisToQuads';
+      if (code === 'KeyS') return e.shiftKey ? 'mesh.toSphere' : 'mesh.shrinkFatten';
     }
     if (e.shiftKey && !mod && !e.altKey && code === 'KeyN') return 'mesh.recalc';
     if (!mod && !e.altKey && !e.shiftKey) {
@@ -705,6 +743,7 @@ export function shortcutFor(e: KeyboardEvent, editMode = false): ActionId | null
         case 'KeyL': return 'select.linked';
         case 'KeyO': return 'edit.proportional';
         case 'KeyP': return 'mesh.separate';
+        case 'KeyJ': return 'mesh.connect';
         case 'KeyH': return null;
       }
     }

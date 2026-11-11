@@ -110,13 +110,15 @@ export const ADD_ITEMS: MenuItem[] = [
   'file.importModel',
   '-',
   'add.cube', 'add.sphere', 'add.cylinder', 'add.cone', 'add.torus', 'add.capsule', 'add.plane',
-  '-', 'add.empty',
+  '-', 'add.text', 'add.empty',
   { label: 'Light', items: ['add.pointLight', 'add.sunLight', 'add.spotLight'] },
 ];
 
 export const MESH_ITEMS: MenuItem[] = [
-  'mesh.extrude', 'mesh.inset', 'mesh.bevel', 'mesh.loopcut', 'mesh.subdivide',
-  '-', 'edit.duplicate', 'mesh.fill', 'mesh.merge', 'mesh.mergeDistance', 'mesh.separate', 'edit.delete',
+  'mesh.extrude', 'mesh.inset', 'mesh.bevel', 'mesh.loopcut', 'mesh.subdivide', 'mesh.bridge', 'mesh.connect',
+  '-', 'edit.duplicate', 'mesh.fill', 'mesh.merge', 'mesh.mergeDistance', 'mesh.separate', 'edit.delete', 'mesh.dissolve',
+  { label: 'Deform', items: ['mesh.smoothVerts', 'mesh.shrinkFatten', 'mesh.toSphere'] },
+  { label: 'Faces', items: ['mesh.poke', 'mesh.triangulate', 'mesh.trisToQuads'] },
   '-', 'mesh.recalc', 'mesh.flip', 'mesh.smooth', 'mesh.flat',
   '-', 'mod.mirrorX', 'mod.subdiv1', 'mod.subdiv2', 'mod.subdiv0', 'mod.apply',
 ];
@@ -124,8 +126,9 @@ export const MESH_ITEMS: MenuItem[] = [
 export const SELECT_ITEMS: MenuItem[] = ['select.all', 'select.none', 'select.invert', '-', 'select.linked', 'select.loop', 'select.box', '-', 'select.vert', 'select.edge', 'select.face', '-', 'view.xray', 'edit.proportional', 'view.snap'];
 
 export const EDIT_CONTEXT: MenuItem[] = [
-  'mesh.extrude', 'mesh.inset', 'mesh.bevel', 'mesh.loopcut', 'mesh.subdivide',
-  '-', 'mesh.fill', 'mesh.merge', 'edit.delete',
+  'mesh.extrude', 'mesh.inset', 'mesh.bevel', 'mesh.loopcut', 'mesh.subdivide', 'mesh.bridge', 'mesh.connect',
+  '-', 'mesh.fill', 'mesh.merge', 'edit.delete', 'mesh.dissolve',
+  { label: 'Deform', items: ['mesh.smoothVerts', 'mesh.shrinkFatten', 'mesh.toSphere'] },
   '-', { label: 'Select', items: SELECT_ITEMS }, 'mode.object',
 ];
 

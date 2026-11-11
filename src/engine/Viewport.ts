@@ -6,6 +6,9 @@
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
+import { Camera } from '@babylonjs/core/Cameras/camera';
+import { DepthOfFieldEffectBlurLevel } from '@babylonjs/core/PostProcesses/depthOfFieldEffect';
+import { cameraFov, equivalentFocal } from '../core/lens';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { PointLight } from '@babylonjs/core/Lights/pointLight';
@@ -239,6 +242,7 @@ export class Viewport {
     });
 
     scene.onBeforeRenderObservable.add(() => this.stepTween());
+    scene.onBeforeRenderObservable.add(() => this.applyLens());
     scene.onBeforeRenderObservable.add(() => {
       if (!this.waters.size) return;
       const dt = Math.min(0.1, this.engine.getDeltaTime() / 1000);
@@ -304,6 +308,32 @@ export class Viewport {
   private recording = false;
   private quality(): Quality {
     return this.forceBest ? 'best' : this.store.getState().quality;
+  }
+
+  /**
+   * Through the scene camera, use its lens (focal length on a 36 mm sensor, depth of field);
+   * otherwise the viewport's own view. Runs every frame, so camera moves keep their focus.
+   */
+  private applyLens() {
+    const st = this.store.getState();
+    const lens = st.cameraView ? st.doc.lens : undefined;
+    const aspect = this.engine.getRenderWidth() / Math.max(1, this.engine.getRenderHeight());
+    const { fov, horizontal } = cameraFov(lens, aspect);
+    const mode = horizontal ? Camera.FOVMODE_HORIZONTAL_FIXED : Camera.FOVMODE_VERTICAL_FIXED;
+    if (this.camera.fov !== fov) this.camera.fov = fov;
+    if (this.camera.fovMode !== mode) this.camera.fovMode = mode;
+    const p = this.pipeline;
+    if (!p) return;
+    const q = this.quality();
+    const want = !!lens?.dof && q !== 'fast';
+    if (p.depthOfFieldEnabled !== want) p.depthOfFieldEnabled = want;
+    if (!want || !lens) return;
+    const level = q === 'best' ? DepthOfFieldEffectBlurLevel.High : DepthOfFieldEffectBlurLevel.Medium;
+    if (p.depthOfFieldBlurLevel !== level) p.depthOfFieldBlurLevel = level;
+    // Babylon's depth of field works in millimetres when scene units are metres.
+    p.depthOfField.focalLength = equivalentFocal(lens, aspect);
+    p.depthOfField.fStop = lens.fStop ?? 2.8;
+    p.depthOfField.focusDistance = (lens.focus ?? this.camera.radius) * 1000;
   }
   private animated = new Set<string>();
   private lastCameraView = false;
