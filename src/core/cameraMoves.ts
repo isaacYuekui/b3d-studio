@@ -5,7 +5,7 @@
 import type { SceneDoc, SceneObject, Vec3 } from './types';
 import { applyModifiers } from './mesh/modifiers';
 
-export const CAMERA_MOVES = ['orbit', 'dollyIn', 'dollyOut', 'flyover', 'crane', 'pan'] as const;
+export const CAMERA_MOVES = ['orbit', 'dollyIn', 'dollyOut', 'flyover', 'crane', 'pan', 'follow', 'track'] as const;
 export type CameraMoveKind = (typeof CAMERA_MOVES)[number];
 
 export interface CameraMoveParams {
@@ -65,6 +65,9 @@ export function sampleCameraMove(p: CameraMoveParams): CameraSample[] {
         const k = 0.75 + 0.25 * u;
         return { position: [tx + Math.cos(h0) * D * k, ty + Math.sin(h0) * D * k, tz + 0.6 + (H * 2.2 - 0.6) * u], target: [tx, ty, tz + 0.4 * (1 - u)] };
       }
+      case 'follow':
+      case 'track':
+        throw new Error('follow / track need a subject: use sampleFollow');
       case 'pan': {
         // The camera stays put; the view sweeps across.
         const a = h0 + Math.PI + rad(p.degrees ?? 60) * (u - 0.5);
@@ -182,4 +185,45 @@ export function liftOverObstacles(samples: CameraSample[], obstacles: Obstacle[]
   samples.forEach((s, i) => {
     if (smoothZ[i] > s.position[2] + 1e-6) s.position = [s.position[0], s.position[1], Math.round(smoothZ[i] * 1000) / 1000];
   });
+}
+
+// ---------------------------------------------------------------- following a moving subject
+
+/**
+ * Camera that follows an animated subject: `follow` stays behind it, `track` runs alongside
+ * (side shot). `subject(frame)` gives the subject's position and facing (rotation about Z in
+ * degrees; rigs face −Y). The camera lags a little behind (smoothed), which reads as a real
+ * operator rather than a camera bolted to the character.
+ */
+export function sampleFollow(
+  kind: 'follow' | 'track',
+  subject: (frame: number) => { position: Vec3; heading: number },
+  p: { start: number; end: number; distance?: number; height?: number; side?: number; lookHeight?: number },
+): CameraSample[] {
+  const D = p.distance ?? (kind === 'follow' ? 4 : 5);
+  const H = p.height ?? 1.6;
+  const look = p.lookHeight ?? 1.2;
+  const side = p.side ?? 1;
+  const out: CameraSample[] = [];
+  let cam: Vec3 | null = null;
+  let tgt: Vec3 | null = null;
+  const k = 0.18; // smoothing per frame
+  for (let f = p.start; f <= p.end; f++) {
+    const s = subject(f);
+    const h = (s.heading * Math.PI) / 180;
+    const fwd: Vec3 = [Math.sin(h), -Math.cos(h), 0]; // facing (−Y rotated)
+    const right: Vec3 = [-fwd[1], fwd[0], 0];
+    const want: Vec3 =
+      kind === 'follow'
+        ? [s.position[0] - fwd[0] * D + right[0] * 0.6, s.position[1] - fwd[1] * D + right[1] * 0.6, s.position[2] + H]
+        : [s.position[0] + right[0] * D * side + fwd[0] * 0.8, s.position[1] + right[1] * D * side + fwd[1] * 0.8, s.position[2] + H];
+    const wantT: Vec3 = [s.position[0] + fwd[0] * (kind === 'follow' ? 2 : 0.6), s.position[1] + fwd[1] * (kind === 'follow' ? 2 : 0.6), s.position[2] + look];
+    cam = cam ? (cam.map((c, i) => c + (want[i] - c) * k) as Vec3) : want;
+    tgt = tgt ? (tgt.map((c, i) => c + (wantT[i] - c) * (k * 1.5)) as Vec3) : wantT;
+    if ((f - p.start) % 2 === 0 || f === p.end) {
+      const r = (x: number) => Math.round(x * 1000) / 1000;
+      out.push({ frame: f, position: cam.map(r) as Vec3, target: tgt.map(r) as Vec3 });
+    }
+  }
+  return out;
 }

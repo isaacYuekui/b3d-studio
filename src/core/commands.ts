@@ -17,7 +17,7 @@ import { EDIT_OPS, runEditSteps } from './mesh/script';
 import { DEFAULT_OUTFIT, HUMAN_PRESETS, humanPreset } from './humans';
 import { generateTerrain, scatterOn, terrainSample } from './terrain';
 import { PLANT_KINDS, makePlant } from './plants';
-import { CAMERA_MOVES, liftOverObstacles, sampleCameraMove, sceneObstacles } from './cameraMoves';
+import { CAMERA_MOVES, liftOverObstacles, sampleCameraMove, sampleFollow, sceneObstacles } from './cameraMoves';
 import type { CameraMoveKind } from './cameraMoves';
 import { TIME_PRESETS, TIMES, rotationFor, skyAzimuth, sunRotation } from './sky';
 import type { TimeOfDay } from './sky';
@@ -605,9 +605,19 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       let target = cmd.target;
       if (!target && cmd.on) target = transformAt(doc, requireObj(doc, cmd.on).id, start)!.position;
       target ??= doc.camera?.target ?? [0, 0, 0];
-      const samples = sampleCameraMove({ move: cmd.move, target, start, end, distance: cmd.distance, height: cmd.height, heading: cmd.heading, degrees: cmd.degrees, smooth: cmd.smooth });
+      let samples: ReturnType<typeof sampleCameraMove>;
+      if (cmd.move === 'follow' || cmd.move === 'track') {
+        if (!cmd.on) throw new CommandError(`cameraMove ${cmd.move} needs "on": the id of the person or object to follow`);
+        const id = requireObj(doc, cmd.on).id;
+        // Rigs carry the motion; a skinned body follows its rig.
+        const src = doc.objects[id].skin?.armature ?? id;
+        samples = sampleFollow(cmd.move, (f) => {
+          const t = transformAt(doc, src, f)!;
+          return { position: t.position, heading: t.rotation[2] };
+        }, { start, end, distance: cmd.distance, height: cmd.height, side: (cmd.degrees ?? 90) < 0 ? -1 : 1 });
+      } else samples = sampleCameraMove({ move: cmd.move, target, start, end, distance: cmd.distance, height: cmd.height, heading: cmd.heading, degrees: cmd.degrees, smooth: cmd.smooth });
       // Fly over trees and houses rather than through them.
-      if (cmd.clearance !== false) liftOverObstacles(samples, sceneObstacles(doc).filter((ob) => Math.hypot(ob.x - target![0], ob.y - target![1]) > ob.r + 0.5)); // not what we're filming
+      if (cmd.clearance !== false && cmd.move !== 'follow' && cmd.move !== 'track') liftOverObstacles(samples, sceneObstacles(doc).filter((ob) => Math.hypot(ob.x - target![0], ob.y - target![1]) > ob.r + 0.5)); // not what we're filming
       // Never dip into a hill: keep the camera at least 2 m above any terrain under it.
       const grounds = Object.values(doc.objects).filter((o) => o.terrain);
       if (grounds.length)
