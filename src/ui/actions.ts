@@ -539,6 +539,12 @@ export const actions = {
     shortcut: 'Z',
     run: (c) => c.store.setShading(c.store.getState().shading === 'solid' ? 'rendered' : 'solid'),
   },
+  'view.wireframe': {
+    id: 'view.wireframe',
+    label: 'Toggle Wireframe',
+    shortcut: '⇧ Z',
+    run: (c) => c.store.setShading(c.store.getState().shading === 'wireframe' ? 'solid' : 'wireframe'),
+  },
 
   'view.front': view('front', 'Front', '1'),
   'view.back': view('back', 'Back', `${MOD} Numpad 1`),
@@ -770,6 +776,7 @@ export function shortcutFor(e: KeyboardEvent, editMode = false): ActionId | null
     return null;
   }
   if (e.shiftKey) {
+    if (code === 'KeyZ') return 'view.wireframe';
     if (code === 'KeyD') return 'edit.duplicate';
     if (code === 'KeyL') return 'add.library';
     if (code === 'ArrowLeft') return 'anim.toStart';

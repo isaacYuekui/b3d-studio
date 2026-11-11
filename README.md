@@ -5,6 +5,11 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Wireframe shading (v3.2)
+
+- **Wireframe** (first shading button, ⇧ Z): every polygon edge of shapes and meshes, see-through, selected object in orange — like Blender's wireframe mode. Library models show their triangles
+- A small **What's new** card lists new features once after an update
+
 ## Properties tabs (v3.1)
 
 - Properties is split into tabs like Blender's Properties editor: **Scene** (camera lens, physics, world), **Object** (transform, animation, parent), **Modifiers**, **Physics**, **Text / Light / Model / Armature** (the object's own data) and **Material**. Only the tabs an object has are shown; the last one you used stays open as you select other objects

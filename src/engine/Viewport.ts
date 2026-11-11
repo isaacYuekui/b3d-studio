@@ -49,7 +49,9 @@ import '@babylonjs/core/Rendering/geometryBufferRendererSceneComponent'; // SSAO
 
 import type { Store, AppState, ToolMode, Shading, Quality } from '../core/store';
 import type { Material as SceneMaterial, SceneObject, SceneDoc, Vec3, World } from '../core/types';
-import { isRenderable, worldOf } from '../core/types';
+import { PRIMITIVES, isRenderable, worldOf } from '../core/types';
+import type { PrimitiveType } from '../core/types';
+import { primitiveMesh } from '../core/mesh/primitives';
 import { catalogNow, hdriUrl, loadCatalog, modelUrl, textureUrl } from './library';
 import { evaluateCamera, evaluateTransform, transformEdit } from '../core/animation';
 import { guessUnitScale, isUserAsset, updateUserModelMeta, userModelMetaNow, userModelUrl } from './userModels';
@@ -98,6 +100,7 @@ interface Entry {
 }
 
 const SELECT_COLOR = new Color3(1, 0.55, 0.1); // Blender-like orange
+const WIRE_COLOR = new Color3(0.72, 0.74, 0.77);
 const BG = new Color4(0.235, 0.235, 0.235, 1);
 const HELPER_COLOR = new Color3(0.1, 0.1, 0.1);
 const MAX_SHADOW_LIGHTS = 2;
@@ -375,6 +378,10 @@ export class Viewport {
       if (g.rotationGizmo) g.rotationGizmo.snapDistance = state.snap ? Math.PI / 12 : 0;
       if (g.scaleGizmo) g.scaleGizmo.snapDistance = state.snap ? 0.1 : 0;
     }
+    if (state.shading === 'wireframe' || this.wire.size || this.wireMats.size) {
+      if (docChanged || state.shading !== this.lastWireShading || state.selection !== this.lastSel || state.edit?.id !== this.lastEdit?.id) this.syncWire(state);
+      this.lastWireShading = state.shading;
+    }
     const editKey = state.edit ? `${state.edit.id}|${state.edit.mode}|${state.xray}` : '';
     const editChanged = editKey !== this.lastEditKey || state.edit !== this.lastEdit || (state.edit && docChanged);
     if (editChanged) this.syncEdit(state, editKey !== this.lastEditKey);
@@ -394,6 +401,77 @@ export class Viewport {
 
   private lastEdit: AppState['edit'] = null;
   private lastPose: AppState['pose'] = null;
+
+  // ---------------------------------------------------------------- wireframe shading
+
+  private wire = new Map<string, { key: unknown[]; lines: LinesMesh }>();
+  private wireMats = new Set<{ wireframe: boolean }>();
+  private lastWireShading: AppState['shading'] = 'solid';
+
+  /**
+   * Wireframe shading (Blender's first shading mode): every polygon edge, seen through the model,
+   * with the surfaces hidden. Meshes and shapes draw their real edges; models, scatter and posed
+   * characters fall back to their triangles.
+   */
+  private syncWire(state: AppState) {
+    const on = state.shading === 'wireframe';
+    const doc = state.doc;
+    const keep = new Set<string>();
+    for (const [id, e] of this.entries) {
+      const o = doc.objects[id];
+      const surfaces = e.meshes;
+      if (!on || !o || !o.visible) {
+        for (const m of surfaces) m.visibility = 1;
+        continue;
+      }
+      const prim = (PRIMITIVES as readonly string[]).includes(o.type);
+      const ownEdges = (o.type === 'mesh' && o.mesh && !o.skin) || prim;
+      if (!ownEdges) {
+        for (const m of surfaces) {
+          const mat = m.material as { wireframe: boolean } | null;
+          if (mat && !mat.wireframe) {
+            mat.wireframe = true;
+            this.wireMats.add(mat);
+          }
+        }
+        continue;
+      }
+      for (const m of surfaces) m.visibility = 0;
+      if (state.edit?.id === id) continue; // the edit overlay draws the cage
+      const selected = state.selection === id;
+      const key = [o.mesh, o.modifiers, o.type, o.params, selected];
+      keep.add(id);
+      const prev = this.wire.get(id);
+      if (prev && prev.key.length === key.length && prev.key.every((k, i) => k === key[i])) continue;
+      prev?.lines.dispose();
+      const geo = o.type === 'mesh' ? applyModifiers(o.mesh!, o.modifiers) : primitiveMesh(o.type as PrimitiveType, o.params);
+      const seen = new Set<string>();
+      const lines: Vector3[][] = [];
+      const p = geo.vertices.map((v) => new Vector3(...toBabylonVec(v)));
+      for (const f of geo.faces)
+        for (let i = 0; i < f.length; i++) {
+          const a = f[i], b = f[(i + 1) % f.length];
+          const k = a < b ? `${a}_${b}` : `${b}_${a}`;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          lines.push([p[a], p[b]]);
+        }
+      const ls = MeshBuilder.CreateLineSystem(`${id}-wire`, { lines }, this.scene);
+      ls.color = selected ? SELECT_COLOR : WIRE_COLOR;
+      ls.isPickable = false;
+      ls.parent = e.node;
+      this.wire.set(id, { key, lines: ls });
+    }
+    for (const [id, w] of this.wire)
+      if (!keep.has(id)) {
+        w.lines.dispose();
+        this.wire.delete(id);
+      }
+    if (!on) {
+      for (const mat of this.wireMats) mat.wireframe = false;
+      this.wireMats.clear();
+    }
+  }
 
   // ---------------------------------------------------------------- armatures & skinning
 

@@ -43,7 +43,7 @@ const TOOLS: { mode: ToolMode; label: string; key: string; icon: () => ReactElem
   { mode: 'scale', label: 'Scale', key: 'S', icon: Icon.scale },
 ];
 
-const VIEW_ITEMS: MenuItem[] = ['view.shading', '-', 'view.camera', 'view.setCamera', '-', 'view.persp', 'view.front', 'view.back', 'view.right', 'view.left', 'view.top', 'view.bottom', '-', 'view.frameSelected', 'view.frameAll'];
+const VIEW_ITEMS: MenuItem[] = ['view.wireframe', 'view.shading', '-', 'view.camera', 'view.setCamera', '-', 'view.persp', 'view.front', 'view.back', 'view.right', 'view.left', 'view.top', 'view.bottom', '-', 'view.frameSelected', 'view.frameAll'];
 
 export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -340,6 +340,16 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
       </div>
 
       <div className="vp-nav">
+        <button
+          className={`tool-btn${shading === 'wireframe' ? ' active' : ''}`}
+          title="Wireframe shading: every edge, see-through (⇧ Z)"
+          aria-label="Wireframe shading"
+          aria-pressed={shading === 'wireframe'}
+          data-shading="wireframe"
+          onClick={() => ctx.store.setShading('wireframe')}
+        >
+          <Icon.wire />
+        </button>
         <button
           className={`tool-btn${shading === 'solid' ? ' active' : ''}`}
           title="Solid shading (Z)"

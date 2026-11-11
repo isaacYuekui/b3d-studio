@@ -983,6 +983,47 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Wireframe shading (v3.2) and the What's new panel.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'c', name: 'Box' },
+      { type: 'add', primitive: 'sphere', id: 's', name: 'Ball', transform: { position: [3, 0, 0] } },
+      { type: 'setModifiers', id: 's', modifiers: { subdivision: { levels: 1 } } },
+    ] });
+    s.select('c');
+    window.__b3d.viewport().frame(false);
+  });
+  await page.click('[data-shading="wireframe"]');
+  await page.waitForTimeout(400);
+  const w = await page.evaluate(() => {
+    const vp = window.__b3d.viewport();
+    const lines = vp.scene.meshes.filter((m) => m.name.endsWith('-wire'));
+    const cube = lines.find((m) => m.name === 'c-wire');
+    return { n: lines.length, cubeLines: cube?.getTotalIndices() / 2, surface: vp.entries.get('c').meshes[0].visibility, orange: cube?.color.r > 0.9 && cube?.color.g < 0.7 };
+  });
+  check('v3.2: Wireframe draws every polygon edge (12 for a cube), hides surfaces, selected in orange', w.n === 2 && w.cubeLines === 12 && w.surface === 0 && w.orange, JSON.stringify(w));
+  await page.screenshot({ path: `${shots}/wireframe.png` });
+  await page.keyboard.press('Shift+z');
+  await page.waitForTimeout(300);
+  const back = await page.evaluate(() => ({ shading: window.__b3d.store.getState().shading, lines: window.__b3d.viewport().scene.meshes.filter((m) => m.name.endsWith('-wire')).length, surface: window.__b3d.viewport().entries.get('c').meshes[0].visibility }));
+  check('v3.2: ⇧ Z goes back to Solid with the surfaces', back.shading === 'solid' && back.lines === 0 && back.surface === 1, JSON.stringify(back));
+  check('v3.2: no errors (wireframe)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+  // A returning user sees what's new once.
+  const p2 = await open({ width: 1024, height: 768 }, {});
+  await p2.page.goto(url + (url.includes('?') ? '&' : '?') + 'whatsnew=3.0');
+  await p2.page.waitForSelector('[data-testid="whatsnew"]');
+  const text = await p2.page.textContent('[data-testid="whatsnew"]');
+  await p2.page.click('[data-testid="whatsnew"] .btn');
+  const gone = !(await p2.page.isVisible('[data-testid="whatsnew"]'));
+  check("v3.2: What's new lists the changes since the last visit and closes", /v3\.2/.test(text) && /v3\.1/.test(text) && !/v3\.0/.test(text) && gone, text.slice(0, 120));
+  await p2.ctx.close();
+}
+
 // Properties tabs (v3.1): Blender-style tabs; only the ones the object has; remembered.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 800 });

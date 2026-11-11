@@ -16,6 +16,7 @@ import { Help } from './ui/Help';
 import { ScriptDialog } from './ui/ScriptDialog';
 import { LibraryDialog } from './ui/LibraryDialog';
 import { VideoDialog } from './ui/VideoDialog';
+import { WhatsNew } from './ui/WhatsNew';
 import { Icon } from './ui/icons';
 import { prepareCommands } from './ui/prepare';
 import { runAction, shortcutFor } from './ui/actions';
@@ -101,7 +102,7 @@ function StatusBar() {
   return (
     <footer className="statusbar" aria-live="polite">
       <span className="status-notice">{notice ?? `Tool: ${tool[0].toUpperCase()}${tool.slice(1)}`}</span>
-      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v3.1</span>
+      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v3.2</span>
     </footer>
   );
 }
@@ -111,6 +112,13 @@ function StatusBar() {
 type SheetTab = 'outliner' | 'properties' | 'timeline';
 
 export function App() {
+  const [hadSaved] = useState(() => {
+    try {
+      return !!localStorage.getItem('b3d-studio:autosave:v1');
+    } catch {
+      return false;
+    }
+  });
   const store = useMemo(() => {
     const saved = loadLocal();
     const s = new Store(saved ?? undefined);
@@ -269,6 +277,7 @@ export function App() {
           <StatusBar />
           {menu && <Menu {...menu} onClose={closeMenu} />}
           {help && <Help onClose={() => setHelp(false)} />}
+          <WhatsNew hasSavedWork={hadSaved} />
           {script && <ScriptDialog onClose={() => setScript(false)} />}
           {library && <LibraryDialog onClose={() => setLibrary(false)} />}
           {video && <VideoDialog onClose={() => setVideo(false)} />}

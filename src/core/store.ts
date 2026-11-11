@@ -15,7 +15,7 @@ export interface EditState {
 }
 
 export type ToolMode = 'select' | 'move' | 'rotate' | 'scale';
-export type Shading = 'solid' | 'rendered';
+export type Shading = 'wireframe' | 'solid' | 'rendered';
 
 export interface SculptState {
   id: string;
