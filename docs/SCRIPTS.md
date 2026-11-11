@@ -239,6 +239,22 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
 - Order in the stack: Mirror → Array → Solidify → Bevel → Subdivision → Displace (fixed; Blender
   lets you reorder). A patch changes only the settings you give, e.g. `{"array":{"count":12}}`.
 
+## Rigid body physics (v3.0)
+
+```json
+{"type":"setRigidBody","id":"floor","rigid":{"type":"passive","bounce":0.5}}
+{"type":"setRigidBody","id":"ball","rigid":{"mass":5,"bounce":0.8,"velocity":[6,0,2]}}
+{"type":"bakePhysics"}
+```
+
+- `rigid`: `type` (`active` falls and collides, `passive` stays put), `shape` (`auto`, `box`,
+  `sphere`, `cylinder`; auto picks from the object), `mass` (kg), `friction` and `bounce` (0–1;
+  the two surfaces' values multiply), `velocity` (starting m/s, an extension — Blender has none).
+  `null` removes it. Shapes and meshes only, not parented.
+- `bakePhysics {start?, end?}` (default: the animation range) simulates with gravity −Z and writes
+  linear keyframes for every active body, replacing its keys in that range. Bodies that come to
+  rest stop getting keys (plus one at the end). Put it after the objects and their settings.
+
 ## 3D text (v2.9)
 
 ```json

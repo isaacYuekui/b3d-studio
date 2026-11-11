@@ -15,13 +15,16 @@ import { FOCAL_PRESETS, FSTOP_PRESETS } from '../core/lens';
 import { ALIGNS, FONTS, FONT_LABEL, MAX_TEXT_LENGTH, isFontLoaded, missingChars } from '../core/text';
 import type { FontId, TextData } from '../core/text';
 import { loadFont } from '../engine/fonts';
+import { RIGID_SHAPES, RIGID_TYPES } from '../core/physics';
+import type { RigidBody } from '../core/physics';
+import { bakePhysics, freePhysics } from './physicsUi';
 import { prepareBooleans } from './prepare';
 import type { Quality } from '../core/store';
 import { PATTERNS } from '../core/patterns';
 import type { Pattern, PatternType } from '../core/patterns';
 import type { TimeOfDay } from '../core/sky';
 import { worldOf } from '../core/types';
-import { EASINGS, isAnimated, transformAt, transformEdit } from '../core/animation';
+import { EASINGS, animationOf, isAnimated, transformAt, transformEdit } from '../core/animation';
 import type { Easing } from '../core/animation';
 import type { Background } from '../core/types';
 import { canEdit, setSmooth, setSubdivision, togglePose } from './editing';
@@ -93,6 +96,7 @@ export function Properties() {
           <p className="prop-hint">Select an object in the viewport or Outliner to edit its properties.</p>
         </Section>
         <CameraSection />
+        <ScenePhysicsSection />
         <WorldSection />
       </div>
     );
@@ -197,6 +201,7 @@ export function Properties() {
 
       {o.text && <TextSection id={o.id} />}
       {canEdit(o) && <ModifiersSection id={o.id} />}
+      {canEdit(o) && <PhysicsSection id={o.id} />}
 
       {o.type === 'armature' && <PoseSection id={o.id} />}
 
@@ -663,6 +668,96 @@ function EditSection() {
         </div>
       )}
       <p className="prop-hint">Tap to select, Shift or the ⊞ button to add. Move with the gizmo, or use Extrude, Inset, Bevel, Loop Cut on the left.</p>
+    </Section>
+  );
+}
+
+/** Physics → Rigid Body for one object (Blender's Physics properties). */
+function PhysicsSection({ id }: { id: string }) {
+  const ctx = useCtx();
+  const { store } = ctx;
+  const o = useApp((s) => s.doc.objects[id]);
+  const r = o.rigid;
+  const set = (rigid: Partial<RigidBody> | null) => store.dispatch({ type: 'setRigidBody', id, rigid }, { select: false });
+  const num = (key: 'mass' | 'friction' | 'bounce', label: string, lo: number, hi: number, step: number, suffix = '') => (
+    <NumberField
+      label={label}
+      value={r![key]}
+      step={step}
+      dragRate={step / 10}
+      suffix={suffix}
+      onPreview={(v) => store.preview({ type: 'setRigidBody', id, rigid: { [key]: Math.max(lo, Math.min(hi, v)) } })}
+      onCommit={(v) => {
+        store.preview({ type: 'setRigidBody', id, rigid: { [key]: Math.max(lo, Math.min(hi, v)) } });
+        store.commitPreview();
+      }}
+      onCancel={() => store.cancelPreview()}
+    />
+  );
+  return (
+    <Section title="Physics" defaultOpen={!!r}>
+      <label className="prop-row">
+        <span>Rigid body</span>
+        <input type="checkbox" data-testid="rigid-toggle" checked={!!r} onChange={(e) => set(e.target.checked ? {} : null)} />
+      </label>
+      {r && (
+        <>
+          <div className="prop-row">
+            <span>Type</span>
+            <div className="seg-text" role="radiogroup" aria-label="Rigid body type">
+              {RIGID_TYPES.map((t) => (
+                <button key={t} role="radio" aria-checked={r.type === t} className={r.type === t ? 'active' : ''} data-rigid-type={t} onClick={() => set({ type: t })}>
+                  {t === 'active' ? 'Active (falls)' : 'Passive (stays)'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="prop-row">
+            <span>Shape</span>
+            <select value={r.shape} onChange={(e) => set({ shape: e.target.value as RigidBody['shape'] })}>
+              {RIGID_SHAPES.map((sh) => (
+                <option key={sh} value={sh}>{sh === 'auto' ? 'Auto (from the object)' : sh[0].toUpperCase() + sh.slice(1)}</option>
+              ))}
+            </select>
+          </label>
+          {r.type === 'active' && num('mass', 'Mass', 0.001, 100000, 0.5, ' kg')}
+          {num('friction', 'Friction', 0, 1, 0.05)}
+          {num('bounce', 'Bounciness', 0, 1, 0.05)}
+          {o.parentId && <p className="prop-hint warn">Parented objects aren't simulated — clear the parent first.</p>}
+          <div className="prop-actions">
+            <button className="btn primary" data-testid="physics-bake" onClick={() => void bakePhysics(store)}>
+              Bake physics
+            </button>
+            <button className="btn" onClick={() => freePhysics(store)}>
+              Free bake
+            </button>
+          </div>
+          <p className="prop-hint">
+            Active objects fall and collide; passive ones (floor, walls, ramps) stay put. Bake runs the simulation over the animation range and saves it as keyframes, so it plays, scrubs and goes into videos. Move things
+            and bake again to redo it.
+          </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** Scene-wide rigid body world: what will be simulated, and the bake. */
+function ScenePhysicsSection() {
+  const { store } = useCtx();
+  const doc = useApp((s) => s.doc);
+  const rigid = Object.values(doc.objects).filter((o) => o.rigid);
+  const active = rigid.filter((o) => o.rigid!.type === 'active').length;
+  const { start, end } = animationOf(doc);
+  return (
+    <Section title="Physics" defaultOpen={rigid.length > 0}>
+      <div className="prop-row"><span>Rigid bodies</span><b>{active} active · {rigid.length - active} passive</b></div>
+      <div className="prop-row"><span>Frames</span><b>{start}–{end}</b></div>
+      <div className="prop-actions">
+        <button className="btn primary" disabled={!active} onClick={() => void bakePhysics(store)}>Bake physics</button>
+        <button className="btn" disabled={!active} onClick={() => freePhysics(store)}>Free bake</button>
+      </div>
+      <p className="prop-hint">Gravity 9.81 m/s² down. Turn on Physics → Rigid body on each object first. Freeing the bake removes the keyframes of the active objects.</p>
     </Section>
   );
 }

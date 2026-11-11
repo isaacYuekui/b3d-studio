@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Rigid body physics (v3.0)
+
+- Properties → **Physics → Rigid body** (like Blender's Physics tab): **Active** objects fall and collide, **Passive** ones (floors, walls, ramps) stay put. Shape (auto / box / sphere / cylinder), mass, friction, bounciness
+- **Bake physics** (Physics panel or Animation menu) simulates the animation range and saves it as keyframes, so it plays, scrubs, shows in the Graph Editor and renders to video. **Free bake** removes them
+- New example: *Physics playground* — a wrecking ball, a plank tower, crates on a ramp and bouncy balls
+- Simplified shapes (boxes, spheres, cylinders — not exact mesh collisions); parented objects aren't simulated. Engine: cannon-es (MIT), loaded only when you bake
+
 ## 3D text (v2.9)
 
 - **Add → Text**: standing 3D letters (Blender's Text object). In Properties → Text: type the words (several lines are fine), pick a font — Sans (Inter Bold), Serif (Playfair Display Bold) or Display (Bebas Neue) — size, thickness and alignment

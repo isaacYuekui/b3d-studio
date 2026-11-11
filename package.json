@@ -20,6 +20,7 @@
     "@fontsource/bebas-neue": "^5.2.5",
     "@fontsource/inter": "^5.2.5",
     "@fontsource/playfair-display": "^5.2.5",
+    "cannon-es": "^0.20.0",
     "earcut": "^3.0.1",
     "fflate": "^0.8.3",
     "manifold-3d": "^3.5.4",

@@ -8,6 +8,7 @@ import { loadLocal, parseProject, saveLocal, serializeProject } from '../core/se
 import type { LightType, ObjectType } from '../core/types';
 import { animationOf, keyFrames } from '../core/animation';
 import { loadFont } from '../engine/fonts';
+import { bakePhysics, freePhysics } from './physicsUi';
 import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit, togglePose } from './editing';
 import { poseAt } from '../core/rig';
 import { subtree } from '../core/commands';
@@ -418,6 +419,16 @@ export const actions = {
   'add.torus': add('torus'),
   'add.capsule': add('capsule'),
   'add.empty': add('empty'),
+  'physics.bake': {
+    id: 'physics.bake',
+    label: 'Bake Rigid Body Physics',
+    run: (c) => void bakePhysics(c.store),
+  },
+  'physics.free': {
+    id: 'physics.free',
+    label: 'Free Physics Bake',
+    run: (c) => freePhysics(c.store),
+  },
   'add.text': {
     id: 'add.text',
     label: 'Text',

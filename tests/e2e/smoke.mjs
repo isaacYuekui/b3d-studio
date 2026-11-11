@@ -974,6 +974,45 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Rigid body physics (v3.0): turn on Rigid body, bake, the box falls and lands.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'floor', name: 'Floor', transform: { position: [0, 0, -0.5], scale: [6, 6, 0.5] } },
+      { type: 'setRigidBody', id: 'floor', rigid: { type: 'passive' } },
+      { type: 'add', primitive: 'cube', id: 'crate', name: 'Crate', transform: { position: [0, 0, 3], rotation: [20, 10, 0], scale: [0.5, 0.5, 0.5] } },
+      { type: 'setAnimation', start: 1, end: 72 },
+    ] });
+    s.select('crate');
+  });
+  await page.click('.prop-section-head:has-text("Physics")');
+  await page.click('[data-testid="rigid-toggle"]');
+  const rigid = await page.evaluate(() => window.__b3d.store.getState().doc.objects.crate.rigid);
+  check('v3.0: Physics → Rigid body makes the crate an active body', rigid?.type === 'active' && rigid.mass === 1, JSON.stringify(rigid));
+  await page.click('[data-testid="physics-bake"]');
+  await page.waitForFunction(() => (window.__b3d.store.getState().doc.animation?.tracks.crate?.length ?? 0) > 10, null, { timeout: 60000 });
+  const res = await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const keys = s.getState().doc.animation.tracks.crate;
+    s.setFrame(72);
+    return { n: keys.length, first: keys[0].transform.position[2], last: keys[keys.length - 1].transform.position[2], lastFrame: keys[keys.length - 1].frame, notice: s.getState().notice };
+  });
+  check('v3.0: Bake drops it onto the floor as keyframes', res.first === 3 && Math.abs(res.last - 0.5) < 0.08 && res.lastFrame === 72, JSON.stringify(res));
+  await page.waitForTimeout(500);
+  const node = await page.evaluate(() => window.__b3d.viewport().entries.get('crate').node.position.y);
+  check('v3.0: scrubbing to the end shows it resting on the floor', Math.abs(node - 0.5) < 0.08, String(node));
+  await page.screenshot({ path: `${shots}/physics.png` });
+  await page.click('[data-menu="Animation"]');
+  await page.click('.menu [data-action="physics.free"]');
+  const freed = await page.evaluate(() => !window.__b3d.store.getState().doc.animation?.tracks.crate);
+  check('v3.0: Free bake removes the keys', freed);
+  check('v3.0: no errors (physics)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // 3D text (v2.9): Add → Text, edit the words, change font; mesh edits convert it.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 800 });
