@@ -27,6 +27,7 @@ export const Icon = {
   script: () => <S><path d="M5 2.5h7l3 3v12H5zM12 2.5v3h3M7.5 9.5l-1.5 1.5 1.5 1.5M12.5 9.5l1.5 1.5-1.5 1.5M10.8 9l-1.6 5" /></S>,
   render: () => <S><circle cx="10" cy="10" r="7" /><path d="M10 3a7 7 0 0 1 0 14z" fill="currentColor" /></S>,
   solid: () => <S><circle cx="10" cy="10" r="7" fill="currentColor" fillOpacity=".35" /></S>,
+  wire: () => <S><circle cx="10" cy="10" r="7" /><ellipse cx="10" cy="10" rx="3" ry="7" /><path d="M3 10h14" /></S>,
   eye: () => <S><path d="M2 10s3-5.5 8-5.5S18 10 18 10s-3 5.5-8 5.5S2 10 2 10z" /><circle cx="10" cy="10" r="2.3" /></S>,
   eyeOff: () => <S><path d="M3 3l14 14M8.2 5a8 8 0 0 1 1.8-.5c5 0 8 5.5 8 5.5a14 14 0 0 1-2.4 3M5.4 6.6A14 14 0 0 0 2 10s3 5.5 8 5.5a7 7 0 0 0 3.4-.9" /></S>,
   frame: () => <S><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4" /><circle cx="10" cy="10" r="2.5" /></S>,

@@ -5,6 +5,28 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Particles (v3.4)
+
+- Physics tab → **Particles** (Blender's Particles, Emitter type): an object emits up to 20,000 small spheres, cubes, drops or flakes from its surface over a frame range — speed along the surface, random speed, gravity, lifetime, size, colour, glow, land-on-the-ground, hide the emitter in renders
+- One-tap presets: **Sparks, Fountain, Rain, Snow, Debris**. A moving emitter leaves a trail
+- Worked out exactly for every frame — no baking; scrubbing, playing and video all match. New example: *Particle night*
+- Not yet: collisions with objects (only the ground at height 0), instancing your own objects, smoke and fire
+
+## Cell Fracture (v3.3)
+
+- Physics tab → **Fracture → Break into pieces** (8 / 16 / 32 / 64): the object is split into random Voronoi chunks, each an active rigid body with a **convex hull** shape — Blender's Cell Fracture add-on plus rigid bodies in one step. Add something to hit it and **Bake physics**
+- New collision shape **Convex hull** (Blender's default) for any rigid body; convex collisions are now about 20× faster
+- New example: *Wall breach* — a fractured brick wall smashed by a wrecking ball
+
+## Wireframe shading (v3.2)
+
+- **Wireframe** (first shading button, ⇧ Z): every polygon edge of shapes and meshes, see-through, selected object in orange — like Blender's wireframe mode. Library models show their triangles
+- A small **What's new** card lists new features once after an update
+
+## Properties tabs (v3.1)
+
+- Properties is split into tabs like Blender's Properties editor: **Scene** (camera lens, physics, world), **Object** (transform, animation, parent), **Modifiers**, **Physics**, **Text / Light / Model / Armature** (the object's own data) and **Material**. Only the tabs an object has are shown; the last one you used stays open as you select other objects
+
 ## Rigid body physics (v3.0)
 
 - Properties → **Physics → Rigid body** (like Blender's Physics tab): **Active** objects fall and collide, **Passive** ones (floors, walls, ramps) stay put. Shape (auto / box / sphere / cylinder), mass, friction, bounciness

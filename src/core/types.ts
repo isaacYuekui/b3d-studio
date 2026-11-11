@@ -164,6 +164,8 @@ export interface SceneObject {
   terrain?: import('./terrain').TerrainData;
   /** Scatter objects: many copies of one library model, each [x, y, z, yaw°, scale] in world space. */
   scatter?: { asset?: string; source?: string; items: import('./terrain').ScatterItem[] };
+  /** Particle system emitted from this object's surface (Blender's Particles, Emitter). */
+  particles?: import('./particles').ParticleSettings;
   /** Rigid body physics settings (Blender's Physics → Rigid Body); baked into keyframes. */
   rigid?: import('./physics').RigidBody;
   /** Text objects (a mesh made from a font): editing the mesh itself turns it into a plain mesh. */

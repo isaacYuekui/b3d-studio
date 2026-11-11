@@ -255,6 +255,35 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   linear keyframes for every active body, replacing its keys in that range. Bodies that come to
   rest stop getting keys (plus one at the end). Put it after the objects and their settings.
 
+## Particles (v3.4)
+
+```json
+{"type":"setParticles","id":"torch","particles":{"count":1500,"start":1,"end":120,"lifetime":24,"speed":1.5,"random":3,"gravity":1,"size":0.02,"shape":"sphere","color":"#ffb347","glow":1,"ground":"stop"}}
+{"type":"setParticles","id":"torch","particles":null}
+```
+
+- Any shape or mesh can emit. Particles leave random points of its surface (by area), at evenly spaced
+  times from `start` to `end`, with `speed` (m/s) along the surface normal plus `random` m/s in a random
+  direction; `gravity` is a multiple of 9.81 m/s² (0 floats, negative rises); they vanish after
+  `lifetime` frames. `size` (m) ± `sizeRandom` (0–1); `shape`: `sphere`, `cube`, `drop` (stretched along
+  its motion), `flake`; `color`, `glow` (0–1, glows with bloom in Rendered); `ground`: `none` or `stop`
+  (land at z = 0 and stay); `hideEmitter` hides the emitter in Rendered/videos; `seed` changes the pattern.
+- Start before frame 1 (e.g. `"start": -40`) to have the effect already running when the video begins.
+- Closed-form motion: the same frame always looks the same. No collisions with objects yet.
+
+## Cell Fracture (v3.3)
+
+```json
+{"type":"fracture","id":"wall","pieces":24,"seed":4}
+```
+
+- Replaces the object with about `pieces` (2–100) Voronoi chunks around random points inside it
+  (`seed` picks other points). Each chunk is a mesh object named "<name> piece N", with the same
+  material, its origin at its own centre, and an active rigid body with `shape: "hull"`; masses
+  share the original's mass by volume. Needs a closed solid. Follow with a moving object and
+  `bakePhysics`.
+- Rigid body `shape` can now be `hull` (convex hull of the object, at most 200 points).
+
 ## 3D text (v2.9)
 
 ```json

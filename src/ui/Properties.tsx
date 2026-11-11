@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useApp, useCtx } from './context';
 import { NumberField } from './NumberField';
@@ -16,6 +16,8 @@ import { ALIGNS, FONTS, FONT_LABEL, MAX_TEXT_LENGTH, isFontLoaded, missingChars 
 import type { FontId, TextData } from '../core/text';
 import { loadFont } from '../engine/fonts';
 import { RIGID_SHAPES, RIGID_TYPES } from '../core/physics';
+import { PARTICLE_PRESETS, PARTICLE_SHAPES } from '../core/particles';
+import type { ParticleSettings } from '../core/particles';
 import type { RigidBody } from '../core/physics';
 import { bakePhysics, freePhysics } from './physicsUi';
 import { prepareBooleans } from './prepare';
@@ -76,6 +78,30 @@ export function Properties() {
   const frame = useApp((s) => s.frame);
   const o = sel ? doc.objects[sel] : null;
   const catalog = useCatalog();
+  const [tab, setTabState] = useState<PropTab>(() => {
+    try {
+      return (localStorage.getItem('b3d.propTab') as PropTab | null) ?? 'object';
+    } catch {
+      return 'object';
+    }
+  });
+  const setTab = (t: PropTab) => {
+    setTabState(t);
+    try {
+      localStorage.setItem('b3d.propTab', t);
+    } catch {
+      /* per session only */
+    }
+  };
+  // Entering Pose Mode shows the bones (Armature tab); Edit Mode shows the mesh tools (Object tab).
+  const poseId = useApp((s) => s.pose?.id ?? null);
+  const editId = useApp((s) => s.edit?.id ?? null);
+  useEffect(() => {
+    if (poseId) setTabState('data');
+  }, [poseId]);
+  useEffect(() => {
+    if (editId) setTabState('object');
+  }, [editId]);
 
   // Every field edit goes through preview+commit so scrubs and typed values are one undo step each.
   const commit = (cmd: Command) => {
@@ -86,18 +112,8 @@ export function Properties() {
   if (!o) {
     return (
       <div className="properties">
-        <div className="prop-tabs">
-          <span className="prop-tab active">Scene</span>
-        </div>
-        <Section title="Scene">
-          <div className="prop-row"><span>Objects</span><b>{doc.order.length}</b></div>
-          <div className="prop-row"><span>Hidden</span><b>{doc.order.filter((id) => !doc.objects[id].visible).length}</b></div>
-          <div className="prop-row"><span>Units</span><b>Metres, Z up</b></div>
-          <p className="prop-hint">Select an object in the viewport or Outliner to edit its properties.</p>
-        </Section>
-        <CameraSection />
-        <ScenePhysicsSection />
-        <WorldSection />
+        <PropTabs tabs={[['scene', 'Scene']]} cur="scene" onPick={() => {}} />
+        <SceneTab />
       </div>
     );
   }
@@ -151,11 +167,19 @@ export function Properties() {
   const forbidden = new Set(subtree(doc, o.id));
   const parentOptions = doc.order.filter((id) => !forbidden.has(id));
 
+  // Tabs like Blender's Properties editor: only the ones this kind of object has.
+  const tabs: [PropTab, string][] = [['scene', 'Scene'], ['object', 'Object']];
+  if (canEdit(o)) tabs.push(['modifiers', 'Modifiers'], ['physics', 'Physics']);
+  const dataLabel = o.text ? 'Text' : o.light ? 'Light' : o.type === 'model' ? 'Model' : o.type === 'armature' ? 'Armature' : null;
+  if (dataLabel) tabs.push(['data', dataLabel]);
+  if (isRenderable(o.type) && o.type !== 'model') tabs.push(['material', 'Material']);
+  const cur: PropTab = tabs.some(([t]) => t === tab) ? tab : 'object';
+
   return (
     <div className="properties" data-testid="properties">
-      <div className="prop-tabs">
-        <span className="prop-tab active">Object</span>
-      </div>
+      <PropTabs tabs={tabs} cur={cur} onPick={setTab} />
+      {cur === 'scene' && <SceneTab />}
+      {cur !== 'scene' && (
       <div className="prop-name-row">
         <input
           key={o.id + o.name}
@@ -170,7 +194,10 @@ export function Properties() {
           onBlur={(e) => store.dispatch({ type: 'rename', id: o.id, name: e.target.value })}
         />
       </div>
+      )}
 
+      {cur === 'object' && (
+      <>
       <EditSection />
 
       {vecField('position', 'Location', { step: 0.1, rate: 0.01, suffix: ' m' })}
@@ -197,15 +224,33 @@ export function Properties() {
         </label>
       </Section>
 
-      {o.type === 'model' && <ModelSection id={o.id} />}
+      <Section title="Object">
+        <label className="prop-row">
+          <span>Visible</span>
+          <input type="checkbox" checked={o.visible} onChange={(e) => store.dispatch({ type: 'setVisible', id: o.id, visible: e.target.checked }, { select: false })} />
+        </label>
+        <div className="prop-row"><span>Type</span><b style={{ textTransform: 'capitalize' }}>{o.text ? 'Text' : o.type}</b></div>
+        {o.mesh && <div className="prop-row"><span>Geometry</span><b>{o.mesh.vertices.length} verts · {o.mesh.faces.length} faces</b></div>}
+      </Section>
 
-      {o.text && <TextSection id={o.id} />}
-      {canEdit(o) && <ModifiersSection id={o.id} />}
-      {canEdit(o) && <PhysicsSection id={o.id} />}
+      <div className="prop-actions">
+        <button className="btn" onClick={() => runAction(ctx, 'edit.duplicate')}>
+          <Icon.dup /> Duplicate
+        </button>
+        <button className="btn danger" onClick={() => runAction(ctx, 'edit.delete')}>
+          <Icon.trash /> Delete
+        </button>
+      </div>
+      </>
+      )}
 
-      {o.type === 'armature' && <PoseSection id={o.id} />}
+      {cur === 'data' && o.type === 'model' && <ModelSection id={o.id} />}
+      {cur === 'data' && o.text && <TextSection id={o.id} />}
+      {cur === 'modifiers' && <ModifiersSection id={o.id} />}
+      {cur === 'physics' && <PhysicsSection id={o.id} />}
+      {cur === 'data' && o.type === 'armature' && <PoseSection id={o.id} />}
 
-      {isRenderable(o.type) && o.type !== 'model' && (
+      {cur === 'material' && (
         <Section title="Material">
           <label className="prop-row">
             <span>Texture</span>
@@ -313,7 +358,7 @@ export function Properties() {
         </Section>
       )}
 
-      {o.light && (
+      {cur === 'data' && o.light && (
         <Section title="Light">
           <label className="prop-row">
             <span>Type</span>
@@ -346,24 +391,39 @@ export function Properties() {
         </Section>
       )}
 
-      <Section title="Object">
-        <label className="prop-row">
-          <span>Visible</span>
-          <input type="checkbox" checked={o.visible} onChange={(e) => store.dispatch({ type: 'setVisible', id: o.id, visible: e.target.checked }, { select: false })} />
-        </label>
-        <div className="prop-row"><span>Type</span><b style={{ textTransform: 'capitalize' }}>{o.type}</b></div>
-        {o.mesh && <div className="prop-row"><span>Geometry</span><b>{o.mesh.vertices.length} verts · {o.mesh.faces.length} faces</b></div>}
-      </Section>
-
-      <div className="prop-actions">
-        <button className="btn" onClick={() => runAction(ctx, 'edit.duplicate')}>
-          <Icon.dup /> Duplicate
-        </button>
-        <button className="btn danger" onClick={() => runAction(ctx, 'edit.delete')}>
-          <Icon.trash /> Delete
-        </button>
-      </div>
     </div>
+  );
+}
+
+type PropTab = 'scene' | 'object' | 'modifiers' | 'physics' | 'data' | 'material';
+
+function PropTabs({ tabs, cur, onPick }: { tabs: [PropTab, string][]; cur: PropTab; onPick: (t: PropTab) => void }) {
+  return (
+    <div className="prop-tabs" role="tablist" aria-label="Properties">
+      {tabs.map(([t, label]) => (
+        <button key={t} role="tab" aria-selected={cur === t} className={`prop-tab${cur === t ? ' active' : ''}`} data-prop-tab={t} onClick={() => onPick(t)}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Scene tab: scene facts, camera lens, physics world and the world (sky, light, look). */
+function SceneTab() {
+  const doc = useApp((s) => s.doc);
+  return (
+    <>
+      <Section title="Scene">
+        <div className="prop-row"><span>Objects</span><b>{doc.order.length}</b></div>
+        <div className="prop-row"><span>Hidden</span><b>{doc.order.filter((id) => !doc.objects[id].visible).length}</b></div>
+        <div className="prop-row"><span>Units</span><b>Metres, Z up</b></div>
+        <p className="prop-hint">Select an object in the viewport or Outliner to edit its properties.</p>
+      </Section>
+      <CameraSection />
+      <ScenePhysicsSection />
+      <WorldSection />
+    </>
   );
 }
 
@@ -695,6 +755,7 @@ function PhysicsSection({ id }: { id: string }) {
     />
   );
   return (
+    <>
     <Section title="Physics" defaultOpen={!!r}>
       <label className="prop-row">
         <span>Rigid body</span>
@@ -716,7 +777,7 @@ function PhysicsSection({ id }: { id: string }) {
             <span>Shape</span>
             <select value={r.shape} onChange={(e) => set({ shape: e.target.value as RigidBody['shape'] })}>
               {RIGID_SHAPES.map((sh) => (
-                <option key={sh} value={sh}>{sh === 'auto' ? 'Auto (from the object)' : sh[0].toUpperCase() + sh.slice(1)}</option>
+                <option key={sh} value={sh}>{sh === 'auto' ? 'Auto (from the object)' : sh === 'hull' ? 'Convex hull' : sh[0].toUpperCase() + sh.slice(1)}</option>
               ))}
             </select>
           </label>
@@ -738,6 +799,136 @@ function PhysicsSection({ id }: { id: string }) {
           </p>
         </>
       )}
+    </Section>
+    <FractureSection id={id} />
+    <ParticlesSection id={id} />
+    </>
+  );
+}
+
+/** Particle system (Blender's Particles tab, Emitter): settings and one-tap presets. */
+function ParticlesSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const p = useApp((s) => s.doc.objects[id].particles);
+  const set = (particles: Partial<ParticleSettings> | null) => store.dispatch({ type: 'setParticles', id, particles }, { select: false });
+  const num = (key: 'count' | 'start' | 'end' | 'lifetime' | 'speed' | 'random' | 'gravity' | 'size' | 'sizeRandom' | 'glow', label: string, lo: number, hi: number, step: number, suffix = '', int = false) => (
+    <NumberField
+      label={label}
+      value={p![key]}
+      step={step}
+      dragRate={step / 10}
+      suffix={suffix}
+      onPreview={(v) => store.preview({ type: 'setParticles', id, particles: { [key]: clampN(v, lo, hi, int) } })}
+      onCommit={(v) => {
+        store.preview({ type: 'setParticles', id, particles: { [key]: clampN(v, lo, hi, int) } });
+        store.commitPreview();
+      }}
+      onCancel={() => store.cancelPreview()}
+    />
+  );
+  return (
+    <Section title="Particles" defaultOpen={!!p}>
+      <label className="prop-row">
+        <span>Emit particles</span>
+        <input type="checkbox" data-testid="particles-toggle" checked={!!p} onChange={(e) => set(e.target.checked ? {} : null)} />
+      </label>
+      <div className="prop-row wrap">
+        <span>Presets</span>
+        <div className="seg-text" role="group" aria-label="Particle presets">
+          {PARTICLE_PRESETS.map((pr) => (
+            <button key={pr.id} data-particle-preset={pr.id} onClick={() => set(pr.settings)}>
+              {pr.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {p && (
+        <>
+          {num('count', 'Number', 1, 20000, 50, '', true)}
+          {num('start', 'Start frame', -100000, 100000, 1, '', true)}
+          {num('end', 'End frame', -100000, 100000, 1, '', true)}
+          {num('lifetime', 'Lifetime', 1, 10000, 1, ' fr')}
+          {num('speed', 'Speed (normal)', -1000, 1000, 0.5, ' m/s')}
+          {num('random', 'Random speed', 0, 1000, 0.5, ' m/s')}
+          {num('gravity', 'Gravity', -10, 10, 0.1, ' ×')}
+          {num('size', 'Size', 0.001, 100, 0.01, ' m')}
+          {num('sizeRandom', 'Size variation', 0, 1, 0.05)}
+          <label className="prop-row">
+            <span>Shape</span>
+            <select value={p.shape} onChange={(e) => set({ shape: e.target.value as ParticleSettings['shape'] })}>
+              {PARTICLE_SHAPES.map((sh) => (
+                <option key={sh} value={sh}>{sh === 'drop' ? 'Drop (stretched)' : sh[0].toUpperCase() + sh.slice(1)}</option>
+              ))}
+            </select>
+          </label>
+          <label className="prop-row">
+            <span>Colour</span>
+            <input type="color" value={p.color} onChange={(e) => set({ color: e.target.value })} />
+          </label>
+          {num('glow', 'Glow', 0, 1, 0.1)}
+          <label className="prop-row">
+            <span>At the ground</span>
+            <select value={p.ground} onChange={(e) => set({ ground: e.target.value as ParticleSettings['ground'] })}>
+              <option value="none">Pass through</option>
+              <option value="stop">Land and stay</option>
+            </select>
+          </label>
+          <label className="prop-row">
+            <span>Hide emitter in renders</span>
+            <input type="checkbox" checked={p.hideEmitter} onChange={(e) => set({ hideEmitter: e.target.checked })} />
+          </label>
+          <div className="prop-actions">
+            <button className="btn" onClick={() => set({ seed: (p.seed + 1) % 100000 })}>New pattern</button>
+          </div>
+        </>
+      )}
+      <p className="prop-hint">Particles fly off the object's surface, fall with gravity and vanish after their lifetime — sparks, fountains, rain, snow, debris. No baking: scrub and play. For rain or snow, use a big plane high up as the emitter.</p>
+    </Section>
+  );
+}
+
+const clampN = (v: number, lo: number, hi: number, int: boolean) => {
+  const c = Math.max(lo, Math.min(hi, v));
+  return int ? Math.round(c) : c;
+};
+
+/** Cell Fracture: break the object into rigid pieces (Blender's Cell Fracture add-on). */
+function FractureSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const [pieces, setPieces] = useState(16);
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      await prepareBooleans();
+      store.dispatch({ type: 'fracture', id, pieces, seed: 1 + Math.floor(Math.random() * 9999) });
+    } catch {
+      store.notify("Couldn't load the fracture engine — check the connection and try again");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Section title="Fracture" defaultOpen={false}>
+      <div className="prop-row">
+        <span>Pieces</span>
+        <div className="seg-text" role="radiogroup" aria-label="Pieces">
+          {[8, 16, 32, 64].map((n) => (
+            <button key={n} role="radio" aria-checked={pieces === n} className={pieces === n ? 'active' : ''} data-pieces={n} onClick={() => setPieces(n)}>
+              {n}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="prop-actions">
+        <button className="btn primary" data-testid="fracture" disabled={busy} onClick={() => void run()}>
+          {busy ? 'Breaking…' : 'Break into pieces'}
+        </button>
+      </div>
+      <p className="prop-hint">
+        Splits the object into random chunks (Voronoi cells, like Blender's Cell Fracture), each an active rigid body with a convex-hull shape. Then add something to hit it and Bake physics. Needs a closed solid; one undo
+        puts it back.
+      </p>
     </Section>
   );
 }

@@ -17,12 +17,15 @@ import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
 import { ALIGNS, DEFAULT_TEXT, FONTS, MAX_TEXT_LENGTH, textMesh } from './text';
 import { DEFAULT_RIGID, RIGID_SHAPES, RIGID_TYPES, simulate } from './physics';
+import { fracturePieces } from './fracture';
+import { DEFAULT_PARTICLES, PARTICLE_GROUND, PARTICLE_SHAPES } from './particles';
+import type { ParticleSettings } from './particles';
 import type { RigidBody } from './physics';
 import type { FontId, TextAlign, TextData } from './text';
 import { compact } from './mesh/topology';
 import { PATTERNS } from './patterns';
 import type { PatternType } from './patterns';
-import { apply as applyM4, invert as invertM4, mul as mulM4, worldMatrix } from './rig';
+import { apply as applyM4, invert as invertM4, mul as mulM4, rotEuler, worldMatrix } from './rig';
 import { EDIT_OPS, runEditSteps } from './mesh/script';
 import { DEFAULT_OUTFIT, HUMAN_PRESETS, humanPreset } from './humans';
 import { generateTerrain, scatterOn, terrainSample } from './terrain';
@@ -130,6 +133,10 @@ export type Command =
   | { type: 'setText'; id: string; text: Partial<TextData> }
   /** Rigid body settings for one object (null removes it from the simulation). */
   | { type: 'setRigidBody'; id: string; rigid: Partial<RigidBody> | null }
+  /** Particle system on an object (null removes it). */
+  | { type: 'setParticles'; id: string; particles: Partial<ParticleSettings> | null }
+  /** Cell Fracture: break an object into about `pieces` Voronoi pieces, each an active rigid body (convex hull). */
+  | { type: 'fracture'; id: string; pieces: number; seed?: number }
   /** Simulate the rigid bodies from start to end and write the result as keyframes (Bake to Keyframes). */
   | { type: 'bakePhysics'; start?: number; end?: number }
   /** Camera lens: focal length (mm), depth of field, f-stop, focus distance (m). null clears a setting. */
@@ -290,6 +297,60 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
         return { doc: withObject(doc, next), created: [] };
       }
       return { doc: withObject(doc, { ...o, rigid: { ...DEFAULT_RIGID, ...o.rigid, ...cmd.rigid } }), created: [] };
+    }
+
+    case 'setParticles': {
+      const o = requireObj(doc, cmd.id);
+      if (o.type !== 'mesh' && !(PRIMITIVES as readonly string[]).includes(o.type)) throw new CommandError(`${o.name}: only shapes and meshes can emit particles`);
+      if (cmd.particles === null) {
+        const next = { ...o };
+        delete next.particles;
+        return { doc: withObject(doc, next), created: [] };
+      }
+      const a = animationOf(doc);
+      const base: ParticleSettings = o.particles ?? { ...DEFAULT_PARTICLES, start: a.start, end: Math.max(a.start + 1, Math.round(a.start + (a.end - a.start) * 0.6)) };
+      const next = { ...base, ...cmd.particles };
+      if (next.end < next.start) throw new CommandError('Particles: the end frame must come after the start');
+      return { doc: withObject(doc, { ...o, particles: next }), created: [] };
+    }
+
+    case 'fracture': {
+      const o = requireObj(doc, cmd.id);
+      const geo = o.type === 'mesh' && o.mesh ? applyModifiers(o.mesh, o.modifiers) : (PRIMITIVES as readonly string[]).includes(o.type) ? primitiveMesh(o.type as PrimitiveType, o.params) : null;
+      if (!geo) throw new CommandError(`${o.name}: only shapes and meshes can be fractured`);
+      let pieces;
+      try {
+        pieces = fracturePieces(geo, cmd.pieces, cmd.seed ?? 1, o.name);
+      } catch (e) {
+        throw new CommandError(e instanceof Error ? e.message : String(e));
+      }
+      if (pieces.length < 2) throw new CommandError(`${o.name} couldn't be broken up (is it a closed solid?)`);
+      const R = rotEuler(o.transform.rotation);
+      const sc = o.transform.scale;
+      const base = { ...DEFAULT_RIGID, ...o.rigid, type: 'active' as const, shape: 'hull' as const };
+      const ids: string[] = [];
+      const commands: Command[] = [];
+      pieces.forEach((pc, i) => {
+        let id = `${o.id}.${i + 1}`;
+        for (let k = 2; doc.objects[id] || ids.includes(id); k++) id = `${o.id}.${i + 1}.${k}`;
+        ids.push(id);
+        const off = applyM4(R, [pc.center[0] * sc[0], pc.center[1] * sc[1], pc.center[2] * sc[2]]);
+        const p = o.transform.position;
+        commands.push({
+          type: 'add',
+          primitive: 'mesh',
+          id,
+          name: `${o.name} piece ${i + 1}`,
+          mesh: pc.mesh,
+          material: o.material,
+          parentId: o.parentId,
+          transform: { position: [p[0] + off[0], p[1] + off[1], p[2] + off[2]].map((x) => Math.round(x * 1e5) / 1e5) as Vec3, rotation: [...o.transform.rotation], scale: [...sc] },
+        });
+        commands.push({ type: 'setRigidBody', id, rigid: { ...base, mass: Math.max(0.001, Math.round(base.mass * pc.share * 1000) / 1000) } });
+      });
+      commands.push({ type: 'delete', ids: [o.id] });
+      const r = applyCommand(doc, { type: 'batch', commands }, idGen);
+      return { doc: r.doc, created: ids };
     }
 
     case 'bakePhysics': {
@@ -1262,6 +1323,7 @@ export function validateSceneObject(raw: unknown): SceneObject {
   if (obj.type === 'mesh' && v.modifiers !== undefined) obj.modifiers = validateModifiers(v.modifiers);
   if (obj.type === 'mesh' && v.text !== undefined) obj.text = validateText(v.text, false) as TextData;
   if (v.rigid !== undefined && (obj.type === 'mesh' || (PRIMITIVES as readonly string[]).includes(obj.type))) obj.rigid = validateRigid(v.rigid, false) as RigidBody;
+  if (v.particles !== undefined && (obj.type === 'mesh' || (PRIMITIVES as readonly string[]).includes(obj.type))) obj.particles = validateParticles(v.particles, false) as ParticleSettings;
   if (obj.type === 'light') obj.light = { ...DEFAULT_LIGHT.point, ...validateLight(v.light, false) } as LightData;
   if (obj.type === 'model') obj.asset = typeof v.asset === 'string' && ASSET_ID.test(v.asset) ? v.asset : fail(`object ${v.id}: asset invalid`);
   if (obj.type === 'armature') {
@@ -1326,6 +1388,36 @@ export function validateSceneDoc(v: unknown): SceneDoc {
     if (Object.keys(lens).length) doc.lens = lens;
   }
   return doc;
+}
+
+/** Particle settings; `partial` checks only the fields given. */
+export function validateParticles(v: unknown, partial: boolean): Partial<ParticleSettings> {
+  if (!isRecord(v)) fail('particles must be an object');
+  const spec: Record<keyof ParticleSettings, [(x: unknown) => boolean, string]> = {
+    count: [(x) => Number.isInteger(x) && inRange(x, 1, 20000), 'a whole number 1..20000'],
+    start: [(x) => Number.isInteger(x) && isFrame(x), 'a whole frame number'],
+    end: [(x) => Number.isInteger(x) && isFrame(x), 'a whole frame number'],
+    lifetime: [(x) => inRange(x, 1, 10000), '1..10000 frames'],
+    speed: [(x) => inRange(x, -1000, 1000), '-1000..1000 m/s'],
+    random: [(x) => inRange(x, 0, 1000), '0..1000 m/s'],
+    gravity: [(x) => inRange(x, -10, 10), '-10..10 (× Earth)'],
+    size: [(x) => inRange(x, 0.001, 100), '0.001..100 m'],
+    sizeRandom: [(x) => inRange(x, 0, 1), '0..1'],
+    shape: [(x) => (PARTICLE_SHAPES as readonly unknown[]).includes(x), PARTICLE_SHAPES.join(', ')],
+    color: [(x) => isColor(x), 'a colour like #ffaa33'],
+    glow: [(x) => inRange(x, 0, 1), '0..1'],
+    ground: [(x) => (PARTICLE_GROUND as readonly unknown[]).includes(x), PARTICLE_GROUND.join(', ')],
+    hideEmitter: [(x) => typeof x === 'boolean', 'true/false'],
+    seed: [(x) => Number.isInteger(x) && inRange(x, 0, 99999), 'a whole number 0..99999'],
+  };
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) {
+    const sp = spec[k as keyof ParticleSettings];
+    if (!sp) fail(`particles has no setting "${k}" (use ${Object.keys(spec).join(', ')})`);
+    out[k] = sp[0](x) ? x : fail(`particles.${k} must be ${sp[1]}`);
+  }
+  if (!partial) return { ...DEFAULT_PARTICLES, ...out } as ParticleSettings;
+  return out as Partial<ParticleSettings>;
 }
 
 /** Rigid body settings; `partial` checks only the fields given. */
@@ -1762,6 +1854,18 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (v.rigid === null) return { type: 'setRigidBody', id: v.id, rigid: null };
       if (!isRecord(v.rigid)) fail('setRigidBody needs rigid: {type?, shape?, mass?, friction?, bounce?, velocity?} or null');
       return { type: 'setRigidBody', id: v.id, rigid: validateRigid(v.rigid, true) };
+    case 'setParticles':
+      if (!isId(v.id)) fail('setParticles needs id');
+      if (v.particles === null) return { type: 'setParticles', id: v.id, particles: null };
+      if (!isRecord(v.particles)) fail('setParticles needs particles: {count?, start?, end?, lifetime?, speed?, …} or null');
+      return { type: 'setParticles', id: v.id, particles: validateParticles(v.particles, true) };
+    case 'fracture': {
+      if (!isId(v.id)) fail('fracture needs id');
+      if (!(Number.isInteger(v.pieces) && inRange(v.pieces, 2, 100))) fail('fracture pieces must be a whole number 2..100');
+      const cmd: Extract<Command, { type: 'fracture' }> = { type: 'fracture', id: v.id, pieces: v.pieces as number };
+      if (v.seed !== undefined) cmd.seed = Number.isInteger(v.seed) && inRange(v.seed, 0, 99999) ? (v.seed as number) : fail('fracture seed must be a whole number 0..99999');
+      return cmd;
+    }
     case 'bakePhysics': {
       const cmd: Extract<Command, { type: 'bakePhysics' }> = { type: 'bakePhysics' };
       if (v.start !== undefined) cmd.start = isFrame(v.start) && Number.isInteger(v.start) ? v.start : fail('bakePhysics start must be a whole frame number');

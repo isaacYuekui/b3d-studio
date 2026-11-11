@@ -209,6 +209,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   // material edit through Properties
   await page.click('[data-outliner-id] >> text=Vase');
   check('v0.2: custom mesh shows geometry stats', /verts/.test(await page.textContent('[data-testid="properties"]')));
+  await page.click('[data-prop-tab="material"]');
   const metal = page.locator('[aria-label="Metallic"]');
   await metal.click();
   await page.keyboard.press('Control+a');
@@ -218,6 +219,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
 
   // light properties
   await page.click('[data-outliner-id] >> text=Key Sun');
+  await page.click('[data-prop-tab="data"]');
   check('v0.2: light shows Light properties', await page.isVisible('#light-type'));
 
   // one undo reverts the edit, the second reverts the whole script
@@ -267,6 +269,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await page.click('[data-asset="ceramic_vase_01"]');
   await page.waitForTimeout(2500);
   check('v0.3: adding a library model selects it', (await selectedName(page)) === 'Ceramic Vase');
+  await page.click('[data-prop-tab="data"]');
   check('v0.3: model shows its source in Properties', /Ceramic Vase/.test(await page.textContent('[data-testid="properties"]')));
 
   // Apply a photo material to a cube
@@ -274,6 +277,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await page.click('[data-testid="library-btn"]');
   await page.click('[data-lib-tab="textures"]');
   await page.click('[data-asset="brown_planks_05"]');
+  await page.click('[data-prop-tab="material"]');
   check('v0.3: material from library applies to selected cube', (await page.inputValue('#mat-texture')) === 'brown_planks_05');
 
   // Sky
@@ -283,6 +287,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await page.waitForTimeout(3000);
   check('v0.3: sky applies and switches to Rendered view', (await page.getAttribute('[data-shading="rendered"]', 'aria-pressed')) === 'true');
   await page.keyboard.press('Escape');
+  await page.click('[data-prop-tab="scene"]');
   check('v0.3: World panel shows the chosen sky', (await page.inputValue('#world-hdri')) === 'venice_sunset');
 
   // Realistic scene script
@@ -462,6 +467,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   const n1 = await importFile('tests/fixtures/vase-cm.glb');
   check('v0.5: GLB import adds the model', /Imported “vase-cm”/.test(n1) && (await objCount(page)) === 2, n1);
   await page.waitForTimeout(2500);
+  await page.click('[data-prop-tab="data"]');
   const size = Number(await page.locator('[aria-label="Size (longest side, m)"]').getAttribute('aria-valuenow'));
   check('v0.5: centimetre file converted to real metres', size > 0.2 && size < 0.6, `longest side ${size} m`);
   const grounded = await page.evaluate(() => {
@@ -628,6 +634,7 @@ const setNumber = async (page, scope, label, value) => {
   await page.keyboard.press('Tab');
   await page.waitForTimeout(200);
   check('v0.7: Tab returns to Object Mode', !(await meshInfo(page)).edit);
+  await page.click('[data-prop-tab="modifiers"]');
   await page.click('[data-subdiv="2"]');
   await page.click('[data-mirror="x"]');
   await page.waitForTimeout(400);
@@ -850,6 +857,7 @@ const setNumber = async (page, scope, label, value) => {
     ] });
     s.select('block');
   });
+  await page.click('[data-prop-tab="modifiers"]');
   await page.click('[data-bevel="0.03"]');
   await page.click('[data-subdiv="2"]');
   await page.click('[data-testid="subdiv-sharp"]');
@@ -929,6 +937,7 @@ const setNumber = async (page, scope, label, value) => {
   check('v2.2: Snap button turns on 0.25 m gizmo steps', snap.on === true && snap.step === 0.25, JSON.stringify(snap));
   await page.click('[data-testid="snap"]');
   // Join Beta into Alpha from the Shape panel, then split again by loose parts.
+  await page.click('[data-prop-tab="modifiers"]');
   await page.selectOption('#join-other', 'b');
   await page.click('[data-testid="join-apply"]');
   const joined = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; return { beta: !!d.objects.b, faces: d.objects.a.mesh?.faces.length }; });
@@ -957,6 +966,7 @@ const setNumber = async (page, scope, label, value) => {
     s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'sphere', id: 'ball', name: 'Ball' }] });
     s.select('ball');
   });
+  await page.click('[data-prop-tab="material"]');
   await page.click('.mat-more summary');
   await page.click('[data-mat-preset="Car paint"]');
   const paint = await page.evaluate(() => { const m = window.__b3d.store.getState().doc.objects.ball.material; return { cc: m.clearcoat, metal: m.metallic }; });
@@ -974,6 +984,141 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Particles (v3.4): a preset from the Physics tab; particles move with the frame, no bake.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'sphere', id: 'src', name: 'Source', transform: { position: [0, 0, 1], scale: [0.2, 0.2, 0.2] } },
+      { type: 'setAnimation', start: 1, end: 60 },
+    ] });
+    s.select('src');
+    window.__b3d.viewport().frame(false);
+  });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('.prop-section-head:has-text("Particles")');
+  await page.click('[data-particle-preset="sparks"]');
+  const ps = await page.evaluate(() => window.__b3d.store.getState().doc.objects.src.particles);
+  check('v3.4: the Sparks preset sets up a particle system', ps?.count === 600 && ps.glow === 1 && ps.ground === 'stop', JSON.stringify(ps));
+  const count = (f) => page.evaluate((fr) => { window.__b3d.store.setFrame(fr); const m = window.__b3d.viewport().scene.getMeshByName('src-particles'); return { n: m?.thinInstanceCount ?? -1, on: m?.isEnabled() }; }, f);
+  const at1 = await count(1), at20 = await count(20), at20b = await count(20);
+  check('v3.4: particles appear over time and the same frame shows the same count', at20.n > at1.n && at20.n > 50 && at20.on && at20.n === at20b.n, JSON.stringify({ at1, at20, at20b }));
+  await page.screenshot({ path: `${shots}/particles.png` });
+  await page.click('[data-testid="particles-toggle"]');
+  const gone = await page.evaluate(() => !window.__b3d.viewport().scene.getMeshByName('src-particles') && !window.__b3d.store.getState().doc.objects.src.particles);
+  check('v3.4: turning particles off removes them', gone);
+  check('v3.4: no errors (particles)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Cell Fracture (v3.3): break a block into rigid pieces from the Physics tab, then bake.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'floor', name: 'Floor', transform: { position: [0, 0, -1], scale: [6, 6, 1] } },
+      { type: 'setRigidBody', id: 'floor', rigid: { type: 'passive' } },
+      { type: 'add', primitive: 'cube', id: 'block', name: 'Block', transform: { position: [0, 0, 2.5], rotation: [30, 20, 0], scale: [0.8, 0.8, 0.8] } },
+      { type: 'setAnimation', start: 1, end: 48 },
+    ] });
+    s.select('block');
+  });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('.prop-section-head:has-text("Fracture")');
+  await page.click('[data-pieces="8"]');
+  await page.click('[data-testid="fracture"]');
+  await page.waitForFunction(() => !window.__b3d.store.getState().doc.objects.block, null, { timeout: 60000 });
+  const pieces = await page.evaluate(() => Object.values(window.__b3d.store.getState().doc.objects).filter((o) => o.name.startsWith('Block piece')).map((o) => o.rigid?.shape));
+  check('v3.3: Break into pieces makes 8 rigid convex-hull pieces', pieces.length === 8 && pieces.every((x) => x === 'hull'), JSON.stringify(pieces));
+  await page.evaluate(() => window.__b3d.store.select(null));
+  await page.click('.prop-section-head:has-text("Physics")').catch(() => {});
+  await page.evaluate(async () => { await window.__b3d.prepare([{ type: 'bakePhysics' }]); window.__b3d.store.dispatch({ type: 'bakePhysics' }); });
+  const fell = await page.evaluate(() => {
+    const d = window.__b3d.store.getState().doc;
+    return Object.values(d.objects).filter((o) => o.name.startsWith('Block piece')).every((o) => { const k = d.animation.tracks[o.id]; return k && k[k.length - 1].transform.position[2] < 1.5; });
+  });
+  check('v3.3: baked pieces fall and land on the floor', fell);
+  await page.keyboard.press('Control+z');
+  await page.keyboard.press('Control+z');
+  const back = await page.evaluate(() => !!window.__b3d.store.getState().doc.objects.block);
+  check('v3.3: undo puts the block back in one piece', back);
+  await page.screenshot({ path: `${shots}/fracture.png` });
+  check('v3.3: no errors (fracture)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Wireframe shading (v3.2) and the What's new panel.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'c', name: 'Box' },
+      { type: 'add', primitive: 'sphere', id: 's', name: 'Ball', transform: { position: [3, 0, 0] } },
+      { type: 'setModifiers', id: 's', modifiers: { subdivision: { levels: 1 } } },
+    ] });
+    s.select('c');
+    window.__b3d.viewport().frame(false);
+  });
+  await page.click('[data-shading="wireframe"]');
+  await page.waitForTimeout(400);
+  const w = await page.evaluate(() => {
+    const vp = window.__b3d.viewport();
+    const lines = vp.scene.meshes.filter((m) => m.name.endsWith('-wire'));
+    const cube = lines.find((m) => m.name === 'c-wire');
+    return { n: lines.length, cubeLines: cube?.getTotalIndices() / 2, surface: vp.entries.get('c').meshes[0].visibility, orange: cube?.color.r > 0.9 && cube?.color.g < 0.7 };
+  });
+  check('v3.2: Wireframe draws every polygon edge (12 for a cube), hides surfaces, selected in orange', w.n === 2 && w.cubeLines === 12 && w.surface === 0 && w.orange, JSON.stringify(w));
+  await page.screenshot({ path: `${shots}/wireframe.png` });
+  await page.keyboard.press('Shift+z');
+  await page.waitForTimeout(300);
+  const back = await page.evaluate(() => ({ shading: window.__b3d.store.getState().shading, lines: window.__b3d.viewport().scene.meshes.filter((m) => m.name.endsWith('-wire')).length, surface: window.__b3d.viewport().entries.get('c').meshes[0].visibility }));
+  check('v3.2: ⇧ Z goes back to Solid with the surfaces', back.shading === 'solid' && back.lines === 0 && back.surface === 1, JSON.stringify(back));
+  check('v3.2: no errors (wireframe)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+  // A returning user sees what's new once.
+  const p2 = await open({ width: 1024, height: 768 }, {});
+  await p2.page.goto(url + (url.includes('?') ? '&' : '?') + 'whatsnew=3.0');
+  await p2.page.waitForSelector('[data-testid="whatsnew"]');
+  const text = await p2.page.textContent('[data-testid="whatsnew"]');
+  await p2.page.click('[data-testid="whatsnew"] .btn');
+  const gone = !(await p2.page.isVisible('[data-testid="whatsnew"]'));
+  check("v3.2: What's new lists the changes since the last visit and closes", /v3\.2/.test(text) && /v3\.1/.test(text) && !/v3\.0/.test(text) && gone, text.slice(0, 120));
+  await p2.ctx.close();
+}
+
+// Properties tabs (v3.1): Blender-style tabs; only the ones the object has; remembered.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'c', name: 'Box' },
+      { type: 'add', primitive: 'light', id: 'l', name: 'Lamp', light: { type: 'point' } },
+    ] });
+    s.select('c');
+  });
+  const tabsOf = () => page.$$eval('[data-prop-tab]', (els) => els.map((e) => e.getAttribute('data-prop-tab') + (e.getAttribute('aria-selected') === 'true' ? '*' : '')).join(' '));
+  const cube = await tabsOf();
+  check('v3.1: a shape gets Scene, Object, Modifiers, Physics, Material tabs (Object first)', cube === 'scene object* modifiers physics material', cube);
+  await page.click('[data-prop-tab="material"]');
+  const mat = await page.isVisible('#mat-base');
+  await page.evaluate(() => window.__b3d.store.select('l'));
+  const lamp = await tabsOf();
+  check('v3.1: Material shows the material; a light has a Light tab and no Material tab', mat && lamp === 'scene object* data', lamp);
+  await page.evaluate(() => window.__b3d.store.select('c'));
+  const back = await tabsOf();
+  check('v3.1: the last tab is remembered when going back to the shape', back.includes('material*'), back);
+  check('v3.1: no errors (tabs)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Rigid body physics (v3.0): turn on Rigid body, bake, the box falls and lands.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });
@@ -988,6 +1133,7 @@ const setNumber = async (page, scope, label, value) => {
     ] });
     s.select('crate');
   });
+  await page.click('[data-prop-tab="physics"]');
   await page.click('.prop-section-head:has-text("Physics")');
   await page.click('[data-testid="rigid-toggle"]');
   const rigid = await page.evaluate(() => window.__b3d.store.getState().doc.objects.crate.rigid);
@@ -1025,6 +1171,7 @@ const setNumber = async (page, scope, label, value) => {
   await page.waitForFunction(() => Object.values(window.__b3d.store.getState().doc.objects).some((o) => o.text), null, { timeout: 30000 });
   const t0 = await page.evaluate(() => { const o = Object.values(window.__b3d.store.getState().doc.objects).find((x) => x.text); return { id: o.id, body: o.text.body, faces: o.mesh.faces.length, rot: o.transform.rotation }; });
   check('v2.9: Add → Text makes standing 3D letters', t0.body === 'Text' && t0.faces > 50 && t0.rot[0] === 90, JSON.stringify(t0));
+  await page.click('[data-prop-tab="data"]');
   await page.fill('[data-testid="text-body"]', 'Hello B3D');
   await page.click('.prop-section-head:has-text("Text")'); // blur the box (commits), closes the section
   await page.click('.prop-section-head:has-text("Text")');
@@ -1191,6 +1338,7 @@ const setNumber = async (page, scope, label, value) => {
   });
   const tris = () => page.evaluate(() => window.__b3d.viewport().entries.get('step').node.getTotalIndices() / 3);
   const t0 = await tris();
+  await page.click('[data-prop-tab="modifiers"]');
   await page.click('[data-array="5"]');
   await page.click('[data-array-axis="z"]');
   await page.waitForTimeout(400);
