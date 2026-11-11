@@ -11,6 +11,7 @@ import { runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
 import { guessUnitScale, isUserAsset } from '../engine/userModels';
 import { TIMES } from '../core/sky';
+import { FOCAL_PRESETS, FSTOP_PRESETS } from '../core/lens';
 import { prepareBooleans } from './prepare';
 import type { Quality } from '../core/store';
 import { PATTERNS } from '../core/patterns';
@@ -88,6 +89,7 @@ export function Properties() {
           <div className="prop-row"><span>Units</span><b>Metres, Z up</b></div>
           <p className="prop-hint">Select an object in the viewport or Outliner to edit its properties.</p>
         </Section>
+        <CameraSection />
         <WorldSection />
       </div>
     );
@@ -359,6 +361,70 @@ export function Properties() {
 const TIME_LABEL: Record<TimeOfDay, string> = { sunrise: 'Sunrise', morning: 'Morning', noon: 'Noon', afternoon: 'Late afternoon', sunset: 'Sunset', dusk: 'Dusk', night: 'Night (moon)', overcast: 'Overcast', misty: 'Misty morning' };
 
 /** Scene-wide look for Rendered shading: HDRI sky, exposure, bloom, ambient occlusion. */
+/** Scene camera lens (Blender's camera data): focal length and depth of field. */
+function CameraSection() {
+  const { store } = useCtx();
+  const lens = useApp((s) => s.doc.lens);
+  const hasCam = useApp((s) => !!s.doc.camera || (s.doc.animation?.camera.length ?? 0) > 0);
+  const set = (l: Extract<Command, { type: 'setLens' }>['lens']) => store.dispatch({ type: 'setLens', lens: l }, { select: false });
+  const preview = (l: Extract<Command, { type: 'setLens' }>['lens']) => store.preview({ type: 'setLens', lens: l });
+  const commit = (l: Extract<Command, { type: 'setLens' }>['lens']) => {
+    store.preview({ type: 'setLens', lens: l });
+    store.commitPreview();
+  };
+  const focal = lens?.focal;
+  const clampF = (v: number) => Math.max(1, Math.min(5000, Math.round(v)));
+  return (
+    <Section title="Camera" defaultOpen={!!lens}>
+      <label className="prop-row">
+        <span>Lens</span>
+        <select data-testid="lens-focal" value={focal && (FOCAL_PRESETS as readonly number[]).includes(focal) ? String(focal) : focal ? 'custom' : ''} onChange={(e) => e.target.value !== 'custom' && set({ focal: e.target.value ? Number(e.target.value) : null })}>
+          <option value="">Default (wide)</option>
+          {FOCAL_PRESETS.map((f) => (
+            <option key={f} value={f}>
+              {f} mm{f === 50 ? ' (normal)' : f >= 85 ? ' (portrait)' : f <= 24 ? ' (wide)' : ''}
+            </option>
+          ))}
+          {focal && !(FOCAL_PRESETS as readonly number[]).includes(focal) && <option value="custom">{focal} mm</option>}
+        </select>
+      </label>
+      {focal && <NumberField label="Focal length" value={focal} step={1} dragRate={0.2} suffix=" mm" onPreview={(v) => preview({ focal: clampF(v) })} onCommit={(v) => commit({ focal: clampF(v) })} onCancel={() => store.cancelPreview()} />}
+      <label className="prop-row">
+        <span>Depth of field</span>
+        <input type="checkbox" data-testid="lens-dof" checked={!!lens?.dof} onChange={(e) => set({ dof: e.target.checked ? true : null })} />
+      </label>
+      {lens?.dof && (
+        <>
+          <div className="prop-row">
+            <span>F-stop</span>
+            <div className="seg-text" role="radiogroup" aria-label="F-stop">
+              {FSTOP_PRESETS.map((f) => {
+                const on = (lens.fStop ?? 2.8) === f;
+                return (
+                  <button key={f} role="radio" aria-checked={on} className={on ? 'active' : ''} data-fstop={f} onClick={() => set({ fStop: f })}>
+                    f/{f}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <label className="prop-row">
+            <span>Focus on camera target</span>
+            <input type="checkbox" checked={lens.focus === undefined} onChange={(e) => set({ focus: e.target.checked ? null : 5 })} />
+          </label>
+          {lens.focus !== undefined && (
+            <NumberField label="Focus distance" value={lens.focus} step={0.5} dragRate={0.05} suffix=" m" onPreview={(v) => preview({ focus: Math.max(0.01, v) })} onCommit={(v) => commit({ focus: Math.max(0.01, v) })} onCancel={() => store.cancelPreview()} />
+          )}
+        </>
+      )}
+      <p className="prop-hint">
+        Used when you look through the scene camera (Camera view) and in videos, in Rendered shading. 50 mm sees like your eye; 85–135 mm zooms in and flattens like a portrait lens; 18–24 mm is wide. Depth of field blurs what isn't at
+        the focus distance: f/1.4 a lot, f/11 hardly at all.{!hasCam && ' Set a scene camera first: View → Set Camera to View.'}
+      </p>
+    </Section>
+  );
+}
+
 function WorldSection() {
   const { store } = useCtx();
   const raw = useApp((s) => s.doc.world); // stable reference; worldOf() fills defaults

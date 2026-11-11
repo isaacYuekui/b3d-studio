@@ -239,6 +239,22 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
 - Order in the stack: Mirror → Array → Solidify → Bevel → Subdivision → Displace (fixed; Blender
   lets you reorder). A patch changes only the settings you give, e.g. `{"array":{"count":12}}`.
 
+## Camera lens and depth of field (v2.7)
+
+```json
+{"type":"setLens","lens":{"focal":85,"dof":true,"fStop":1.4}}
+{"type":"setLens","lens":{"focus":4.5}}
+{"type":"setLens","lens":{"focal":null,"dof":null}}
+```
+
+- `focal` — focal length in mm on a 36 mm sensor, spanning the wider side of the picture (Blender's
+  defaults: Sensor 36 mm, Sensor Fit Auto). 50 mm ≈ the human eye, 85–135 mm portrait/telephoto,
+  18–24 mm wide. Without `focal`, the camera keeps the app's original wide view (≈ 24 mm in 16:9).
+- `dof` — depth of field on/off. `fStop` (default 2.8): lower blurs more. `focus` — focus distance in
+  metres; without it the camera focuses on its target, also while the camera moves.
+- Applies when looking through the scene camera in Rendered shading, and in videos. null clears a
+  setting. Not keyframed (one lens per scene).
+
 ## Editing keyframes (v2.1)
 
 ```json

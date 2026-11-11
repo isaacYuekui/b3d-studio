@@ -12,7 +12,7 @@ import { DEFAULT_ANIMATION, EASINGS, animationOf, transformAt, upsertKey } from 
 import { KEY_OPS, editKeys as editKeysIn } from './dopesheet';
 import type { KeyOp, KeyRef } from './dopesheet';
 import type { Animation, Easing, PoseKey } from './animation';
-import type { ArmatureData, Bone, BonePose, Background, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
+import type { ArmatureData, Bone, BonePose, Background, CameraLens, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
 import { compact } from './mesh/topology';
@@ -120,6 +120,8 @@ export type Command =
   /** Sky, sun light, exposure and haze for a time of day; heading turns the sky so the sun shines from that azimuth (degrees). */
   | { type: 'setTimeOfDay'; time: TimeOfDay; heading?: number; fog?: number }
   | { type: 'setCamera'; position: Vec3; target: Vec3 }
+  /** Camera lens: focal length (mm), depth of field, f-stop, focus distance (m). null clears a setting. */
+  | { type: 'setLens'; lens: { [K in keyof CameraLens]?: CameraLens[K] | null } }
   | { type: 'setKeyframe'; id: string; frame: number; transform?: Transform; easing?: Easing }
   | { type: 'deleteKeyframe'; id: string; frame: number }
   | { type: 'setCameraKey'; frame: number; position: Vec3; target: Vec3; easing?: Easing }
@@ -755,6 +757,17 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
     case 'setCamera':
       return { doc: { ...doc, camera: { position: [...cmd.position], target: [...cmd.target] } }, created: [] };
 
+    case 'setLens': {
+      const lens: Record<string, unknown> = { ...doc.lens };
+      for (const [k, v] of Object.entries(cmd.lens)) {
+        if (v === null) delete lens[k];
+        else if (v !== undefined) lens[k] = v;
+      }
+      const next: SceneDoc = { ...doc, lens: lens as CameraLens };
+      if (!Object.keys(lens).length) delete next.lens;
+      return { doc: next, created: [] };
+    }
+
     case 'setKeyframe': {
       requireObj(doc, cmd.id);
       const anim = animationOf(doc);
@@ -1222,7 +1235,29 @@ export function validateSceneDoc(v: unknown): SceneDoc {
     if (!isRecord(c) || !isVec3(c.position) || !isVec3(c.target)) fail('camera needs position and target [x,y,z]');
     doc.camera = { position: [...c.position], target: [...c.target] };
   }
+  if (v.lens !== undefined) {
+    const lens = validateLens(v.lens, false) as CameraLens;
+    if (Object.keys(lens).length) doc.lens = lens;
+  }
   return doc;
+}
+
+/** Lens settings; with `allowNull` (setLens), null clears a setting. Unknown keys are refused. */
+function validateLens(v: unknown, allowNull: boolean): Record<string, unknown> {
+  if (!isRecord(v)) fail('lens must be an object');
+  const spec: Record<string, [(x: unknown) => boolean, string]> = {
+    focal: [(x) => inRange(x, 1, 5000), 'focal must be 1..5000 mm'],
+    dof: [(x) => typeof x === 'boolean', 'dof must be true/false'],
+    fStop: [(x) => inRange(x, 0.5, 128), 'fStop must be 0.5..128'],
+    focus: [(x) => inRange(x, 0.01, 100000), 'focus must be 0.01..100000 m'],
+  };
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (!spec[k]) fail(`lens has no setting "${k}" (use focal, dof, fStop, focus)`);
+    if (x === null && allowNull) out[k] = null;
+    else if (x !== undefined) out[k] = spec[k][0](x) ? x : fail(`lens ${spec[k][1]}`);
+  }
+  return out;
 }
 
 const isFrame = (v: unknown): v is number => isNum(v) && v >= -100000 && v <= 1000000;
@@ -1585,6 +1620,9 @@ export function validateCommand(v: unknown, depth = 0): Command {
     case 'setCamera':
       if (!isVec3(v.position) || !isVec3(v.target)) fail('setCamera needs position and target as [x,y,z]');
       return { type: 'setCamera', position: [...v.position], target: [...v.target] };
+    case 'setLens':
+      if (!isRecord(v.lens)) fail('setLens needs lens: {focal?, dof?, fStop?, focus?}');
+      return { type: 'setLens', lens: validateLens(v.lens, true) as Extract<Command, { type: 'setLens' }>['lens'] };
     case 'setKeyframe': {
       if (!isId(v.id) || !isFrame(v.frame)) fail('setKeyframe needs id and frame');
       if (v.easing !== undefined && !isEasing(v.easing)) fail(`easing must be one of ${EASINGS.join(', ')}`);

@@ -974,6 +974,47 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Camera lens (v2.7): focal length and depth of field from the Camera panel.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'sphere', id: 'near', name: 'Near', transform: { position: [0, -2, 1] } },
+      { type: 'add', primitive: 'cube', id: 'far', name: 'Far', transform: { position: [2, 8, 1] } },
+      { type: 'setCamera', position: [0, -9, 2], target: [0, -2, 1] },
+    ] });
+    s.select(null);
+  });
+  await page.click('.prop-section-head:has-text("Camera")');
+  await page.selectOption('[data-testid="lens-focal"]', '85');
+  await page.click('[data-testid="lens-dof"]');
+  await page.click('[data-fstop="1.4"]');
+  const lens = await page.evaluate(() => window.__b3d.store.getState().doc.lens);
+  check('v2.7: Camera panel sets an 85 mm lens with depth of field at f/1.4', lens?.focal === 85 && lens.dof === true && lens.fStop === 1.4, JSON.stringify(lens));
+  await page.evaluate(async () => {
+    const s = window.__b3d.store;
+    s.setShading('rendered');
+    window.__b3d.viewport().viewCamera();
+  });
+  await page.waitForTimeout(1200);
+  const cam = await page.evaluate(() => {
+    const vp = window.__b3d.viewport();
+    return { fov: vp.camera.fov, mode: vp.camera.fovMode, dof: vp.pipeline?.depthOfFieldEnabled, focus: vp.pipeline?.depthOfField.focusDistance, view: window.__b3d.store.getState().cameraView };
+  });
+  const want = 2 * Math.atan(18 / 85);
+  check('v2.7: through the camera the view is 85 mm across and focuses on the target', cam.view && Math.abs(cam.fov - want) < 1e-6 && cam.mode === 1 && cam.dof === true && Math.abs(cam.focus - 7071) < 5, JSON.stringify(cam));
+  await page.screenshot({ path: `${shots}/lens-dof.png` });
+  await page.evaluate(() => window.__b3d.store.setCameraView(false));
+  await page.waitForTimeout(300);
+  const free = await page.evaluate(() => ({ fov: window.__b3d.viewport().camera.fov, dof: window.__b3d.viewport().pipeline?.depthOfFieldEnabled }));
+  check('v2.7: the free viewport keeps its own view, without blur', Math.abs(free.fov - 0.8) < 1e-9 && !free.dof, JSON.stringify(free));
+  await page.evaluate(() => window.__b3d.store.setShading('solid'));
+  check('v2.7: no errors (lens)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // More Edit Mode tools (v2.6): connect, dissolve, triangulate / tris to quads, shrink/fatten.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 800 });

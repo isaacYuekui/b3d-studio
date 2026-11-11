@@ -5,6 +5,11 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Camera lens (v2.7)
+
+- **Camera** panel (Properties with nothing selected): focal length — 18, 24, 35, 50 (normal), 85, 135 mm or any value — like Blender's camera, on a 36 mm sensor
+- **Depth of field**: f-stop (f/1.4 … f/11) and focus — on the camera's target (follows camera moves) or a set distance. Shows in Camera view with Rendered shading, and in videos
+
 ## More Edit Mode tools (v2.6)
 
 - **Dissolve** (Mesh menu, Ctrl/⌘ X): removes vertices, edges or faces without leaving a hole — faces merge into one

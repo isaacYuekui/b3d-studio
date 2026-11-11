@@ -198,6 +198,18 @@ export interface SceneCamera {
   target: Vec3;
 }
 
+/** Camera lens settings (Blender's camera data), for the scene camera view and videos. */
+export interface CameraLens {
+  /** Focal length in mm on a 36 mm sensor (Blender's default 50). Unset = the app's original wide view. */
+  focal?: number;
+  /** Depth of field: things nearer or farther than the focus distance blur. */
+  dof?: boolean;
+  /** Aperture: lower = blurrier background (1.4 portrait, 2.8, 5.6, 11 everything sharp). */
+  fStop?: number;
+  /** Focus distance in metres; unset = the camera's target point. */
+  focus?: number;
+}
+
 export interface SceneDoc {
   /** Object storage keyed by id. */
   objects: Record<string, SceneObject>;
@@ -205,6 +217,7 @@ export interface SceneDoc {
   order: string[];
   world?: World;
   camera?: SceneCamera;
+  lens?: CameraLens;
   animation?: import('./animation').Animation;
 }
 
