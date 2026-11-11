@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Sculpt Mode (v2.4)
+
+- Select a model → **Sculpt** (top bar). Brushes: **Draw** (build up; **Invert** digs in), **Smooth**, **Inflate**, **Grab**, **Flatten**, with Size, Strength and **X symmetry**
+- Drag on the model to sculpt; drag off it (or use two fingers) to turn the view, like Nomad Sculpt. Each stroke is one undo step
+- **Add detail** subdivides the model for finer sculpting (up to about 240,000 faces, to stay smooth on a tablet)
+- Not yet: dynamic topology, masks, multires. Skinned characters can't be sculpted
+
 ## Materials (v2.3)
 
 - **More: clearcoat, glass, sheen, skin…** in the Material panel, matching Blender's Principled BSDF: Clearcoat (car paint), Transmission + IOR (glass, water), Sheen (velvet, cloth), Subsurface (skin, wax, leaves), Anisotropy (brushed metal)

@@ -974,6 +974,40 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Sculpt Mode (v2.4): brushes on a subdivided sphere; one stroke = one undo; view stays put.
+{
+  const { ctx, page, errors } = await open({ width: 1180, height: 820 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'sphere', id: 'clay', name: 'Clay' }] });
+    s.select('clay');
+    window.__b3d.viewport().frame(false);
+  });
+  await page.waitForTimeout(800);
+  await page.click('[data-testid="sculpt-toggle"]');
+  await page.click('[data-testid="sculpt-detail"]');
+  const n = await page.evaluate(() => window.__b3d.store.getState().doc.objects.clay.mesh.vertices.length);
+  check('v2.4: Sculpt Mode + Add detail subdivides the model', n > 1500 && (await page.textContent('[data-testid="mode-toggle"]')) === 'Sculpt Mode', String(n));
+  const cv = await page.locator('[data-testid="viewport-canvas"]').boundingBox();
+  const cx = cv.x + cv.width / 2, cy = cv.y + cv.height / 2;
+  const before = await page.evaluate(() => JSON.stringify(window.__b3d.store.getState().doc.objects.clay.mesh.vertices));
+  const alpha0 = await page.evaluate(() => window.__b3d.viewport().camera.alpha);
+  await page.mouse.move(cx - 50, cy);
+  await page.mouse.down();
+  for (let i = 0; i <= 10; i++) { await page.mouse.move(cx - 50 + i * 10, cy + Math.sin(i) * 10); await page.waitForTimeout(40); }
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => JSON.stringify(window.__b3d.store.getState().doc.objects.clay.mesh.vertices));
+  const alpha1 = await page.evaluate(() => window.__b3d.viewport().camera.alpha);
+  check('v2.4: a stroke on the model sculpts it and does not turn the view', before !== after && Math.abs(alpha1 - alpha0) < 1e-6, JSON.stringify({ alpha0, alpha1 }));
+  await page.keyboard.press('Control+z');
+  const undone = await page.evaluate(() => JSON.stringify(window.__b3d.store.getState().doc.objects.clay.mesh.vertices));
+  check('v2.4: one undo removes the whole stroke', undone === before);
+  await page.click('[data-testid="sculpt-done"]');
+  check('v2.4: no errors (sculpt)', errors.length === 0 && (await page.textContent('[data-testid="mode-toggle"]')) === 'Object Mode', errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // iPad: edit mode by touch.
 {
   const { ctx, page, errors } = await open({ width: 820, height: 1180 }, { touch: true, dpr: 2 });
