@@ -34,6 +34,8 @@ export interface Animation {
   camera: CameraKey[];
   /** Bone pose keys: armature id → bone name → keys. */
   poses?: Record<string, Record<string, PoseKey[]>>;
+  /** Camera shakes (impacts, explosions, quakes), added on top of the camera's motion. */
+  shakes?: import('./shake').CameraShake[];
 }
 
 export interface PoseKey {

@@ -13,7 +13,9 @@ import type { M4 } from './rig';
 import type { MeshData, PrimitiveType, SceneDoc, SceneObject, Vec3 } from './types';
 import { PRIMITIVES } from './types';
 
-export const PARTICLE_SHAPES = ['sphere', 'cube', 'drop', 'flake'] as const;
+export const PARTICLE_SHAPES = ['sphere', 'cube', 'drop', 'flake', 'fire', 'smoke'] as const;
+/** Soft, camera-facing puffs that grow and fade over their life. */
+export const isBillboard = (shape: ParticleShape) => shape === 'fire' || shape === 'smoke';
 export type ParticleShape = (typeof PARTICLE_SHAPES)[number];
 export const PARTICLE_GROUND = ['none', 'stop'] as const;
 
@@ -38,6 +40,8 @@ export interface ParticleSettings {
   color: string;
   /** Glow (for sparks, embers): 0..1. */
   glow: number;
+  /** Steady wind: a push in m/s² along X, Y, Z (e.g. [1.5, 0, 0] blows smoke sideways). */
+  wind?: Vec3;
   /** What happens at the ground (z = 0): pass through, or stop and lie there. */
   ground: (typeof PARTICLE_GROUND)[number];
   /** Hide the emitting object itself in renders (Blender's "Show Emitter"). */
@@ -63,12 +67,16 @@ export const DEFAULT_PARTICLES: ParticleSettings = {
   seed: 1,
 };
 
-/** Quick setups for common effects. */
-export const PARTICLE_PRESETS: { id: string; label: string; settings: Partial<ParticleSettings> }[] = [
+/** Quick setups. `burst`: emit everything within this many frames from the current frame (explosions). */
+export const PARTICLE_PRESETS: { id: string; label: string; settings: Partial<ParticleSettings>; burst?: number }[] = [
   { id: 'sparks', label: 'Sparks', settings: { count: 600, lifetime: 24, speed: 4, random: 3, gravity: 1, size: 0.025, sizeRandom: 0.5, shape: 'sphere', color: '#ffb347', glow: 1, ground: 'stop' } },
   { id: 'fountain', label: 'Fountain', settings: { count: 1500, lifetime: 40, speed: 6, random: 0.6, gravity: 1, size: 0.04, sizeRandom: 0.3, shape: 'drop', color: '#9fd3ff', glow: 0, ground: 'none' } },
   { id: 'rain', label: 'Rain', settings: { count: 3000, lifetime: 40, speed: 0, random: 0.2, gravity: 1.2, size: 0.03, sizeRandom: 0.2, shape: 'drop', color: '#cfe4ff', glow: 0, ground: 'none', hideEmitter: true } },
   { id: 'snow', label: 'Snow', settings: { count: 2500, lifetime: 160, speed: 0, random: 0.4, gravity: 0.06, size: 0.04, sizeRandom: 0.5, shape: 'flake', color: '#ffffff', glow: 0, ground: 'stop', hideEmitter: true } },
+  { id: 'fire', label: 'Fire', settings: { count: 1800, lifetime: 26, speed: 0.6, random: 0.35, gravity: -0.3, size: 0.32, sizeRandom: 0.4, shape: 'fire', color: '#ff7a1a', glow: 1, ground: 'none' } },
+  { id: 'smoke', label: 'Smoke', settings: { count: 700, lifetime: 130, speed: 0.5, random: 0.3, gravity: -0.12, size: 0.7, sizeRandom: 0.4, shape: 'smoke', color: '#5d5d5d', glow: 0, ground: 'none', wind: [0.35, 0, 0] } },
+  { id: 'explosion', label: 'Explosion', burst: 3, settings: { count: 900, lifetime: 34, speed: 5, random: 5, gravity: 0.3, size: 0.55, sizeRandom: 0.5, shape: 'fire', color: '#ff8a2a', glow: 1, ground: 'none' } },
+  { id: 'dust', label: 'Dust cloud', burst: 4, settings: { count: 450, lifetime: 140, speed: 2.5, random: 3, gravity: -0.03, size: 1.1, sizeRandom: 0.5, shape: 'smoke', color: '#8a7f72', glow: 0, ground: 'none', wind: [0.3, 0, 0] } },
   { id: 'debris', label: 'Debris', settings: { count: 400, lifetime: 120, speed: 5, random: 4, gravity: 1, size: 0.12, sizeRandom: 0.7, shape: 'cube', color: '#7d746a', glow: 0, ground: 'stop' } },
 ];
 
@@ -154,13 +162,15 @@ export interface ParticleFrame {
   spins: number[];
   /** Direction of travel (for stretched raindrops), unit vectors. */
   dirs: Vec3[];
+  /** How far through its life each particle is (0 = just born, 1 = about to vanish). */
+  life: number[];
 }
 
 const G = 9.81;
 
 /** Where every living particle of an emitter is at `frame` (seconds = frames / fps). */
 export function particlesAt(doc: SceneDoc, id: string, frame: number, fps: number): ParticleFrame {
-  const out: ParticleFrame = { positions: [], sizes: [], spins: [], dirs: [] };
+  const out: ParticleFrame = { positions: [], sizes: [], spins: [], dirs: [], life: [] };
   const o = doc.objects[id];
   const s = o?.particles;
   if (!o || !s || !o.visible) return out;
@@ -169,6 +179,7 @@ export function particlesAt(doc: SceneDoc, id: string, frame: number, fps: numbe
   const n = seeds.p.length;
   const span = Math.max(0, s.end - s.start);
   const g = s.gravity * G;
+  const w: Vec3 = s.wind ?? [0, 0, 0];
   let lastBirth = -Infinity;
   let M: M4 | null = null;
   for (let i = 0; i < n; i++) {
@@ -189,7 +200,7 @@ export function particlesAt(doc: SceneDoc, id: string, frame: number, fps: numbe
     let t = age / fps;
     // Stop at the ground: find when it reaches z = 0 going down and hold it there.
     if (s.ground === 'stop' && p0[2] >= 0) {
-      const a = -g / 2, b = v[2], c = p0[2];
+      const a = (w[2] - g) / 2, b = v[2], c = p0[2];
       let hit = Infinity;
       if (Math.abs(a) > 1e-9) {
         const d = b * b - 4 * a * c;
@@ -200,13 +211,14 @@ export function particlesAt(doc: SceneDoc, id: string, frame: number, fps: numbe
       } else if (b < 0) hit = -c / b;
       if (t > hit) t = hit;
     }
-    const pos: Vec3 = [p0[0] + v[0] * t, p0[1] + v[1] * t, p0[2] + v[2] * t - (g * t * t) / 2];
-    const vel: Vec3 = [v[0], v[1], v[2] - g * t];
+    const pos: Vec3 = [p0[0] + v[0] * t + (w[0] * t * t) / 2, p0[1] + v[1] * t + (w[1] * t * t) / 2, p0[2] + v[2] * t + ((w[2] - g) * t * t) / 2];
+    const vel: Vec3 = [v[0] + w[0] * t, v[1] + w[1] * t, v[2] + (w[2] - g) * t];
     const vl = Math.hypot(...vel) || 1;
     out.positions.push(pos);
     out.sizes.push(Math.max(0.001, s.size * (1 + (seeds.size[i] - 1) * s.sizeRandom)));
     out.spins.push(seeds.spin[i] + age * 3);
     out.dirs.push([vel[0] / vl, vel[1] / vl, vel[2] / vl]);
+    out.life.push(age / s.lifetime);
   }
   return out;
 }

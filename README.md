@@ -5,6 +5,43 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Quick Effects (v3.11)
+
+- **Object → Quick Effects** (also in the long-press menu), like Blender's: **Quick Explode** (breaks the object into pieces, blasts them apart at the current frame with a fireball and camera shake, adds a floor if needed, bakes — one undo removes it all), **Quick Fire**, **Quick Smoke**, **Quick Float** (adds a sea if there's none)
+
+## Animated rigid bodies (v3.10)
+
+- Physics → Rigid body → Passive → **Animated (follows its keys)**: a keyframed object (wrecking ball, bulldozer, meteor) that smashes into active objects during the bake, like Blender's Animated option
+
+## Force fields (v3.9)
+
+- **Add → Force Field**: Explosion, Push, Wind, Tornado — an empty with Blender-style force field settings in its Physics tab: **Force** (away from the centre, or pulling with negative strength), **Wind** (along the empty's Z axis), **Vortex** (swirl), strength, reach and an optional frame window
+- Fields push rigid bodies when you **Bake physics** — an Explosion for 2 frames throws fractured pieces outwards
+- New example: *Meteor strike* — a burning meteor, fireball, dust cloud, a town blown apart and camera shake
+
+## Tsunami / giant wave (v3.8)
+
+- Water tab → **Giant wave (tsunami)**: one wall of water (height, speed, length, start frame) runs across the sea in the wave direction, lifting and carrying everything that floats. Run the water on under the land and the wave floods over the shore
+- New example: *Tsunami harbour* — boats lifted and swept to the quay while the camera shakes
+- Water is a surface, not a fluid simulation: no splashing or breaking, and floating objects pass through buildings
+
+## Camera shake and floating (v3.7)
+
+- **Scene → Camera shake**: Impact, Explosion, Earthquake or Rumble at the current frame — a sharp jolt that dies away, seen through the scene camera and in videos (like a Noise modifier on the camera in Blender's Graph Editor)
+- **Physics → Float on water**: boats, buoys and debris bob and tilt with the ocean waves under them; children (a cabin, a mast) follow. The *Storm at the lighthouse* example now has a boat
+
+## Ocean waves and explosions (v3.6)
+
+- **Add → Water / Ocean**: a 40 m sea with real waves. Water tab: **Calm / Choppy / Rough / Storm**, wave height, wave size, direction — the surface itself moves frame by frame, like Blender's Ocean modifier (simplified: no foam or spray)
+- New example: *Storm at the lighthouse* — rough sea, rain blown sideways, a sweeping lamp
+- Particle presets **Explosion** (a fire burst) and **Dust cloud** start at the current frame — combine with Cell Fracture and physics for blasts
+
+## Fire and smoke (v3.5)
+
+- Particle shapes **Fire** (glowing puffs that start white-hot, turn orange then dark red and fade) and **Smoke** (soft grey puffs that grow and thin out), with presets in Physics → Particles. They always face the camera
+- **Wind** (X / Y, m/s²) pushes particles sideways — smoke drifting, slanted rain. Negative gravity makes particles rise
+- New example: *Campfire*. It's a sprite effect, not a fluid simulation like Blender's Mantaflow — it reads well in shorts but won't swirl around objects
+
 ## Particles (v3.4)
 
 - Physics tab → **Particles** (Blender's Particles, Emitter type): an object emits up to 20,000 small spheres, cubes, drops or flakes from its surface over a frame range — speed along the surface, random speed, gravity, lifetime, size, colour, glow, land-on-the-ground, hide the emitter in renders

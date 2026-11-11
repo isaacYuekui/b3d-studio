@@ -171,7 +171,11 @@ export interface SceneObject {
   /** Text objects (a mesh made from a font): editing the mesh itself turns it into a plain mesh. */
   text?: import('./text').TextData;
   /** Water surfaces: animated ripples (size of the waves in metres, speed in m/s). */
-  water?: { waves: number; speed: number };
+  water?: import('./ocean').WaterSettings;
+  /** Force field (on an empty): pushes rigid bodies during the physics bake. */
+  field?: import('./fields').ForceField;
+  /** Floats on the water under it, bobbing and tilting with the waves. */
+  float?: import('./ocean').FloatSettings;
 }
 
 export const BACKGROUNDS = ['color', 'hdri', 'blurred'] as const;

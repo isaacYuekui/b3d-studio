@@ -1013,6 +1013,237 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Quick Effects (v3.11): Object → Quick Effects → Quick Explode in one tap.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'crate', name: 'Crate', transform: { position: [0, 0, 1] } },
+      { type: 'setAnimation', start: 1, end: 60 },
+    ] });
+    s.select('crate');
+    s.setFrame(12);
+  });
+  await page.click('[data-menu="Object"]');
+  await page.hover('.menu-item:has-text("Quick Effects")');
+  await page.click('.menu [data-action="quick.explode"]');
+  await page.waitForFunction(() => Object.values(window.__b3d.store.getState().doc.objects).filter((o) => o.rigid?.type === 'active').length > 10, null, { timeout: 90000 });
+  const r = await page.evaluate(() => {
+    const d = window.__b3d.store.getState().doc;
+    const pieces = Object.values(d.objects).filter((o) => o.rigid?.type === 'active');
+    const flew = pieces.filter((o) => { const k = d.animation.tracks[o.id]; return k && Math.hypot(k[k.length - 1].transform.position[0], k[k.length - 1].transform.position[1]) > 1.5; }).length;
+    return { pieces: pieces.length, flew, ground: Object.values(d.objects).some((o) => o.rigid?.type === 'passive'), field: Object.values(d.objects).some((o) => o.field?.start === 12), shake: d.animation.shakes?.[0]?.start };
+  });
+  check('v3.11: Quick Explode fractures, blasts, bakes and shakes in one go', r.pieces >= 12 && r.flew > r.pieces / 2 && r.ground && r.field && r.shake === 12, JSON.stringify(r));
+  await page.keyboard.press('Control+z');
+  const undone = await page.evaluate(() => !!window.__b3d.store.getState().doc.objects.crate && Object.keys(window.__b3d.store.getState().doc.objects).length === 1);
+  check('v3.11: one undo removes the whole effect', undone);
+  check('v3.11: no errors (quick effects)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Animated rigid bodies (v3.10): a keyed passive paddle shoves an active box in the bake.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'ground', transform: { position: [0, 0, -0.5], scale: [30, 30, 0.5] } },
+      { type: 'setRigidBody', id: 'ground', rigid: { type: 'passive' } },
+      { type: 'add', primitive: 'cube', id: 'box', transform: { position: [0, 0, 0.5], scale: [0.5, 0.5, 0.5] } },
+      { type: 'setRigidBody', id: 'box', rigid: {} },
+      { type: 'add', primitive: 'cube', id: 'paddle', name: 'Paddle', transform: { position: [-4, 0, 0.6], scale: [0.2, 1, 0.6] } },
+      { type: 'setKeyframe', id: 'paddle', frame: 1, easing: 'linear', transform: { position: [-4, 0, 0.6], rotation: [0, 0, 0], scale: [0.2, 1, 0.6] } },
+      { type: 'setKeyframe', id: 'paddle', frame: 25, easing: 'linear', transform: { position: [4, 0, 0.6], rotation: [0, 0, 0], scale: [0.2, 1, 0.6] } },
+      { type: 'setRigidBody', id: 'paddle', rigid: { type: 'passive' } },
+      { type: 'setAnimation', start: 1, end: 48 },
+    ] });
+    s.select('paddle');
+  });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('[data-testid="rigid-animated"]');
+  await page.click('[data-testid="physics-bake"]');
+  await page.waitForFunction(() => (window.__b3d.store.getState().doc.animation?.tracks.box?.length ?? 0) > 5, null, { timeout: 60000 });
+  const r = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; const k = d.animation.tracks.box; return { animated: d.objects.paddle.rigid.animated, x: k[k.length - 1].transform.position[0], paddleKeys: d.animation.tracks.paddle.length }; });
+  check('v3.10: an Animated passive paddle pushes the box during the bake and keeps its own keys', r.animated === true && r.x > 4 && r.paddleKeys === 2, JSON.stringify(r));
+  check('v3.10: no errors (animated rigid bodies)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Force fields (v3.9): Add → Force Field → Explosion; it blows rigid bodies apart in the bake.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'ground', transform: { position: [0, 0, -0.5], scale: [20, 20, 0.5] } },
+      { type: 'setRigidBody', id: 'ground', rigid: { type: 'passive' } },
+      { type: 'add', primitive: 'cube', id: 'l', transform: { position: [-1.2, 0, 0.5], scale: [0.5, 0.5, 0.5] } },
+      { type: 'setRigidBody', id: 'l', rigid: {} },
+      { type: 'add', primitive: 'cube', id: 'r', transform: { position: [1.2, 0, 0.5], scale: [0.5, 0.5, 0.5] } },
+      { type: 'setRigidBody', id: 'r', rigid: {} },
+      { type: 'setAnimation', start: 1, end: 48 },
+    ] });
+    s.setFrame(10);
+  });
+  await page.click('[data-menu="Add"]');
+  await page.hover('.menu-item:has-text("Force Field")');
+  await page.click('.menu [data-action="add.field.blast"]');
+  const field = await page.evaluate(() => {
+    const s = window.__b3d.store, id = s.getState().selection;
+    s.dispatch({ type: 'transform', id, position: [0, 0, 0.3] }, { select: false });
+    return s.getState().doc.objects[id];
+  });
+  check('v3.9: Add → Force Field → Explosion makes an empty with a blast at the current frame', field.type === 'empty' && field.field?.type === 'force' && field.field.start === 10 && field.field.end === 12, JSON.stringify(field.field));
+  await page.click('[data-prop-tab="physics"]');
+  const panel = await page.isVisible('[data-field-preset="wind"]');
+  await page.evaluate(async () => { await window.__b3d.prepare([{ type: 'bakePhysics' }]); window.__b3d.store.dispatch({ type: 'bakePhysics' }); });
+  const xs = await page.evaluate(() => { const t = window.__b3d.store.getState().doc.animation.tracks; return [t.l[t.l.length - 1].transform.position[0], t.r[t.r.length - 1].transform.position[0]]; });
+  check('v3.9: the bake blows the boxes apart (field settings in the Physics tab)', panel && xs[0] < -3 && xs[1] > 3, JSON.stringify(xs));
+  check('v3.9: no errors (force fields)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Tsunami surge (v3.8): a giant wave crosses the water and lifts what floats.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'addWater', id: 'sea', size: [120, 40], level: 0, direction: 0 },
+      { type: 'add', primitive: 'cube', id: 'raft', name: 'Raft', transform: { position: [0, 0, 0], scale: [1, 1, 0.2] } },
+      { type: 'setFloat', id: 'raft', float: { offset: 0 } },
+    ] });
+    s.select('sea');
+    s.setFrame(1);
+  });
+  await page.click('[data-prop-tab="data"]');
+  await page.click('[data-testid="surge-toggle"]');
+  const surge = await page.evaluate(() => window.__b3d.store.getState().doc.objects.sea.water.surge);
+  const lift = await page.evaluate(() => {
+    const s = window.__b3d.store, raft = window.__b3d.viewport().entries.get('raft').node;
+    const at = (f) => { s.setFrame(f); return Math.round(raft.position.y * 100) / 100; };
+    const zs = [1, 40, 80, 100, 120].map(at);
+    return { zs, x: Math.round(raft.position.x * 100) / 100 };
+  });
+  check('v3.8: Giant wave lifts the floating raft as it passes and carries it along', surge?.height === 8 && Math.max(...lift.zs) > 4 && lift.zs[0] < 1 && lift.x > 1, JSON.stringify({ surge, lift }));
+  check('v3.8: no errors (tsunami)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Camera shake and floating on water (v3.7).
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'addWater', id: 'sea', size: [40, 40], level: 0, height: 1.5, waves: 2 },
+      { type: 'add', primitive: 'cube', id: 'buoy', name: 'Buoy', transform: { position: [2, 3, 0], scale: [0.5, 0.5, 0.5] } },
+      { type: 'setCamera', position: [0, -14, 4], target: [0, 0, 0] },
+    ] });
+    s.select(null);
+    s.setFrame(10);
+  });
+  await page.click('.prop-section-head:has-text("Camera shake")');
+  await page.click('[data-shake="impact"]');
+  const shakes = await page.evaluate(() => window.__b3d.store.getState().doc.animation?.shakes);
+  check('v3.7: Scene → Camera shake adds an impact at the current frame', shakes?.length === 1 && shakes[0].start === 10 && shakes[0].end > 20, JSON.stringify(shakes));
+  const aim = await page.evaluate(async () => {
+    const s = window.__b3d.store, vp = window.__b3d.viewport();
+    vp.viewCamera();
+    await new Promise((r) => setTimeout(r, 600));
+    const at = (f) => { s.setFrame(f); const t = vp.camera.target; return [t.x, t.y, t.z].map((v) => Math.round(v * 1000) / 1000); };
+    return { before: at(8), during: at(13), after: at(60) };
+  });
+  check('v3.7: the camera jolts during the shake and settles after', JSON.stringify(aim.before) === JSON.stringify(aim.after) && JSON.stringify(aim.during) !== JSON.stringify(aim.before), JSON.stringify(aim));
+  await page.evaluate(() => { window.__b3d.store.setCameraView(false); window.__b3d.store.select('buoy'); });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('[data-testid="float-toggle"]');
+  const bob = await page.evaluate(() => {
+    const s = window.__b3d.store, node = window.__b3d.viewport().entries.get('buoy').node;
+    const y = (f) => { s.setFrame(f); return Math.round(node.position.y * 1000) / 1000; };
+    return { f: s.getState().doc.objects.buoy.float, a: y(1), b: y(12), c: y(24) };
+  });
+  check('v3.7: Float on water makes it bob with the waves', bob.f?.offset === 0 && new Set([bob.a, bob.b, bob.c]).size > 1, JSON.stringify(bob));
+  check('v3.7: no errors (shake, float)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Ocean waves and burst presets (v3.6).
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'delete', ids: [...s.getState().doc.order] });
+  });
+  await page.click('[data-menu="Add"]');
+  await page.click('.menu [data-action="add.water"]');
+  await page.waitForTimeout(500);
+  const sea = await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const id = s.getState().selection;
+    const node = window.__b3d.viewport().entries.get(id).node;
+    const y = (f) => { s.setFrame(f); return node.getVerticesData('position')[301]; };
+    return { id, water: s.getState().doc.objects[id].water, verts: node.getTotalVertices(), a: y(1), b: y(13), a2: y(1) };
+  });
+  check('v3.6: Add → Water / Ocean makes a wavy surface that moves with the frame', sea.water?.height > 0 && sea.verts > 2000 && sea.a !== sea.b && sea.a === sea.a2, JSON.stringify(sea));
+  await page.click('[data-prop-tab="data"]');
+  await page.click('[data-sea="storm"]');
+  const storm = await page.evaluate((id) => window.__b3d.store.getState().doc.objects[id].water, sea.id);
+  check('v3.6: the Storm button raises the waves', storm.height === 3.5 && storm.waves >= 5.6, JSON.stringify(storm));
+  await page.evaluate(() => window.__b3d.viewport().frame(false));
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: `${shots}/ocean.png` });
+  // A burst preset starts at the current frame.
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'add', primitive: 'sphere', id: 'bomb', name: 'Bomb', transform: { position: [0, 0, 1] } });
+    s.select('bomb');
+    s.setFrame(30);
+  });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('.prop-section-head:has-text("Particles")');
+  await page.click('[data-particle-preset="explosion"]');
+  const ex = await page.evaluate(() => window.__b3d.store.getState().doc.objects.bomb.particles);
+  check('v3.6: the Explosion preset bursts at the current frame', ex?.start === 30 && ex.end === 33 && ex.shape === 'fire', JSON.stringify(ex));
+  check('v3.6: no errors (ocean, bursts)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Fire and smoke (v3.5): camera-facing puffs with a colour per particle.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'sphere', id: 'f', name: 'Fire source', transform: { position: [0, 0, 0.3], scale: [0.3, 0.3, 0.1] } },
+      { type: 'setAnimation', start: 1, end: 60 },
+    ] });
+    s.select('f');
+  });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('.prop-section-head:has-text("Particles")');
+  await page.click('[data-particle-preset="fire"]');
+  await page.evaluate(() => { const s = window.__b3d.store; s.setFrame(40); s.setShading('rendered'); window.__b3d.viewport().frame(false); });
+  await page.waitForTimeout(1500);
+  const fire = await page.evaluate(() => {
+    const m = window.__b3d.viewport().scene.getMeshByName('f-particles');
+    return { n: m?.thinInstanceCount, unlit: m?.material?.unlit, add: m?.material?.alphaMode, colours: !!m?.getVertexBuffer('instanceColor'), shape: window.__b3d.store.getState().doc.objects.f.particles.shape };
+  });
+  check('v3.5: the Fire preset makes glowing, camera-facing puffs with their own colours', fire.shape === 'fire' && fire.n > 100 && fire.unlit === true && fire.add === 1 && fire.colours, JSON.stringify(fire));
+  await page.screenshot({ path: `${shots}/fire.png` });
+  await page.evaluate(() => window.__b3d.store.setShading('solid'));
+  check('v3.5: no errors (fire)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Cell Fracture (v3.3): break a block into rigid pieces from the Physics tab, then bake.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });
@@ -1088,7 +1319,8 @@ const setNumber = async (page, scope, label, value) => {
   const text = await p2.page.textContent('[data-testid="whatsnew"]');
   await p2.page.click('[data-testid="whatsnew"] .btn');
   const gone = !(await p2.page.isVisible('[data-testid="whatsnew"]'));
-  check("v3.2: What's new lists the changes since the last visit and closes", /v3\.2/.test(text) && /v3\.1/.test(text) && !/v3\.0/.test(text) && gone, text.slice(0, 120));
+  const newest = await p2.page.evaluate(() => (document.querySelector('.statusbar')?.textContent.match(/v(\d+\.\d+)/) ?? [])[1]);
+  check("v3.2: What's new lists the changes since the last visit (newest first) and closes", text.includes(`v${newest}`) && !/v3\.0\s/.test(text) && gone, `${newest} | ${text.slice(0, 120)}`);
   await p2.ctx.close();
 }
 

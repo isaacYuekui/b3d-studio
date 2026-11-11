@@ -20,6 +20,11 @@ import { DEFAULT_RIGID, RIGID_SHAPES, RIGID_TYPES, simulate } from './physics';
 import { fracturePieces } from './fracture';
 import { DEFAULT_PARTICLES, PARTICLE_GROUND, PARTICLE_SHAPES } from './particles';
 import type { ParticleSettings } from './particles';
+import type { FloatSettings, Surge, WaterSettings } from './ocean';
+import { DEFAULT_SURGE } from './ocean';
+import type { CameraShake } from './shake';
+import { DEFAULT_FIELD, FIELD_TYPES } from './fields';
+import type { FieldType, ForceField } from './fields';
 import type { RigidBody } from './physics';
 import type { FontId, TextAlign, TextData } from './text';
 import { compact } from './mesh/topology';
@@ -123,7 +128,9 @@ export type Command =
   /** Boolean (applied): cut / join / intersect `cutter` into `id`. The cutter is hidden unless keepCutter. */
   | { type: 'boolean'; id: string; cutter: string; op: BooleanOp; keepCutter?: boolean }
   /** Lake / sea / river surface: a flat plane at z = level with animated ripples. */
-  | { type: 'addWater'; id: string; name?: string; size: [number, number]; level: number; position?: [number, number]; color?: string; clarity?: number; waves?: number; speed?: number }
+  | { type: 'addWater'; id: string; name?: string; size: [number, number]; level: number; position?: [number, number]; color?: string; clarity?: number; waves?: number; speed?: number; height?: number; direction?: number }
+  /** Change a water surface: ripple size and speed, ocean wave height and direction. */
+  | { type: 'setWater'; id: string; water: Partial<Omit<WaterSettings, 'surge'>> & { surge?: Surge | null } }
   /** Sky, sun light, exposure and haze for a time of day; heading turns the sky so the sun shines from that azimuth (degrees). */
   | { type: 'setTimeOfDay'; time: TimeOfDay; heading?: number; fog?: number }
   | { type: 'setCamera'; position: Vec3; target: Vec3 }
@@ -131,6 +138,14 @@ export type Command =
   | { type: 'addText'; id?: string; name?: string; text: Partial<TextData> & { body: string }; transform?: Partial<Transform>; material?: Partial<Material>; parentId?: string | null }
   /** Change a text object's words, font, size, thickness or alignment (rebuilds its mesh). */
   | { type: 'setText'; id: string; text: Partial<TextData> }
+  /** Force field on an empty (null removes it): Force, Wind or Vortex, acting in the physics bake. */
+  | { type: 'setField'; id: string; field: Partial<ForceField> | null }
+  /** Float an object on the water under it (null stops it floating). */
+  | { type: 'setFloat'; id: string; float: FloatSettings | null }
+  /** Camera shake from `start` to `end` (an impact, explosion or earthquake). */
+  | { type: 'addCameraShake'; start: number; end: number; strength: number; frequency?: number }
+  /** Remove camera shakes: the one starting at `start`, or all of them. */
+  | { type: 'removeCameraShake'; start?: number }
   /** Rigid body settings for one object (null removes it from the simulation). */
   | { type: 'setRigidBody'; id: string; rigid: Partial<RigidBody> | null }
   /** Particle system on an object (null removes it). */
@@ -875,7 +890,18 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       const [x, y] = cmd.position ?? [0, 0];
       const clarity = cmd.clarity ?? 0.35;
       const r = applyCommand(doc, { type: 'add', primitive: 'mesh', id: cmd.id, name: cmd.name ?? 'Water', mesh, material: { baseColor: cmd.color ?? '#1d4f5c', roughness: 0.03, metallic: 0, alpha: Math.round((1 - clarity * 0.6) * 100) / 100 }, transform: { position: [x, y, cmd.level] } }, idGen);
-      return { doc: withObject(r.doc, { ...r.doc.objects[cmd.id], water: { waves: cmd.waves ?? 1.2, speed: cmd.speed ?? 0.25 } }), created: r.created };
+      const water: WaterSettings = { waves: cmd.waves ?? 1.2, speed: cmd.speed ?? 0.25 };
+      if (cmd.height) water.height = cmd.height;
+      if (cmd.direction !== undefined) water.direction = cmd.direction;
+      return { doc: withObject(r.doc, { ...r.doc.objects[cmd.id], water }), created: r.created };
+    }
+
+    case 'setWater': {
+      const o = requireObj(doc, cmd.id);
+      if (!o.water) throw new CommandError(`${o.name} isn't water (add water with Add → Water or addWater)`);
+      const water: WaterSettings = { ...o.water, ...(cmd.water as Partial<WaterSettings>) };
+      if (cmd.water.surge === null) delete water.surge;
+      return { doc: withObject(doc, { ...o, water }), created: [] };
     }
 
     case 'setTimeOfDay': {
@@ -967,6 +993,46 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
         if (!next.tracks[id] && keys.length && base.objects[id]) base = withObject(base, { ...base.objects[id], transform: clone(keys[0].transform) });
       }
       return { doc: withAnimation(base, next), created: [] };
+    }
+
+    case 'setField': {
+      const o = requireObj(doc, cmd.id);
+      if (o.type !== 'empty') throw new CommandError(`${o.name}: force fields go on empties (Add → Force Field)`);
+      const next = { ...o };
+      if (cmd.field === null) delete next.field;
+      else {
+        const f: ForceField = { ...DEFAULT_FIELD, ...o.field, ...cmd.field };
+        if (f.start === undefined) delete f.start;
+        if (f.end === undefined) delete f.end;
+        if (f.start !== undefined && f.end !== undefined && f.end < f.start) throw new CommandError('The field must end after it starts');
+        next.field = f;
+      }
+      return { doc: withObject(doc, next), created: [] };
+    }
+
+    case 'setFloat': {
+      const o = requireObj(doc, cmd.id);
+      if (o.water) throw new CommandError("Water can't float on water");
+      const next = { ...o };
+      if (cmd.float) next.float = { ...cmd.float };
+      else delete next.float;
+      return { doc: withObject(doc, next), created: [] };
+    }
+
+    case 'addCameraShake': {
+      const a = animationOf(doc);
+      if (cmd.end <= cmd.start) throw new CommandError('A camera shake needs its end after its start');
+      const shake: CameraShake = { start: cmd.start, end: cmd.end, strength: cmd.strength, ...(cmd.frequency !== undefined ? { frequency: cmd.frequency } : {}) };
+      const shakes = [...(a.shakes ?? []).filter((s) => s.start !== cmd.start), shake].sort((x, y) => x.start - y.start);
+      return { doc: withAnimation(doc, { ...a, shakes }), created: [] };
+    }
+
+    case 'removeCameraShake': {
+      const a = animationOf(doc);
+      const shakes = cmd.start === undefined ? [] : (a.shakes ?? []).filter((s) => s.start !== cmd.start);
+      const next: ReturnType<typeof animationOf> = { ...a, shakes };
+      if (!shakes.length) delete next.shakes;
+      return { doc: withAnimation(doc, next), created: [] };
     }
 
     case 'setAnimation': {
@@ -1344,10 +1410,16 @@ export function validateSceneObject(raw: unknown): SceneObject {
   if (obj.type === 'mesh' && v.skin !== undefined) {
     obj.skin = validateSkin(v.skin, `object ${v.id}`);
   }
+  if (obj.type === 'empty' && v.field !== undefined) obj.field = validateField(v.field, false) as ForceField;
+  if (v.float !== undefined) {
+    if (!isRecord(v.float) || !inRange(v.float.offset, -100, 100)) fail(`object ${v.id}: float invalid`);
+    obj.float = { offset: v.float.offset as number };
+  }
   if (obj.type === 'mesh' && v.water !== undefined) {
     const w = v.water;
-    if (!isRecord(w) || !inRange(w.waves, 0.05, 50) || !inRange(w.speed, 0, 20)) fail(`object ${v.id}: water invalid`);
-    obj.water = { waves: w.waves as number, speed: w.speed as number };
+    if (!isRecord(w)) fail(`object ${v.id}: water invalid`);
+    obj.water = validateWater(w, false) as WaterSettings;
+    if (obj.water.surge === null) delete obj.water.surge;
   }
   return obj;
 }
@@ -1390,6 +1462,43 @@ export function validateSceneDoc(v: unknown): SceneDoc {
   return doc;
 }
 
+/** Force field settings; `partial` checks only the fields given. */
+export function validateField(v: unknown, partial: boolean): Partial<ForceField> {
+  if (!isRecord(v)) fail('field must be an object: {type, strength, radius, start?, end?}');
+  const out: Partial<ForceField> = {};
+  for (const k of Object.keys(v)) if (!['type', 'strength', 'radius', 'start', 'end'].includes(k)) fail(`field has no setting "${k}" (use type, strength, radius, start, end)`);
+  if (v.type !== undefined) out.type = (FIELD_TYPES as readonly unknown[]).includes(v.type) ? (v.type as FieldType) : fail(`field.type must be one of ${FIELD_TYPES.join(', ')}`);
+  if (v.strength !== undefined) out.strength = inRange(v.strength, -100000, 100000) ? (v.strength as number) : fail('field.strength must be -100000..100000 m/s²');
+  if (v.radius !== undefined) out.radius = inRange(v.radius, 0, 100000) ? (v.radius as number) : fail('field.radius must be 0..100000 m (0 = everywhere)');
+  // null clears the frame window (active all the time).
+  if (v.start === null && partial) out.start = undefined;
+  else if (v.start !== undefined) out.start = isFrame(v.start) ? (v.start as number) : fail('field.start must be a frame');
+  if (v.end === null && partial) out.end = undefined;
+  else if (v.end !== undefined) out.end = isFrame(v.end) ? (v.end as number) : fail('field.end must be a frame');
+  if (!partial) return { ...DEFAULT_FIELD, ...out };
+  return out;
+}
+
+/** Water settings; `partial` checks only the fields given. */
+export function validateWater(v: unknown, partial: boolean): Partial<Omit<WaterSettings, 'surge'>> & { surge?: Surge | null } {
+  if (!isRecord(v)) fail('water must be an object');
+  const out: Partial<Omit<WaterSettings, 'surge'>> & { surge?: Surge | null } = {};
+  for (const k of Object.keys(v)) if (!['waves', 'speed', 'height', 'direction', 'surge'].includes(k)) fail(`water has no setting "${k}" (use waves, speed, height, direction, surge)`);
+  if (v.surge === null && partial) out.surge = null;
+  else if (v.surge !== undefined) {
+    const g = v.surge;
+    if (!isRecord(g)) fail('water.surge must be {height, start, speed, width, from} or null');
+    const pick = (k: keyof Surge, lo: number, hi: number, msg: string) => (g[k] === undefined ? DEFAULT_SURGE[k] : inRange(g[k], lo, hi) ? (g[k] as number) : fail(`water.surge.${k} must be ${msg}`));
+    out.surge = { height: pick('height', 0.1, 100, '0.1..100 m'), start: pick('start', -100000, 100000, 'a frame'), speed: pick('speed', 0.1, 300, '0.1..300 m/s'), width: pick('width', 1, 1000, '1..1000 m'), from: pick('from', -10000, 10000, 'metres') };
+  }
+  if (v.waves !== undefined) out.waves = inRange(v.waves, 0.05, 50) ? (v.waves as number) : fail('water.waves must be 0.05..50 m');
+  if (v.speed !== undefined) out.speed = inRange(v.speed, 0, 20) ? (v.speed as number) : fail('water.speed must be 0..20 m/s');
+  if (v.height !== undefined) out.height = inRange(v.height, 0, 30) ? (v.height as number) : fail('water.height must be 0..30 m');
+  if (v.direction !== undefined) out.direction = inRange(v.direction, -3600, 3600) ? (v.direction as number) : fail('water.direction must be degrees');
+  if (!partial && (out.waves === undefined || out.speed === undefined)) fail('water needs waves and speed');
+  return out;
+}
+
 /** Particle settings; `partial` checks only the fields given. */
 export function validateParticles(v: unknown, partial: boolean): Partial<ParticleSettings> {
   if (!isRecord(v)) fail('particles must be an object');
@@ -1407,6 +1516,7 @@ export function validateParticles(v: unknown, partial: boolean): Partial<Particl
     color: [(x) => isColor(x), 'a colour like #ffaa33'],
     glow: [(x) => inRange(x, 0, 1), '0..1'],
     ground: [(x) => (PARTICLE_GROUND as readonly unknown[]).includes(x), PARTICLE_GROUND.join(', ')],
+    wind: [(x) => isVec3In(x, 100), '[x, y, z] m/s², each -100..100'],
     hideEmitter: [(x) => typeof x === 'boolean', 'true/false'],
     seed: [(x) => Number.isInteger(x) && inRange(x, 0, 99999), 'a whole number 0..99999'],
   };
@@ -1424,7 +1534,8 @@ export function validateParticles(v: unknown, partial: boolean): Partial<Particl
 export function validateRigid(v: unknown, partial: boolean): Partial<RigidBody> {
   if (!isRecord(v)) fail('rigid must be an object');
   const out: Partial<RigidBody> = {};
-  for (const k of Object.keys(v)) if (!['type', 'shape', 'mass', 'friction', 'bounce', 'velocity'].includes(k)) fail(`rigid has no setting "${k}" (use type, shape, mass, friction, bounce, velocity)`);
+  for (const k of Object.keys(v)) if (!['type', 'shape', 'mass', 'friction', 'bounce', 'velocity', 'animated'].includes(k)) fail(`rigid has no setting "${k}" (use type, shape, mass, friction, bounce, velocity, animated)`);
+  if (v.animated !== undefined) out.animated = typeof v.animated === 'boolean' ? v.animated : fail('rigid.animated must be true/false');
   if (v.type !== undefined) out.type = (RIGID_TYPES as readonly unknown[]).includes(v.type) ? (v.type as RigidBody['type']) : fail(`rigid.type must be one of ${RIGID_TYPES.join(', ')}`);
   if (v.shape !== undefined) out.shape = (RIGID_SHAPES as readonly unknown[]).includes(v.shape) ? (v.shape as RigidBody['shape']) : fail(`rigid.shape must be one of ${RIGID_SHAPES.join(', ')}`);
   if (v.mass !== undefined) out.mass = inRange(v.mass, 0.001, 100000) ? (v.mass as number) : fail('rigid.mass must be 0.001..100000 kg');
@@ -1521,7 +1632,15 @@ export function validateAnimation(v: unknown, objects: Record<string, SceneObjec
       }
     }
   }
-  return { fps, start, end, tracks, camera, ...(poses ? { poses } : {}) };
+  let shakes: CameraShake[] | undefined;
+  if (v.shakes !== undefined) {
+    if (!Array.isArray(v.shakes) || v.shakes.length > 1000) fail('animation.shakes invalid');
+    shakes = v.shakes.map((k, i) => {
+      if (!isRecord(k) || !isFrame(k.start) || !isFrame(k.end) || !(k.end > k.start) || !inRange(k.strength, 0.001, 20) || (k.frequency !== undefined && !inRange(k.frequency, 0.1, 60))) fail(`camera shake ${i} invalid`);
+      return { start: k.start as number, end: k.end as number, strength: k.strength as number, ...(k.frequency !== undefined ? { frequency: k.frequency as number } : {}) };
+    });
+  }
+  return { fps, start, end, tracks, camera, ...(poses ? { poses } : {}), ...(shakes?.length ? { shakes } : {}) };
 }
 
 const REF_ID = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -1821,7 +1940,13 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (v.clarity !== undefined) cmd.clarity = inRange(v.clarity, 0, 1) ? (v.clarity as number) : fail('addWater clarity must be 0..1');
       if (v.waves !== undefined) cmd.waves = inRange(v.waves, 0.05, 50) ? (v.waves as number) : fail('addWater waves must be 0.05..50 m');
       if (v.speed !== undefined) cmd.speed = inRange(v.speed, 0, 20) ? (v.speed as number) : fail('addWater speed must be 0..20 m/s');
+      if (v.height !== undefined) cmd.height = inRange(v.height, 0, 30) ? (v.height as number) : fail('addWater height must be 0..30 m (wave height)');
+      if (v.direction !== undefined) cmd.direction = inRange(v.direction, -3600, 3600) ? (v.direction as number) : fail('addWater direction must be degrees');
       return cmd;
+    }
+    case 'setWater': {
+      if (!isId(v.id) || !isRecord(v.water)) fail('setWater needs id and water: {waves?, speed?, height?, direction?}');
+      return { type: 'setWater', id: v.id, water: validateWater(v.water, true) };
     }
     case 'setTimeOfDay': {
       if (!(TIMES as readonly unknown[]).includes(v.time)) fail(`setTimeOfDay time must be one of ${TIMES.join(', ')}`);
@@ -1915,6 +2040,26 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (cmd.op === 'easing' && cmd.easing === undefined) fail('editKeys easing needs easing');
       return cmd;
     }
+    case 'setField':
+      if (!isId(v.id)) fail('setField needs id');
+      if (v.field === null) return { type: 'setField', id: v.id, field: null };
+      return { type: 'setField', id: v.id, field: validateField(v.field, true) };
+    case 'setFloat':
+      if (!isId(v.id)) fail('setFloat needs id');
+      if (v.float === null) return { type: 'setFloat', id: v.id, float: null };
+      if (!isRecord(v.float)) fail('setFloat needs float: {offset} or null');
+      return { type: 'setFloat', id: v.id, float: { offset: v.float.offset === undefined ? 0 : inRange(v.float.offset, -100, 100) ? (v.float.offset as number) : fail('float.offset must be -100..100 m') } };
+    case 'addCameraShake': {
+      if (!isFrame(v.start)) fail('addCameraShake needs start (frame)');
+      const end = v.end === undefined ? (v.start as number) + 24 : isFrame(v.end) ? (v.end as number) : fail('addCameraShake end must be a frame');
+      const strength = v.strength === undefined ? 0.35 : inRange(v.strength, 0.001, 20) ? (v.strength as number) : fail('addCameraShake strength must be 0.001..20 m');
+      const cmd: Extract<Command, { type: 'addCameraShake' }> = { type: 'addCameraShake', start: v.start as number, end, strength };
+      if (v.frequency !== undefined) cmd.frequency = inRange(v.frequency, 0.1, 60) ? (v.frequency as number) : fail('addCameraShake frequency must be 0.1..60 per second');
+      return cmd;
+    }
+    case 'removeCameraShake':
+      if (v.start !== undefined && !isFrame(v.start)) fail('removeCameraShake start must be a frame');
+      return v.start === undefined ? { type: 'removeCameraShake' } : { type: 'removeCameraShake', start: v.start as number };
     case 'setAnimation':
       if (v.fps !== undefined && !inRange(v.fps, 1, 240)) fail('fps must be 1..240');
       if (v.start !== undefined && !isFrame(v.start)) fail('start invalid');

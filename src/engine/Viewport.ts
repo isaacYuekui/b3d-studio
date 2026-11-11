@@ -9,7 +9,11 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { Camera } from '@babylonjs/core/Cameras/camera';
 import { DepthOfFieldEffectBlurLevel } from '@babylonjs/core/PostProcesses/depthOfFieldEffect';
 import { cameraFov, equivalentFocal } from '../core/lens';
-import { particlesAt } from '../core/particles';
+import { isBillboard, particlesAt } from '../core/particles';
+import { floatTransform, oceanDisplace, oceanGrid } from '../core/ocean';
+import { shakeCamera } from '../core/shake';
+import type { ParticleFrame, ParticleSettings } from '../core/particles';
+import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { PointLight } from '@babylonjs/core/Lights/pointLight';
@@ -72,6 +76,7 @@ import { MeshoptSimplifier } from 'meshoptimizer';
 import { Matrix as BMatrix } from '@babylonjs/core/Maths/math.vector';
 import type { M4, PosedBones, Weights } from '../core/rig';
 import { humanWeights, loadHuman } from '../core/humans';
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { apply as m4apply, rotEuler as rotEulerM, boneBase, invert as m4invert, m4ToQuat, mul as m4mul, poseAt, poseBones, poseEdit, quatToM4, rotationOnly, skinMesh, toEuler, worldMatrix } from '../core/rig';
 import { applyModifiers } from '../core/mesh/modifiers';
@@ -247,6 +252,7 @@ export class Viewport {
 
     scene.onBeforeRenderObservable.add(() => this.stepTween());
     scene.onBeforeRenderObservable.add(() => this.applyLens());
+    scene.onBeforeRenderObservable.add(() => this.aimBillboards());
     scene.onBeforeRenderObservable.add(() => {
       if (!this.waters.size) return;
       const dt = Math.min(0.1, this.engine.getDeltaTime() / 1000);
@@ -384,6 +390,7 @@ export class Viewport {
       this.lastWireShading = state.shading;
     }
     if (docChanged || state.frame !== this.lastParticleFrame || state.shading !== this.lastParticleShading) {
+      this.syncOcean(state);
       this.syncParticles(state);
       this.lastParticleFrame = state.frame;
       this.lastParticleShading = state.shading;
@@ -408,11 +415,100 @@ export class Viewport {
   private lastEdit: AppState['edit'] = null;
   private lastPose: AppState['pose'] = null;
 
+  // ---------------------------------------------------------------- ocean waves
+
+  private oceans = new Map<string, { key: string; xy: Float32Array; indices: number[] }>();
+
+  /** Water with wave height: a fine grid moved by Gerstner waves for this frame (Ocean modifier). */
+  private syncOcean(state: AppState) {
+    const doc = state.doc;
+    const fps = animationOf(doc).fps;
+    const t = state.frame / fps;
+    for (const id of doc.order) {
+      const o = doc.objects[id];
+      const e = this.entries.get(id);
+      const want = !!o?.water && ((o.water.height ?? 0) > 0 || !!o.water.surge) && !!o.mesh && e?.node instanceof Mesh;
+      if (!want) {
+        if (this.oceans.has(id)) {
+          this.oceans.delete(id);
+          if (o?.mesh && e?.node instanceof Mesh) buildVertexData(applyModifiers(o.mesh, o.modifiers)).applyToMesh(e.node, true);
+        }
+        continue;
+      }
+      const node = e!.node as Mesh;
+      const w = o!.water!;
+      const xs = o!.mesh!.vertices.map((v) => v[0]), ys = o!.mesh!.vertices.map((v) => v[1]);
+      const x0 = Math.min(...xs), y0 = Math.min(...ys), sx = Math.max(...xs) - x0, sy = Math.max(...ys) - y0;
+      const [nx, ny] = oceanGrid(sx, sy, w);
+      const key = `${x0},${y0},${sx},${sy},${nx},${ny}`;
+      let g = this.oceans.get(id);
+      if (!g || g.key !== key || node.getTotalVertices() !== (nx + 1) * (ny + 1)) {
+        const xy = new Float32Array((nx + 1) * (ny + 1) * 2);
+        const indices: number[] = [];
+        const uvs: number[] = [];
+        for (let j = 0; j <= ny; j++)
+          for (let i = 0; i <= nx; i++) {
+            const k = j * (nx + 1) + i;
+            xy[k * 2] = x0 + (sx * i) / nx;
+            xy[k * 2 + 1] = y0 + (sy * j) / ny;
+            uvs.push(xy[k * 2], xy[k * 2 + 1]);
+          }
+        for (let j = 0; j < ny; j++)
+          for (let i = 0; i < nx; i++) {
+            const a = j * (nx + 1) + i, b = a + 1, c = a + nx + 2, d = a + nx + 1;
+            indices.push(a, b, c, a, c, d);
+          }
+        const vd = new VertexData();
+        vd.positions = new Array(xy.length * 1.5).fill(0);
+        vd.indices = indices;
+        vd.uvs = uvs;
+        vd.normals = new Array(xy.length * 1.5).fill(0);
+        vd.applyToMesh(node, true);
+        g = { key, xy, indices };
+        this.oceans.set(id, g);
+      }
+      const n = g.xy.length / 2;
+      const pos = new Float32Array(n * 3);
+      for (let k = 0; k < n; k++) {
+        const x = g.xy[k * 2], y = g.xy[k * 2 + 1];
+        const [dx, dy, dz] = oceanDisplace(x, y, t, w, fps);
+        // Blender (x, y, z) → Babylon (x, z, y)
+        pos[k * 3] = x + dx;
+        pos[k * 3 + 1] = dz;
+        pos[k * 3 + 2] = y + dy;
+      }
+      const normals: number[] = [];
+      VertexData.ComputeNormals(pos, g.indices, normals);
+      node.updateVerticesData(VertexBuffer.PositionKind, pos);
+      node.updateVerticesData(VertexBuffer.NormalKind, normals);
+      node.refreshBoundingInfo();
+    }
+  }
+
   // ---------------------------------------------------------------- particles
 
-  private particleMeshes = new Map<string, { key: string; mesh: Mesh; mat: PBRMaterial }>();
+  private particleMeshes = new Map<string, { key: string; mesh: Mesh; mat: PBRMaterial | StandardMaterial; frame: ParticleFrame; settings: ParticleSettings }>();
   private lastParticleFrame = -1;
   private lastParticleShading: AppState['shading'] = 'solid';
+  private puffTex: DynamicTexture | null = null;
+
+  /** A soft round puff (white, alpha falling off to the edge) for fire and smoke. */
+  private puffTexture(): DynamicTexture {
+    if (this.puffTex) return this.puffTex;
+    const t = new DynamicTexture('particle-puff', { width: 64, height: 64 }, this.scene, true);
+    const c = t.getContext() as unknown as CanvasRenderingContext2D;
+    const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.45, 'rgba(255,255,255,0.55)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g;
+    c.fillRect(0, 0, 64, 64);
+    t.update();
+    t.hasAlpha = true;
+    t.metadata = { shared: true };
+    this.puffTex = t;
+    return t;
+  }
 
   /** Particle systems: one thin-instanced mesh per emitter, positions worked out for this frame. */
   private syncParticles(state: AppState) {
@@ -432,48 +528,48 @@ export class Viewport {
         pm?.mesh.dispose();
         pm?.mat.dispose();
         const sc = this.scene;
-        const mesh =
-          s.shape === 'cube'
-            ? MeshBuilder.CreateBox(`${id}-particles`, { size: 1 }, sc)
-            : s.shape === 'flake'
-              ? MeshBuilder.CreatePolyhedron(`${id}-particles`, { type: 1, size: 0.5 }, sc)
-              : MeshBuilder.CreateSphere(`${id}-particles`, { diameter: 1, segments: 4 }, sc);
-        const mat = new PBRMaterial(`${id}-particles-mat`, sc);
-        const c = Color3.FromHexString(s.color);
-        mat.albedoColor = c;
-        mat.metallic = 0;
-        mat.roughness = s.shape === 'drop' ? 0.15 : 0.55;
-        mat.emissiveColor = c.scale(s.glow * 3);
+        let mesh: Mesh;
+        let mat: PBRMaterial | StandardMaterial;
+        if (isBillboard(s.shape)) {
+          // Fire and smoke: camera-facing soft puffs, coloured and faded per particle.
+          mesh = MeshBuilder.CreatePlane(`${id}-particles`, { size: 1, sideOrientation: Mesh.DOUBLESIDE }, sc);
+          // Unlit: each puff shows its own colour (set per particle), shaped by the soft texture.
+          const um = new PBRMaterial(`${id}-particles-mat`, sc);
+          um.unlit = true;
+          um.albedoColor = Color3.White();
+          um.albedoTexture = this.puffTexture();
+          um.useAlphaFromAlbedoTexture = true;
+          um.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
+          um.disableDepthWrite = true;
+          um.alphaMode = s.shape === 'fire' ? 1 /* additive */ : 2 /* blend */;
+          um.backFaceCulling = false;
+          mesh.hasVertexAlpha = true;
+          mat = um;
+        } else {
+          mesh =
+            s.shape === 'cube'
+              ? MeshBuilder.CreateBox(`${id}-particles`, { size: 1 }, sc)
+              : s.shape === 'flake'
+                ? MeshBuilder.CreatePolyhedron(`${id}-particles`, { type: 1, size: 0.5 }, sc)
+                : MeshBuilder.CreateSphere(`${id}-particles`, { diameter: 1, segments: 4 }, sc);
+          const pb = new PBRMaterial(`${id}-particles-mat`, sc);
+          const c = Color3.FromHexString(s.color);
+          pb.albedoColor = c;
+          pb.metallic = 0;
+          pb.roughness = s.shape === 'drop' ? 0.15 : 0.55;
+          pb.emissiveColor = c.scale(s.glow * 3);
+          mat = pb;
+        }
         mesh.material = mat;
         mesh.isPickable = false;
         mesh.alwaysSelectAsActiveMesh = true;
         mesh.metadata = { particles: id };
-        pm = { key, mesh, mat };
+        pm = { key, mesh, mat, frame: { positions: [], sizes: [], spins: [], dirs: [], life: [] }, settings: s };
         this.particleMeshes.set(id, pm);
       }
-      const f = particlesAt(doc, id, state.frame, fps);
-      const n = f.positions.length;
-      const buf = new Float32Array(Math.max(1, n) * 16);
-      const m = new Matrix();
-      const q = new Quaternion();
-      const up = Vector3.Up();
-      for (let i = 0; i < n; i++) {
-        const [x, y, z] = toBabylonVec(f.positions[i]);
-        const sz = f.sizes[i];
-        if (s.shape === 'drop') {
-          // Raindrops and water: stretched along their direction of travel.
-          const d = toBabylonVec(f.dirs[i]);
-          Quaternion.FromUnitVectorsToRef(up, new Vector3(d[0], d[1], d[2]), q);
-          Matrix.ComposeToRef(new Vector3(sz * 0.6, sz * 2.4, sz * 0.6), q, new Vector3(x, y, z), m);
-        } else {
-          Quaternion.RotationYawPitchRollToRef((f.spins[i] * Math.PI) / 180, (f.spins[i] * Math.PI) / 360, 0, q);
-          Matrix.ComposeToRef(new Vector3(sz, sz, sz), q, new Vector3(x, y, z), m);
-        }
-        m.copyToArray(buf, i * 16);
-      }
-      pm.mesh.thinInstanceSetBuffer('matrix', buf, 16, false);
-      pm.mesh.thinInstanceCount = n;
-      pm.mesh.setEnabled(n > 0);
+      pm.frame = particlesAt(doc, id, state.frame, fps);
+      pm.settings = s;
+      this.layoutParticles(pm);
       // "Show Emitter" off: the emitter disappears in Rendered shading and videos.
       if (e && state.shading !== 'wireframe') for (const mm of e.meshes) mm.visibility = s.hideEmitter && rendered ? 0 : 1;
     }
@@ -486,6 +582,72 @@ export class Viewport {
         if (e && state.shading !== 'wireframe') for (const mm of e.meshes) mm.visibility = 1;
       }
   }
+
+  /** Instance matrices (and, for fire and smoke, colours) for one particle system. */
+  private layoutParticles(pm: { mesh: Mesh; frame: ParticleFrame; settings: ParticleSettings }) {
+    const { frame: f, settings: s, mesh } = pm;
+    const n = f.positions.length;
+    const buf = new Float32Array(Math.max(1, n) * 16);
+    const m = new Matrix();
+    const q = new Quaternion();
+    const up = Vector3.Up();
+    const bill = isBillboard(s.shape);
+    const camQ = bill ? this.camera.absoluteRotation : null;
+    const cols = bill ? new Float32Array(Math.max(1, n) * 4) : null;
+    const base = Color3.FromHexString(s.color);
+    for (let i = 0; i < n; i++) {
+      const [x, y, z] = toBabylonVec(f.positions[i]);
+      let sz = f.sizes[i];
+      if (bill) {
+        const t = f.life[i];
+        let r: number, g: number, b: number, a: number;
+        if (s.shape === 'fire') {
+          // Hot white-yellow core → the flame colour → dark red, fading in and out; flames taper.
+          sz *= t < 0.25 ? 0.6 + 1.6 * t : 1 - (t - 0.25) * 0.9;
+          const hot = Math.max(0, 1 - t / 0.22);
+          const cool = Math.min(1, Math.max(0, (t - 0.25) / 0.5));
+          r = (base.r + (1 - base.r) * hot) * (1 - cool * 0.35);
+          g = (base.g + (0.9 - base.g) * hot) * (1 - cool * 0.85);
+          b = (base.b + (0.55 - base.b) * hot) * (1 - cool);
+          a = Math.min(1, t / 0.08) * Math.pow(1 - t, 1.5) * 0.8;
+        } else {
+          // Smoke: grows and spreads, fades in quickly and thins out slowly.
+          sz *= 1 + t * 2.2;
+          r = base.r + (1 - base.r) * t * 0.25;
+          g = base.g + (1 - base.g) * t * 0.25;
+          b = base.b + (1 - base.b) * t * 0.25;
+          a = Math.min(1, t / 0.12) * (1 - t) * 0.55;
+        }
+        cols!.set([r, g, b, a], i * 4);
+        Quaternion.RotationAxisToRef(Vector3.Forward(), (f.spins[i] * Math.PI) / 180, q);
+        camQ!.multiplyToRef(q, q);
+        Matrix.ComposeToRef(new Vector3(sz, sz, sz), q, new Vector3(x, y, z), m);
+      } else if (s.shape === 'drop') {
+        // Raindrops and water: stretched along their direction of travel.
+        const d = toBabylonVec(f.dirs[i]);
+        Quaternion.FromUnitVectorsToRef(up, new Vector3(d[0], d[1], d[2]), q);
+        Matrix.ComposeToRef(new Vector3(sz * 0.6, sz * 2.4, sz * 0.6), q, new Vector3(x, y, z), m);
+      } else {
+        Quaternion.RotationYawPitchRollToRef((f.spins[i] * Math.PI) / 180, (f.spins[i] * Math.PI) / 360, 0, q);
+        Matrix.ComposeToRef(new Vector3(sz, sz, sz), q, new Vector3(x, y, z), m);
+      }
+      m.copyToArray(buf, i * 16);
+    }
+    mesh.thinInstanceSetBuffer('matrix', buf, 16, false);
+    if (cols) mesh.thinInstanceSetBuffer('color', cols, 4, false);
+    mesh.thinInstanceCount = n;
+    mesh.setEnabled(n > 0);
+  }
+
+  /** Fire and smoke face the camera: re-aim them whenever the view turns. */
+  private aimBillboards() {
+    const rot = this.camera.absoluteRotation;
+    const k = `${rot.x.toFixed(4)},${rot.y.toFixed(4)},${rot.z.toFixed(4)},${rot.w.toFixed(4)}`;
+    if (k === this.lastBillboardKey) return;
+    this.lastBillboardKey = k;
+    for (const pm of this.particleMeshes.values()) if (isBillboard(pm.settings.shape) && pm.frame.positions.length) this.layoutParticles(pm);
+  }
+  private lastBillboardKey = '';
 
   // ---------------------------------------------------------------- wireframe shading
 
@@ -949,6 +1111,17 @@ export class Viewport {
       const t = evaluateTransform(keys, state.frame)!;
       this.applyTransform(e.node, { ...state.doc.objects[id], transform: t });
     }
+    // Objects floating on water ride the waves (after their own animation).
+    for (const id of state.doc.order) {
+      const o = state.doc.objects[id];
+      if (!o?.float) continue;
+      const e = this.entries.get(id);
+      if (!e || (this.dragging && id === sel)) continue;
+      const ft = floatTransform(state.doc, id, state.frame);
+      if (!ft) continue;
+      now.add(id);
+      this.applyTransform(e.node, { ...o, transform: ft });
+    }
     // Objects whose animation was removed go back to their own transform.
     for (const id of this.animated) {
       if (now.has(id)) continue;
@@ -960,7 +1133,10 @@ export class Viewport {
     this.applyRigs(state);
     if (state.cameraView) {
       const cam = (anim?.camera.length ? evaluateCamera(anim.camera, state.frame) : null) ?? state.doc.camera;
-      if (cam) this.placeCamera(cam.position, cam.target);
+      if (cam) {
+        const c = shakeCamera(cam, anim?.shakes, state.frame, anim?.fps ?? 24);
+        this.placeCamera(c.position, c.target);
+      }
     }
   }
 
@@ -978,7 +1154,7 @@ export class Viewport {
   }
 
   private keyFor(o: SceneObject): string {
-    return `${o.type}|${JSON.stringify(o.params ?? {})}|${o.light?.type ?? ''}|${o.asset ?? ''}`;
+    return `${o.type}|${JSON.stringify(o.params ?? {})}|${o.light?.type ?? ''}|${o.asset ?? ''}|${o.field ? `${o.field.type}:${o.field.radius}` : ''}`;
   }
 
   private disposeEntry(e: Entry) {
@@ -1084,16 +1260,35 @@ export class Viewport {
       // Bones are drawn in applyRigs (they follow the pose).
       return { node, pick: null, key, meshes: [] };
     }
-    // empty: small axes cross
+    // empty: small axes cross; a force field also shows its reach (rings) and direction.
     const size = 0.5;
-    const helper = MeshBuilder.CreateLineSystem(`${o.id}-helper`, {
-      lines: [
-        [new Vector3(-size, 0, 0), new Vector3(size, 0, 0)],
-        [new Vector3(0, -size, 0), new Vector3(0, size, 0)],
-        [new Vector3(0, 0, -size), new Vector3(0, 0, size)],
-      ],
-    }, s);
-    helper.color = HELPER_COLOR;
+    const lines: Vector3[][] = [
+      [new Vector3(-size, 0, 0), new Vector3(size, 0, 0)],
+      [new Vector3(0, -size, 0), new Vector3(0, size, 0)],
+      [new Vector3(0, 0, -size), new Vector3(0, 0, size)],
+    ];
+    if (o.field) {
+      const r = o.field.radius > 0 ? o.field.radius : 2;
+      const ring = (f: (a: number) => Vector3) => Array.from({ length: 49 }, (_, i) => f((i / 48) * Math.PI * 2));
+      // Babylon Y = Blender Z.
+      lines.push(ring((a) => new Vector3(Math.cos(a) * r, 0, Math.sin(a) * r)));
+      if (o.field.type === 'force') {
+        lines.push(ring((a) => new Vector3(Math.cos(a) * r, Math.sin(a) * r, 0)), ring((a) => new Vector3(0, Math.cos(a) * r, Math.sin(a) * r)));
+        for (let k = 0; k < 8; k++) {
+          const a = (k / 8) * Math.PI * 2;
+          lines.push([new Vector3(Math.cos(a) * 0.6, 0, Math.sin(a) * 0.6), new Vector3(Math.cos(a) * 1.4, 0, Math.sin(a) * 1.4)]);
+        }
+      } else if (o.field.type === 'wind') {
+        lines.push([new Vector3(0, 0, 0), new Vector3(0, 2.5, 0)], [new Vector3(0, 2.5, 0), new Vector3(0.3, 2.1, 0)], [new Vector3(0, 2.5, 0), new Vector3(-0.3, 2.1, 0)]);
+      } else {
+        lines.push(Array.from({ length: 97 }, (_, i) => {
+          const a = (i / 48) * Math.PI * 2, rr = (i / 96) * r;
+          return new Vector3(Math.cos(a) * rr, (i / 96) * 2, Math.sin(a) * rr);
+        }));
+      }
+    }
+    const helper = MeshBuilder.CreateLineSystem(`${o.id}-helper`, { lines }, s);
+    helper.color = o.field ? new Color3(0.55, 0.75, 1) : HELPER_COLOR;
     helper.intersectionThreshold = 0.15;
     helper.metadata = { id: o.id };
     helper.parent = node;

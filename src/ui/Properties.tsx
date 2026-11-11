@@ -18,6 +18,11 @@ import { loadFont } from '../engine/fonts';
 import { RIGID_SHAPES, RIGID_TYPES } from '../core/physics';
 import { PARTICLE_PRESETS, PARTICLE_SHAPES } from '../core/particles';
 import type { ParticleSettings } from '../core/particles';
+import type { Surge, WaterSettings } from '../core/ocean';
+import { DEFAULT_SURGE } from '../core/ocean';
+import { SHAKE_PRESETS } from '../core/shake';
+import { FIELD_PRESETS, FIELD_TYPES } from '../core/fields';
+import type { ForceField } from '../core/fields';
 import type { RigidBody } from '../core/physics';
 import { bakePhysics, freePhysics } from './physicsUi';
 import { prepareBooleans } from './prepare';
@@ -170,7 +175,8 @@ export function Properties() {
   // Tabs like Blender's Properties editor: only the ones this kind of object has.
   const tabs: [PropTab, string][] = [['scene', 'Scene'], ['object', 'Object']];
   if (canEdit(o)) tabs.push(['modifiers', 'Modifiers'], ['physics', 'Physics']);
-  const dataLabel = o.text ? 'Text' : o.light ? 'Light' : o.type === 'model' ? 'Model' : o.type === 'armature' ? 'Armature' : null;
+  else if (o.type === 'empty') tabs.push(['physics', 'Physics']);
+  const dataLabel = o.text ? 'Text' : o.water ? 'Water' : o.light ? 'Light' : o.type === 'model' ? 'Model' : o.type === 'armature' ? 'Armature' : null;
   if (dataLabel) tabs.push(['data', dataLabel]);
   if (isRenderable(o.type) && o.type !== 'model') tabs.push(['material', 'Material']);
   const cur: PropTab = tabs.some(([t]) => t === tab) ? tab : 'object';
@@ -246,8 +252,11 @@ export function Properties() {
 
       {cur === 'data' && o.type === 'model' && <ModelSection id={o.id} />}
       {cur === 'data' && o.text && <TextSection id={o.id} />}
+      {cur === 'data' && o.water && <WaterSection id={o.id} />}
       {cur === 'modifiers' && <ModifiersSection id={o.id} />}
-      {cur === 'physics' && <PhysicsSection id={o.id} />}
+      {cur === 'physics' && o.type === 'empty' && <FieldSection id={o.id} />}
+      {cur === 'physics' && o.type !== 'empty' && <PhysicsSection id={o.id} />}
+      {cur === 'physics' && !o.water && o.type !== 'empty' && <FloatSection id={o.id} />}
       {cur === 'data' && o.type === 'armature' && <PoseSection id={o.id} />}
 
       {cur === 'material' && (
@@ -421,6 +430,7 @@ function SceneTab() {
         <p className="prop-hint">Select an object in the viewport or Outliner to edit its properties.</p>
       </Section>
       <CameraSection />
+      <ShakeSection />
       <ScenePhysicsSection />
       <WorldSection />
     </>
@@ -430,6 +440,40 @@ function SceneTab() {
 const TIME_LABEL: Record<TimeOfDay, string> = { sunrise: 'Sunrise', morning: 'Morning', noon: 'Noon', afternoon: 'Late afternoon', sunset: 'Sunset', dusk: 'Dusk', night: 'Night (moon)', overcast: 'Overcast', misty: 'Misty morning' };
 
 /** Scene-wide look for Rendered shading: HDRI sky, exposure, bloom, ambient occlusion. */
+/** Camera shake bursts (impacts, explosions, earthquakes) on top of the camera's motion. */
+function ShakeSection() {
+  const { store } = useCtx();
+  const anim = useApp((s) => s.doc.animation);
+  const frame = useApp((s) => s.frame);
+  const { fps } = animationOf({ animation: anim });
+  const shakes = anim?.shakes ?? [];
+  return (
+    <Section title="Camera shake" defaultOpen={shakes.length > 0}>
+      <div className="prop-row">
+        <span>Add at frame {frame}</span>
+      </div>
+      <div className="seg-text" role="group" aria-label="Camera shake presets">
+        {SHAKE_PRESETS.map((p) => (
+          <button key={p.id} data-shake={p.id} onClick={() => store.dispatch({ type: 'addCameraShake', start: frame, end: frame + Math.round(p.seconds * fps), ...p.shake }, { select: false })}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {shakes.map((s) => (
+        <div className="prop-row" key={s.start} data-shake-item={s.start}>
+          <span>
+            Frames {s.start}–{s.end} · {s.strength} m{s.frequency ? ` · ${s.frequency}/s` : ''}
+          </span>
+          <button className="btn" aria-label={`Remove the shake at frame ${s.start}`} onClick={() => store.dispatch({ type: 'removeCameraShake', start: s.start }, { select: false })}>
+            ✕
+          </button>
+        </div>
+      ))}
+      <p className="prop-hint">Shakes the scene camera from the current frame: a sharp hit that dies away. Seen through the camera (Camera view) and in videos — for impacts, explosions and earthquakes.</p>
+    </Section>
+  );
+}
+
 /** Scene camera lens (Blender's camera data): focal length and depth of field. */
 function CameraSection() {
   const { store } = useCtx();
@@ -781,6 +825,12 @@ function PhysicsSection({ id }: { id: string }) {
               ))}
             </select>
           </label>
+          {r.type === 'passive' && (
+            <label className="prop-row" title="Follows its keyframes and shoves active objects (Blender's Animated)">
+              <span>Animated (follows its keys)</span>
+              <input type="checkbox" data-testid="rigid-animated" checked={!!r.animated} onChange={(e) => set({ animated: e.target.checked })} />
+            </label>
+          )}
           {r.type === 'active' && num('mass', 'Mass', 0.001, 100000, 0.5, ' kg')}
           {num('friction', 'Friction', 0, 1, 0.05)}
           {num('bounce', 'Bounciness', 0, 1, 0.05)}
@@ -810,6 +860,7 @@ function PhysicsSection({ id }: { id: string }) {
 function ParticlesSection({ id }: { id: string }) {
   const { store } = useCtx();
   const p = useApp((s) => s.doc.objects[id].particles);
+  const frame = useApp((s) => s.frame);
   const set = (particles: Partial<ParticleSettings> | null) => store.dispatch({ type: 'setParticles', id, particles }, { select: false });
   const num = (key: 'count' | 'start' | 'end' | 'lifetime' | 'speed' | 'random' | 'gravity' | 'size' | 'sizeRandom' | 'glow', label: string, lo: number, hi: number, step: number, suffix = '', int = false) => (
     <NumberField
@@ -836,7 +887,7 @@ function ParticlesSection({ id }: { id: string }) {
         <span>Presets</span>
         <div className="seg-text" role="group" aria-label="Particle presets">
           {PARTICLE_PRESETS.map((pr) => (
-            <button key={pr.id} data-particle-preset={pr.id} onClick={() => set(pr.settings)}>
+            <button key={pr.id} data-particle-preset={pr.id} onClick={() => set(pr.burst ? { ...pr.settings, start: frame, end: frame + pr.burst } : pr.settings)} title={pr.burst ? `Bursts at the current frame (${frame})` : undefined}>
               {pr.label}
             </button>
           ))}
@@ -857,7 +908,7 @@ function ParticlesSection({ id }: { id: string }) {
             <span>Shape</span>
             <select value={p.shape} onChange={(e) => set({ shape: e.target.value as ParticleSettings['shape'] })}>
               {PARTICLE_SHAPES.map((sh) => (
-                <option key={sh} value={sh}>{sh === 'drop' ? 'Drop (stretched)' : sh[0].toUpperCase() + sh.slice(1)}</option>
+                <option key={sh} value={sh}>{sh === 'drop' ? 'Drop (stretched)' : sh === 'fire' ? 'Fire (glowing puffs)' : sh === 'smoke' ? 'Smoke (soft puffs)' : sh[0].toUpperCase() + sh.slice(1)}</option>
               ))}
             </select>
           </label>
@@ -866,6 +917,28 @@ function ParticlesSection({ id }: { id: string }) {
             <input type="color" value={p.color} onChange={(e) => set({ color: e.target.value })} />
           </label>
           {num('glow', 'Glow', 0, 1, 0.1)}
+          {([0, 1] as const).map((k) => (
+            <NumberField
+              key={k}
+              label={k === 0 ? 'Wind X' : 'Wind Y'}
+              value={p.wind?.[k] ?? 0}
+              step={0.1}
+              dragRate={0.01}
+              suffix=" m/s²"
+              onPreview={(v) => {
+                const w: [number, number, number] = [...(p.wind ?? [0, 0, 0])];
+                w[k] = clampN(v, -100, 100, false);
+                store.preview({ type: 'setParticles', id, particles: { wind: w } });
+              }}
+              onCommit={(v) => {
+                const w: [number, number, number] = [...(p.wind ?? [0, 0, 0])];
+                w[k] = clampN(v, -100, 100, false);
+                store.preview({ type: 'setParticles', id, particles: { wind: w } });
+                store.commitPreview();
+              }}
+              onCancel={() => store.cancelPreview()}
+            />
+          ))}
           <label className="prop-row">
             <span>At the ground</span>
             <select value={p.ground} onChange={(e) => set({ ground: e.target.value as ParticleSettings['ground'] })}>
@@ -882,7 +955,7 @@ function ParticlesSection({ id }: { id: string }) {
           </div>
         </>
       )}
-      <p className="prop-hint">Particles fly off the object's surface, fall with gravity and vanish after their lifetime — sparks, fountains, rain, snow, debris. No baking: scrub and play. For rain or snow, use a big plane high up as the emitter.</p>
+      <p className="prop-hint">Particles fly off the object's surface, fall with gravity and vanish after their lifetime — sparks, fountains, rain, snow, debris, fire and smoke (negative gravity makes them rise; wind pushes them sideways). No baking: scrub and play. For rain or snow, use a big plane high up as the emitter. Fire and smoke look best in Rendered shading.</p>
     </Section>
   );
 }
@@ -950,6 +1023,190 @@ function ScenePhysicsSection() {
       </div>
       <p className="prop-hint">Gravity 9.81 m/s² down. Turn on Physics → Rigid body on each object first. Freeing the bake removes the keyframes of the active objects.</p>
     </Section>
+  );
+}
+
+/** Force field on an empty (Blender's Physics → Force Field): acts on rigid bodies in the bake. */
+function FieldSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const f = useApp((s) => s.doc.objects[id].field);
+  const frame = useApp((s) => s.frame);
+  const set = (field: Partial<ForceField> | null) => store.dispatch({ type: 'setField', id, field }, { select: false });
+  const num = (key: 'strength' | 'radius' | 'start' | 'end', label: string, lo: number, hi: number, step: number, suffix: string, int = false) => (
+    <NumberField
+      label={label}
+      value={f![key] ?? 0}
+      step={step}
+      dragRate={step / 10}
+      suffix={suffix}
+      onPreview={(v) => store.preview({ type: 'setField', id, field: { [key]: clampN(v, lo, hi, int) } })}
+      onCommit={(v) => {
+        store.preview({ type: 'setField', id, field: { [key]: clampN(v, lo, hi, int) } });
+        store.commitPreview();
+      }}
+      onCancel={() => store.cancelPreview()}
+    />
+  );
+  return (
+    <Section title="Force field" defaultOpen>
+      <div className="seg-text" role="group" aria-label="Force field presets">
+        {FIELD_PRESETS.map((p) => (
+          <button key={p.id} data-field-preset={p.id} onClick={() => set(p.frames ? { ...p.field, start: frame, end: frame + p.frames } : { ...p.field, start: undefined, end: undefined })}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {f ? (
+        <>
+          <div className="prop-row">
+            <span>Type</span>
+            <div className="seg-text" role="radiogroup" aria-label="Field type">
+              {FIELD_TYPES.map((t) => (
+                <button key={t} role="radio" aria-checked={f.type === t} className={f.type === t ? 'active' : ''} onClick={() => set({ type: t })}>
+                  {t === 'force' ? 'Force' : t === 'wind' ? 'Wind' : 'Vortex'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {num('strength', 'Strength', -100000, 100000, 5, ' m/s²')}
+          {num('radius', 'Reach (0 = everywhere)', 0, 100000, 0.5, ' m')}
+          <label className="prop-row">
+            <span>Only some frames</span>
+            <input type="checkbox" checked={f.start !== undefined} onChange={(e) => set(e.target.checked ? { start: frame, end: frame + 2 } : { start: undefined, end: undefined })} />
+          </label>
+          {f.start !== undefined && num('start', 'From frame', -100000, 100000, 1, '', true)}
+          {f.end !== undefined && num('end', 'To frame', -100000, 100000, 1, '', true)}
+          <div className="prop-actions">
+            <button className="btn primary" onClick={() => void bakePhysics(store)}>Bake physics</button>
+            <button className="btn" onClick={() => set(null)}>Remove field</button>
+          </div>
+        </>
+      ) : null}
+      <p className="prop-hint">
+        Pushes rigid bodies when you bake physics: <b>Force</b> away from the centre (negative pulls in), <b>Wind</b> along the empty's blue (Z) axis, <b>Vortex</b> swirling around it. For an explosion: a
+        big strength for 1–2 frames, aimed at fractured objects.
+      </p>
+    </Section>
+  );
+}
+
+/** Float on water: the object rides the waves of the water under it. */
+function FloatSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const f = useApp((s) => s.doc.objects[id].float);
+  const hasWater = useApp((s) => Object.values(s.doc.objects).some((o) => o.water));
+  if (!hasWater && !f) return null;
+  return (
+    <Section title="Float on water" defaultOpen>
+      <label className="prop-row">
+        <span>Float</span>
+        <input type="checkbox" data-testid="float-toggle" checked={!!f} onChange={(e) => store.dispatch({ type: 'setFloat', id, float: e.target.checked ? { offset: 0 } : null }, { select: false })} />
+      </label>
+      {f && (
+        <NumberField
+          label="Height above water"
+          value={f.offset}
+          step={0.05}
+          dragRate={0.005}
+          suffix=" m"
+          onPreview={(v) => store.preview({ type: 'setFloat', id, float: { offset: clampN(v, -100, 100, false) } })}
+          onCommit={(v) => {
+            store.preview({ type: 'setFloat', id, float: { offset: clampN(v, -100, 100, false) } });
+            store.commitPreview();
+          }}
+          onCancel={() => store.cancelPreview()}
+        />
+      )}
+      <p className="prop-hint">Bobs and tilts with the waves of the water under it (boats, buoys, debris). Negative height sinks it in: for a boat, about a third of its hull.</p>
+    </Section>
+  );
+}
+
+/** Water: ripples and ocean waves (Blender's Ocean modifier, simplified). */
+function WaterSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const w = useApp((s) => s.doc.objects[id].water)!;
+  const set = (water: Partial<WaterSettings>) => store.dispatch({ type: 'setWater', id, water }, { select: false });
+  const field = (key: 'waves' | 'speed' | 'height' | 'direction', label: string, lo: number, hi: number, step: number, suffix: string) => (
+    <NumberField
+      label={label}
+      value={w[key] ?? 0}
+      step={step}
+      dragRate={step / 10}
+      suffix={suffix}
+      onPreview={(v) => store.preview({ type: 'setWater', id, water: { [key]: clampN(v, lo, hi, false) } })}
+      onCommit={(v) => {
+        store.preview({ type: 'setWater', id, water: { [key]: clampN(v, lo, hi, false) } });
+        store.commitPreview();
+      }}
+      onCancel={() => store.cancelPreview()}
+    />
+  );
+  const seas: [string, number][] = [['Calm', 0], ['Choppy', 0.4], ['Rough', 1.5], ['Storm', 3.5]];
+  return (
+    <Section title="Water">
+      <div className="prop-row">
+        <span>Sea</span>
+        <div className="seg-text" role="radiogroup" aria-label="Sea state">
+          {seas.map(([label, h]) => {
+            const on = (w.height ?? 0) === h;
+            return (
+              <button key={label} role="radio" aria-checked={on} className={on ? 'active' : ''} data-sea={label.toLowerCase()} onClick={() => set({ height: h, waves: h >= 1.5 ? Math.max(w.waves, Math.round(h * 16) / 10) : w.waves })}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {field('height', 'Wave height', 0, 30, 0.1, ' m')}
+      {field('waves', 'Wave size', 0.05, 50, 0.1, ' m')}
+      {field('direction', 'Direction', -3600, 3600, 5, '°')}
+      {field('speed', 'Ripple speed', 0, 20, 0.05, ' m/s')}
+      <p className="prop-hint">Wave height moves the surface itself, frame by frame (like Blender's Ocean modifier): rolling swells for boats, storms and floods. Wave size sets how long they are. Calm water keeps just the ripples.</p>
+      <SurgeRows id={id} />
+    </Section>
+  );
+}
+
+/** One giant travelling wave across the water (tsunami / surge). */
+function SurgeRows({ id }: { id: string }) {
+  const { store } = useCtx();
+  const w = useApp((s) => s.doc.objects[id].water)!;
+  const frame = useApp((s) => s.frame);
+  const g = w.surge;
+  const set = (surge: Surge | null) => store.dispatch({ type: 'setWater', id, water: { surge } }, { select: false });
+  const num = (key: keyof Surge, label: string, lo: number, hi: number, step: number, suffix: string, int = false) => (
+    <NumberField
+      label={label}
+      value={g![key]}
+      step={step}
+      dragRate={step / 10}
+      suffix={suffix}
+      onPreview={(v) => store.preview({ type: 'setWater', id, water: { surge: { ...g!, [key]: clampN(v, lo, hi, int) } } })}
+      onCommit={(v) => {
+        store.preview({ type: 'setWater', id, water: { surge: { ...g!, [key]: clampN(v, lo, hi, int) } } });
+        store.commitPreview();
+      }}
+      onCancel={() => store.cancelPreview()}
+    />
+  );
+  return (
+    <>
+      <label className="prop-row">
+        <span>Giant wave (tsunami)</span>
+        <input type="checkbox" data-testid="surge-toggle" checked={!!g} onChange={(e) => set(e.target.checked ? { ...DEFAULT_SURGE, start: frame } : null)} />
+      </label>
+      {g && (
+        <>
+          {num('height', 'Wave height', 0.1, 100, 0.5, ' m')}
+          {num('start', 'Starts at frame', -100000, 100000, 1, '', true)}
+          {num('speed', 'Speed', 0.1, 300, 1, ' m/s')}
+          {num('width', 'Length', 1, 1000, 1, ' m')}
+          {num('from', 'Starts from', -10000, 10000, 5, ' m')}
+          <p className="prop-hint">A single wall of water that runs across the sea in the Direction above, lifting and carrying anything that floats. It starts "Starts from" metres behind the centre — move it further back to see it come in.</p>
+        </>
+      )}
+    </>
   );
 }
 

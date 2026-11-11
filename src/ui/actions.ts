@@ -9,6 +9,8 @@ import type { LightType, ObjectType } from '../core/types';
 import { animationOf, keyFrames } from '../core/animation';
 import { loadFont } from '../engine/fonts';
 import { bakePhysics, freePhysics } from './physicsUi';
+import { FIELD_PRESETS } from '../core/fields';
+import { canQuick, quickExplode, quickFloat, quickParticles } from './quickEffects';
 import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit, togglePose } from './editing';
 import { poseAt } from '../core/rig';
 import { subtree } from '../core/commands';
@@ -128,6 +130,20 @@ export function pickFile(accept: string | null = '.json,.b3d,application/json'):
     input.addEventListener('cancel', () => done(null));
     input.click();
   });
+}
+
+/** Add → Force Field: an empty carrying a field preset (explosions start at the current frame). */
+function addField(preset: string): Action {
+  const p = FIELD_PRESETS.find((x) => x.id === preset)!;
+  return {
+    id: `add.field.${preset}`,
+    label: p.label,
+    run: (c) => {
+      const frame = c.store.getState().frame;
+      const [id] = c.store.dispatch({ type: 'add', primitive: 'empty', name: `${p.label} field`, transform: { position: [0, 0, 1] } });
+      if (id) c.store.dispatch({ type: 'setField', id, field: p.frames ? { ...p.field, start: frame, end: frame + p.frames } : p.field }, { select: false });
+    },
+  };
 }
 
 export const actions = {
@@ -428,6 +444,24 @@ export const actions = {
     id: 'physics.free',
     label: 'Free Physics Bake',
     run: (c) => freePhysics(c.store),
+  },
+  'quick.explode': { id: 'quick.explode', label: 'Quick Explode', enabled: (c) => canQuick(c.store), run: (c) => void quickExplode(c.store) },
+  'quick.fire': { id: 'quick.fire', label: 'Quick Fire', enabled: (c) => canQuick(c.store), run: (c) => quickParticles(c.store, 'fire') },
+  'quick.smoke': { id: 'quick.smoke', label: 'Quick Smoke', enabled: (c) => canQuick(c.store), run: (c) => quickParticles(c.store, 'smoke') },
+  'quick.float': { id: 'quick.float', label: 'Quick Float (on water)', enabled: (c) => hasSel(c), run: (c) => quickFloat(c.store) },
+  'add.field.blast': addField('blast'),
+  'add.field.push': addField('push'),
+  'add.field.wind': addField('wind'),
+  'add.field.vortex': addField('vortex'),
+  'add.water': {
+    id: 'add.water',
+    label: 'Water / Ocean',
+    run: (c) => {
+      const doc = c.store.getState().doc;
+      let id = 'water';
+      for (let k = 2; doc.objects[id]; k++) id = `water-${k}`;
+      c.store.dispatch({ type: 'addWater', id, size: [40, 40], level: 0, height: 0.6, waves: 1.5 });
+    },
   },
   'add.text': {
     id: 'add.text',

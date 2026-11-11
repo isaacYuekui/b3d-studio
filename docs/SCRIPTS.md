@@ -269,7 +269,73 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   its motion), `flake`; `color`, `glow` (0–1, glows with bloom in Rendered); `ground`: `none` or `stop`
   (land at z = 0 and stay); `hideEmitter` hides the emitter in Rendered/videos; `seed` changes the pattern.
 - Start before frame 1 (e.g. `"start": -40`) to have the effect already running when the video begins.
+- v3.5: `shape` `fire` (white-hot → colour → dark red, fading; use negative gravity, e.g. −0.3) and
+  `smoke` (grows and thins out; colour is the smoke's grey), both camera-facing puffs; `wind`
+  `[x, y, z]` m/s² is a steady push (e.g. `[0.4, 0, 0]` for drifting smoke).
 - Closed-form motion: the same frame always looks the same. No collisions with objects yet.
+
+## Ocean waves (v3.6)
+
+```json
+{"type":"addWater","id":"sea","size":[200,200],"level":0,"waves":4,"height":2.5,"direction":30}
+{"type":"setWater","id":"sea","water":{"height":0.4}}
+```
+
+- `height` (0–30 m, crest to trough; 0 = flat with ripples only) moves the surface with four Gerstner
+  waves; `waves` is the ripple/wave size (the main wavelength is 8 × waves), `direction` in degrees.
+  Exact per frame (time = frame / fps). The surface is up to ~40,000 vertices, so very large seas get
+  coarser — keep the sea around the camera.
+
+## Animated rigid bodies (v3.10)
+
+```json
+{"type":"setRigidBody","id":"wreckingBall","rigid":{"type":"passive","animated":true}}
+```
+
+- A passive body with `animated: true` follows its own keyframes during `bakePhysics` (it isn't baked)
+  and pushes active bodies with its motion — Blender's Rigid Body → Animated. Key it first (e.g. a
+  swinging wrecking ball, a bulldozer blade, a meteor), then bake.
+
+## Force fields (v3.9)
+
+```json
+{"type":"add","primitive":"empty","id":"blast","transform":{"position":[0,6,0.6]}}
+{"type":"setField","id":"blast","field":{"type":"force","strength":420,"radius":22,"start":60,"end":61}}
+{"type":"bakePhysics"}
+```
+
+- On empties only. `type`: `force` (away from the empty; negative strength pulls in), `wind` (along the
+  empty's local Z axis — rotate it to aim), `vortex` (swirls around its Z axis). `strength` is an
+  acceleration in m/s² (same push for light and heavy pieces), fading linearly to zero at `radius` m
+  (0 = everywhere, no fade). `start` / `end` frames limit it (null clears them). Acts during
+  `bakePhysics` only — put the bake after the field.
+
+## Tsunami / giant wave (v3.8)
+
+```json
+{"type":"setWater","id":"sea","water":{"surge":{"height":9,"start":24,"speed":14,"width":24,"from":-60}}}
+{"type":"setWater","id":"sea","water":{"surge":null}}
+```
+
+- `surge`: `height` (m above the sea), `start` (frame it sets off), `speed` (m/s), `width` (front-to-back
+  length, m), `from` (m along the water's `direction` from the water object's origin; negative = behind).
+  A sech² wall that leans forward a little. Floating objects (`setFloat`) are lifted and carried while
+  it passes, and stop at the water's edge. Combine with `addCameraShake` for the impact.
+
+## Camera shake and floating (v3.7)
+
+```json
+{"type":"addCameraShake","start":48,"end":96,"strength":0.8,"frequency":11}
+{"type":"removeCameraShake","start":48}
+{"type":"setFloat","id":"boat","float":{"offset":-0.2}}
+```
+
+- `addCameraShake`: from `start` (frame) to `end` (default start + 24), `strength` in metres at the
+  camera's target (0.05 subtle … 1 violent, default 0.35), `frequency` jolts per second (default 8;
+  3–4 for a quake). Sharp hit, then dies away. Several can overlap. `removeCameraShake` without
+  `start` removes all.
+- `setFloat` (`null` stops it): the object's origin rides `offset` metres above the water under it
+  (negative sinks it in), bobbing and tilting with the waves; its position X/Y and heading stay yours.
 
 ## Cell Fracture (v3.3)
 

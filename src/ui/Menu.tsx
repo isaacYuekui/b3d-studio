@@ -110,7 +110,8 @@ export const ADD_ITEMS: MenuItem[] = [
   'file.importModel',
   '-',
   'add.cube', 'add.sphere', 'add.cylinder', 'add.cone', 'add.torus', 'add.capsule', 'add.plane',
-  '-', 'add.text', 'add.empty',
+  '-', 'add.text', 'add.water', 'add.empty',
+  { label: 'Force Field', items: ['add.field.blast', 'add.field.push', 'add.field.wind', 'add.field.vortex'] },
   { label: 'Light', items: ['add.pointLight', 'add.sunLight', 'add.spotLight'] },
 ];
 
@@ -145,6 +146,7 @@ export const OBJECT_CONTEXT: MenuItem[] = [
   'mesh.smooth',
   'mesh.flat',
   { label: 'Modifiers', items: ['mod.mirrorX', 'mod.subdiv1', 'mod.subdiv2', 'mod.subdiv3', 'mod.subdiv0', 'mod.apply'] },
+  { label: 'Quick Effects', items: ['quick.explode', 'quick.fire', 'quick.smoke', 'quick.float'] },
   '-',
   'view.frameSelected',
   '-',
