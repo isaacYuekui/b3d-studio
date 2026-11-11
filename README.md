@@ -5,6 +5,12 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Dope Sheet (v2.1)
+
+- Timeline → **◆◆ Dope Sheet**: every keyframe in the scene, one row each for Summary, Camera, every animated object and every armature's pose
+- Tap a ◆ to select it (turn on **＋ Add** to pick several, or **All**), then drag it sideways to retime. Moved keys replace keys already on their new frame, like Blender. A Summary ◆ moves everything keyed on that frame
+- Buttons: Easing (linear, ease in and out, hold…), **Copy to playhead**, ±1 frame, **Slower ×2** / **Faster ×½**, **Delete**. Each edit is one undo step
+
 ## Hard-surface modelling (v2.0)
 
 - **Bevel modifier**: rounds every edge sharper than 30° so parts catch the light (1, 3 or 8 cm, 1–3 segments)
