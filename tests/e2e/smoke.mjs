@@ -949,6 +949,31 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Materials (v2.3): presets and procedural patterns from the Material panel.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'sphere', id: 'ball', name: 'Ball' }] });
+    s.select('ball');
+  });
+  await page.click('.mat-more summary');
+  await page.click('[data-mat-preset="Car paint"]');
+  const paint = await page.evaluate(() => { const m = window.__b3d.store.getState().doc.objects.ball.material; return { cc: m.clearcoat, metal: m.metallic }; });
+  const coat = await page.evaluate(() => window.__b3d.viewport().scene.meshes.find((m) => m.metadata?.id === 'ball' || m.parent?.metadata?.id === 'ball')?.material?.clearCoat?.isEnabled ?? null);
+  check('v2.3: Car paint preset turns on clearcoat (also in the renderer)', paint.cc === 1 && paint.metal === 0.6 && coat === true, JSON.stringify({ ...paint, coat }));
+  await page.selectOption('#mat-pattern', 'marble');
+  await page.waitForTimeout(500);
+  const pat = await page.evaluate(() => {
+    const m = window.__b3d.store.getState().doc.objects.ball.material.pattern;
+    const mesh = window.__b3d.viewport().scene.meshes.find((x) => x.metadata?.id === 'ball' || x.parent?.metadata?.id === 'ball');
+    return { type: m?.type, tex: mesh?.material?.albedoTexture?.name ?? null };
+  });
+  check('v2.3: Pattern → Marble makes a procedural texture', pat.type === 'marble' && String(pat.tex).startsWith('pattern-marble'), JSON.stringify(pat));
+  check('v2.3: no errors (materials)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // iPad: edit mode by touch.
 {
   const { ctx, page, errors } = await open({ width: 820, height: 1180 }, { touch: true, dpr: 2 });
