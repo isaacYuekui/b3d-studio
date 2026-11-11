@@ -2,7 +2,7 @@
 round visor, a shoulder missile pod and a carbine. Hard-surface parts are chamfered hexahedra
 (bevelled edges catch highlights like real armour), arranged in a jointed hierarchy (empties at
 hip, knee, ankle, shoulder, elbow, wrist, waist, neck) so it can be posed or animated.
-Writes examples/scout-mech.b3d-script.json. Height ≈ 4.2 m, feet at z = 0, facing −Y."""
+Writes examples/scout-mech.b3d-script.json. Height ≈ 4.6 m, feet at z = 0, facing −Y."""
 import json
 import math
 from pathlib import Path
@@ -81,11 +81,24 @@ def uid(base):
     return base if n_ids[base] == 1 else f"{base}{n_ids[base]}"
 
 
+SOFT = True  # v2: armour rounded by subdivision (bevel strips round off, main faces stay flat-ish)
+
+
 def part(name, parent, corners, mat, pos=(0, 0, 0), rot=(0, 0, 0), bevel=0.03, pid=None):
     v, f = chamfer_hex(corners, bevel)
     i = pid or uid(name.lower().replace(" ", "-"))
-    C.append({"type": "add", "primitive": "mesh", "id": i, "name": name, "parentId": parent, "mesh": {"vertices": v, "faces": f, "smooth": False}, "material": mat, "transform": {"position": list(pos), "rotation": list(rot)}})
+    C.append({"type": "add", "primitive": "mesh", "id": i, "name": name, "parentId": parent, "mesh": {"vertices": v, "faces": f, "smooth": SOFT}, "material": mat, "transform": {"position": list(pos), "rotation": list(rot)}})
+    if SOFT and mat is not JOINT:
+        C.append({"type": "setModifiers", "id": i, "modifiers": {"subdivision": {"levels": 1, "sharpAngle": 60}}})
     return i
+
+
+def groove(target, parent, pos, size, rot=(0, 0, 0)):
+    """Cut a panel line into `target` with a thin box (boolean difference)."""
+    c = uid("groove")
+    w, d, h = size
+    C.append({"type": "add", "primitive": "cube", "id": c, "name": "Groove cutter", "parentId": parent, "transform": {"position": list(pos), "rotation": list(rot), "scale": [w / 2, d / 2, h / 2]}})
+    C.append({"type": "boolean", "id": target, "cutter": c, "op": "difference"})
 
 
 def box(name, parent, size, mat, pos=(0, 0, 0), rot=(0, 0, 0), bevel=0.03, taper=(1, 1), shift=(0, 0)):
@@ -107,21 +120,22 @@ def cyl(name, parent, r, length, mat, pos=(0, 0, 0), rot=(0, 0, 0), seg=20, r2=N
 
 # ---------------------------------------------------------------- body
 root = joint("Kestrel", None, (0, 0, 0))
-hips = joint("Hips", root, (0, 0, 2.05))
+hips = joint("Hips", root, (0, 0, 2.32))
 box("Pelvis", hips, (0.62, 0.46, 0.34), GRAPHITE_D, (0, 0, 0), taper=(0.85, 0.9))
 box("Crotch plate", hips, (0.26, 0.1, 0.3), ORANGE, (0, -0.25, -0.08), (8, 0, 0), taper=(0.7, 1))
 for sx in (1, -1):
     box("Hip skirt", hips, (0.3, 0.42, 0.42), GRAPHITE, (sx * 0.4, 0, -0.08), (0, sx * -10, 0), taper=(0.75, 0.9))
     box("Hip stripe", hips, (0.04, 0.3, 0.28), ORANGE, (sx * 0.56, -0.02, -0.07), (0, sx * -10, 0), bevel=0.01)
-waist = joint("Waist", hips, (0, 0, 0.2))
+waist = joint("Waist", hips, (0, 0, 0.2), (0, 0, 8))
 cyl("Abdomen joint", waist, 0.2, 0.3, JOINT, (0, 0, 0.12))
 for k in range(3):
     box("Ab plate", waist, (0.36 - k * 0.02, 0.1, 0.1), GRAPHITE, (0, -0.2, 0.04 + k * 0.1), (-6, 0, 0), bevel=0.02)
 
 chest = joint("Chest", waist, (0, 0, 0.3))
-box("Chest", chest, (0.95, 0.62, 0.62), GRAPHITE, (0, 0.02, 0.32), taper=(1.28, 1.1), shift=(0, 0.04))
+chest_id = box("Chest", chest, (0.9, 0.62, 0.66), GRAPHITE, (0, 0.02, 0.33), taper=(1.42, 1.12), shift=(0, 0.04))
 for sx in (1, -1):
     box("Chest plate", chest, (0.4, 0.12, 0.46), ORANGE, (sx * 0.23, -0.33, 0.4), (-8, 0, sx * -12), taper=(1.15, 1), bevel=0.035)
+groove(chest_id, chest, (0, -0.02, 0.5), (1.4, 0.8, 0.014))
 box("Chest ridge", chest, (0.1, 0.16, 0.5), GRAPHITE_D, (0, -0.36, 0.38), (-8, 0, 0), bevel=0.03, taper=(0.7, 1))
 for sx in (1, -1):
     for k in range(3):
@@ -140,7 +154,7 @@ for sx in (1, -1):
 # Head: compact helmet, one round visor, offset sensor mast
 neck = joint("Neck", chest, (0, -0.02, 0.76))
 cyl("Neck", neck, 0.1, 0.14, JOINT, (0, 0, 0.05))
-head = joint("Head", neck, (0, 0, 0.14), (4, 0, -8), scale=1.22)
+head = joint("Head", neck, (0, 0, 0.14), (6, 0, -14), scale=0.98)
 box("Helmet", head, (0.38, 0.44, 0.32), GRAPHITE, (0, 0.0, 0.16), taper=(0.8, 0.86), shift=(0, 0.02))
 for sx in (1, -1):
     box("Cheek guard", head, (0.06, 0.24, 0.2), GRAPHITE_D, (sx * 0.2, -0.04, 0.1), (0, 0, sx * 10), bevel=0.02, taper=(1, 0.8))
@@ -153,23 +167,24 @@ C.append({"type": "add", "primitive": "sphere", "id": uid("mast-tip"), "name": "
 
 # Arms (T-ish rest pose relaxed down; sx = +1 is the mech's left = +X)
 def arm(sx, shoulder_rot, elbow_rot):
-    sh = joint(f"Shoulder.{'L' if sx > 0 else 'R'}", chest, (sx * 0.66, 0.02, 0.5), shoulder_rot)
+    sh = joint(f"Shoulder.{'L' if sx > 0 else 'R'}", chest, (sx * 0.76, 0.02, 0.52), shoulder_rot)
     cyl("Shoulder joint", sh, 0.15, 0.24, JOINT, (sx * 0.02, 0, 0), (0, 90, 0))
     box("Pauldron", sh, (0.46, 0.56, 0.4), ORANGE, (sx * 0.12, 0, 0.12), (0, sx * -14, 0), taper=(0.75, 0.85), bevel=0.05)
     box("Pauldron trim", sh, (0.48, 0.58, 0.06), GRAPHITE_D, (sx * 0.12, 0, -0.1), (0, sx * -14, 0), bevel=0.02)
-    box("Upper arm", sh, (0.3, 0.32, 0.5), GRAPHITE, (sx * 0.08, 0, -0.38), taper=(0.92, 0.92))
-    el = joint("Elbow", sh, (sx * 0.08, 0, -0.66), elbow_rot)
+    box("Upper arm", sh, (0.3, 0.32, 0.58), GRAPHITE, (sx * 0.08, 0, -0.42), taper=(0.92, 0.92))
+    el = joint("Elbow", sh, (sx * 0.08, 0, -0.76), elbow_rot)
     cyl("Elbow joint", el, 0.11, 0.26, JOINT, (0, 0, 0), (0, 90, 0))
-    box("Forearm", el, (0.38, 0.42, 0.58), GRAPHITE, (0, -0.02, -0.32), taper=(0.84, 0.8))
+    fa = box("Forearm", el, (0.38, 0.42, 0.64), GRAPHITE, (0, -0.02, -0.35), taper=(0.84, 0.8))
+    groove(fa, el, (0, -0.23, -0.35), (0.42, 0.06, 0.014))
     box("Forearm plate", el, (0.07, 0.34, 0.46), ORANGE, (sx * 0.2, -0.02, -0.3), (0, sx * 4, 0), bevel=0.018)
-    wr = joint("Wrist", el, (0, -0.02, -0.64))
+    wr = joint("Wrist", el, (0, -0.02, -0.71))
     box("Hand", wr, (0.24, 0.28, 0.22), JOINT, (0, 0, -0.09), bevel=0.035)
     box("Knuckles", wr, (0.2, 0.08, 0.14), GRAPHITE_D, (0, -0.13, -0.12), (20, 0, 0), bevel=0.02)
     return sh, el, wr
 
 
-sh_l, el_l, wr_l = arm(1, (0, 12, -6), (-28, 0, 0))
-sh_r, el_r, wr_r = arm(-1, (0, -10, 4), (-62, 0, 8))
+sh_l, el_l, wr_l = arm(1, (4, 16, -4), (-20, 0, 0))
+sh_r, el_r, wr_r = arm(-1, (-14, -12, 10), (-48, 0, 14))
 
 # Missile pod on the left shoulder
 pod = joint("Missile pod", sh_l, (0.14, 0.12, 0.42), (0, 0, 0))
@@ -193,24 +208,27 @@ box("Scope", gun, (0.07, 0.24, 0.07), ORANGE, (0, -0.15, 0.15), bevel=0.012)
 def leg(sx, hip_rot, knee_rot, ankle_rot):
     hp = joint(f"Hip.{'L' if sx > 0 else 'R'}", hips, (sx * 0.24, 0, -0.12), hip_rot)
     cyl("Hip joint", hp, 0.13, 0.22, JOINT, (0, 0, 0), (0, 90, 0))
-    box("Thigh", hp, (0.38, 0.42, 0.62), GRAPHITE, (0, 0, -0.38), taper=(1.1, 1.06))
-    box("Thigh plate", hp, (0.3, 0.08, 0.42), ORANGE, (0, -0.23, -0.36), (3, 0, 0), bevel=0.025, taper=(0.85, 1))
-    kn = joint("Knee", hp, (0, 0, -0.74), knee_rot)
+    th = box("Thigh", hp, (0.38, 0.42, 0.78), GRAPHITE, (0, 0, -0.46), taper=(1.1, 1.06))
+    groove(th, hp, (0, 0, -0.62), (0.5, 0.5, 0.014))
+    box("Thigh plate", hp, (0.3, 0.08, 0.5), ORANGE, (0, -0.23, -0.42), (3, 0, 0), bevel=0.025, taper=(0.85, 1))
+    kn = joint("Knee", hp, (0, 0, -0.92), knee_rot)
     cyl("Knee joint", kn, 0.13, 0.28, JOINT, (0, 0, 0), (0, 90, 0))
     box("Knee pad", kn, (0.34, 0.18, 0.34), ORANGE, (0, -0.21, 0.02), (-14, 0, 0), taper=(0.8, 1), bevel=0.045)
-    box("Shin", kn, (0.5, 0.56, 0.8), GRAPHITE, (0, 0.02, -0.44), taper=(0.76, 0.78))
-    box("Shin vent", kn, (0.2, 0.05, 0.14), JOINT, (0, -0.3, -0.62), bevel=0.014)
-    box("Calf thruster", kn, (0.24, 0.16, 0.4), GRAPHITE_D, (0, 0.33, -0.42), bevel=0.025, taper=(0.9, 0.8))
-    an = joint("Ankle", kn, (0, 0.02, -0.86), ankle_rot)
+    shin = box("Shin", kn, (0.5, 0.56, 1.0), GRAPHITE, (0, 0.02, -0.54), taper=(0.74, 0.76))
+    groove(shin, kn, (0, -0.25, -0.36), (0.6, 0.12, 0.016))
+    groove(shin, kn, (0, -0.25, -0.36), (0.016, 0.12, 0.9))
+    box("Shin vent", kn, (0.2, 0.05, 0.14), JOINT, (0, -0.3, -0.76), bevel=0.014)
+    box("Calf thruster", kn, (0.24, 0.16, 0.46), GRAPHITE_D, (0, 0.33, -0.52), bevel=0.025, taper=(0.9, 0.8))
+    an = joint("Ankle", kn, (0, 0.02, -1.06), ankle_rot)
     cyl("Ankle joint", an, 0.09, 0.26, JOINT, (0, 0, 0), (0, 90, 0))
-    box("Foot", an, (0.46, 0.72, 0.2), GRAPHITE_D, (0, -0.1, -0.12), taper=(0.9, 0.88), bevel=0.045)
-    box("Toe cap", an, (0.42, 0.22, 0.13), ORANGE, (0, -0.44, -0.14), (-10, 0, 0), bevel=0.035, taper=(0.9, 1))
-    box("Heel", an, (0.28, 0.16, 0.16), GRAPHITE, (0, 0.24, -0.13), bevel=0.03)
+    box("Foot", an, (0.5, 0.8, 0.22), GRAPHITE_D, (0, -0.12, -0.13), taper=(0.9, 0.88), bevel=0.045)
+    box("Toe cap", an, (0.46, 0.24, 0.14), ORANGE, (0, -0.5, -0.15), (-10, 0, 0), bevel=0.035, taper=(0.9, 1))
+    box("Heel", an, (0.3, 0.18, 0.18), GRAPHITE, (0, 0.28, -0.14), bevel=0.03)
 
 
 # Wide, planted stance: left leg forward, right back.
-leg(1, (-10, 0, -4), (22, 0, 0), (-12, 0, 4))
-leg(-1, (14, 0, 6), (14, 0, 0), (-28, 0, -6))
+leg(1, (-8, -7, -10), (14, 0, 0), (-6, 7, 10))
+leg(-1, (10, 8, 12), (16, 0, 0), (-26, -8, -12))
 
 # ---------------------------------------------------------------- stage
 C.insert(0, {"type": "setWorld", "world": {"hdri": "photo_studio_loft_hall", "strength": 0.8, "background": "blurred", "exposure": 1.05, "bloom": 0.12, "ao": True}})
@@ -231,9 +249,9 @@ for lid, name, pos, power, angle, shadows, color in [
     ("fill", "Fill light", (5, -5, 3.5), 2500, 70, False, "#e8eeff"),
     ("rim", "Rim light", (5, 6, 6), 3500, 50, False, "#9fd8ff"),
 ]:
-    C.append({"type": "add", "primitive": "light", "id": lid, "name": name, "light": {"type": "spot", "power": power, "spotAngle": angle, "shadows": shadows, "color": color}, "transform": {"position": list(pos), "rotation": aim(pos, (0, 0, 2))}})
+    C.append({"type": "add", "primitive": "light", "id": lid, "name": name, "light": {"type": "spot", "power": power, "spotAngle": angle, "shadows": shadows, "color": color}, "transform": {"position": list(pos), "rotation": aim(pos, (0, 0, 2.3))}})
 C.append({"type": "setAnimation", "start": 1, "end": 240})
-C.append({"type": "cameraMove", "move": "orbit", "target": [0, 0, 2.05], "start": 1, "end": 240, "distance": 6.2, "height": 0.5, "heading": 250, "degrees": 360, "smooth": False})
+C.append({"type": "cameraMove", "move": "orbit", "target": [0, 0, 2.5], "start": 1, "end": 240, "distance": 6.4, "height": -1.5, "heading": 245, "degrees": 360, "smooth": False})
 
 out = {"format": "b3d-studio-script", "version": 1, "title": "Scout mech (modelled)", "commands": C}
 Path(__file__).resolve().parents[1].joinpath("scout-mech.b3d-script.json").write_text(json.dumps(out, separators=(",", ":")))

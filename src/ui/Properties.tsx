@@ -11,6 +11,7 @@ import { runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
 import { guessUnitScale, isUserAsset } from '../engine/userModels';
 import { TIMES } from '../core/sky';
+import { prepareBooleans } from './prepare';
 import type { Quality } from '../core/store';
 import type { TimeOfDay } from '../core/sky';
 import { worldOf } from '../core/types';
@@ -513,7 +514,7 @@ function EditSection() {
   );
 }
 
-/** Shading and modifiers (Mirror, Subdivision Surface) for shapes and meshes. */
+/** Shading and modifiers (Mirror, Bevel, Subdivision Surface) for shapes and meshes. */
 function ModifiersSection({ id }: { id: string }) {
   const { store } = useCtx();
   const o = useApp((s) => s.doc.objects[id]);
@@ -544,6 +545,49 @@ function ModifiersSection({ id }: { id: string }) {
           ))}
         </div>
       </div>
+      {levels > 0 && (
+        <label className="prop-row">
+          <span>Keep sharp edges</span>
+          <input
+            type="checkbox"
+            data-testid="subdiv-sharp"
+            checked={mods.subdivision?.sharpAngle !== undefined}
+            onChange={(e) => store.dispatch({ type: 'setModifiers', id, modifiers: { subdivision: e.target.checked ? { levels, sharpAngle: 30 } : { levels } } }, { select: false })}
+          />
+        </label>
+      )}
+      <div className="prop-row">
+        <span>Bevel</span>
+        <div className="seg-text" role="radiogroup" aria-label="Bevel width">
+          {[0, 0.01, 0.03, 0.08].map((w) => {
+            const on = (mods.bevel?.width ?? 0) === w;
+            return (
+              <button
+                key={w}
+                role="radio"
+                aria-checked={on}
+                className={on ? 'active' : ''}
+                data-bevel={w}
+                onClick={() => store.dispatch({ type: 'setModifiers', id, modifiers: { bevel: w ? { width: w, segments: mods.bevel?.segments ?? 2, angle: mods.bevel?.angle ?? 30 } : null } }, { select: false })}
+              >
+                {w === 0 ? 'Off' : `${Math.round(w * 100)} cm`}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {mods.bevel && (
+        <div className="prop-row">
+          <span>Bevel segments</span>
+          <div className="seg-text" role="radiogroup" aria-label="Bevel segments">
+            {[1, 2, 3].map((n) => (
+              <button key={n} role="radio" aria-checked={mods.bevel!.segments === n} className={mods.bevel!.segments === n ? 'active' : ''} onClick={() => store.dispatch({ type: 'setModifiers', id, modifiers: { bevel: { ...mods.bevel!, segments: n } } }, { select: false })}>
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="prop-row">
         <span>Mirror</span>
         <div className="seg-text" role="group" aria-label="Mirror axes">
@@ -559,8 +603,61 @@ function ModifiersSection({ id }: { id: string }) {
           <button className="btn" onClick={() => store.dispatch({ type: 'applyModifiers', id }, { select: false })}>Apply modifiers</button>
         </div>
       )}
-      <p className="prop-hint">Subdivision rounds the shape off (smooth characters and cars). Mirror X: model one half, the other follows.</p>
+      <BooleanRow id={id} />
+      <p className="prop-hint">Subdivision rounds the shape off; Keep sharp edges makes hard-surface parts (armour, cars) curved but crisp. Bevel rounds every edge sharper than 30° so it catches the light. Mirror X: model one half, the other follows.</p>
     </Section>
+  );
+}
+
+/** Boolean: cut, join or intersect another solid into this one (applied, like Blender's Apply). */
+function BooleanRow({ id }: { id: string }) {
+  const { store } = useCtx();
+  const objects = useApp((s) => s.doc.objects);
+  const order = useApp((s) => s.doc.order);
+  const [cutter, setCutter] = useState('');
+  const [op, setOp] = useState<'difference' | 'union' | 'intersect'>('difference');
+  const [busy, setBusy] = useState(false);
+  const solids = order.filter((k) => k !== id && objects[k] && (objects[k].type === 'mesh' || ['cube', 'sphere', 'cylinder', 'cone', 'torus', 'capsule'].includes(objects[k].type)));
+  if (!solids.length) return null;
+  const run = async () => {
+    if (!cutter) return;
+    setBusy(true);
+    try {
+      await prepareBooleans();
+      store.dispatch({ type: 'boolean', id, cutter, op }, { select: false });
+    } catch (e) {
+      store.notify(`Boolean failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <div className="prop-row">
+        <span>Boolean</span>
+        <div className="seg-text" role="radiogroup" aria-label="Boolean operation">
+          {(['difference', 'union', 'intersect'] as const).map((k) => (
+            <button key={k} role="radio" aria-checked={op === k} className={op === k ? 'active' : ''} data-bool-op={k} onClick={() => setOp(k)}>
+              {k === 'difference' ? 'Cut' : k === 'union' ? 'Join' : 'Keep overlap'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <label className="prop-row">
+        <span>with</span>
+        <select id="bool-cutter" aria-label="Boolean cutter" value={cutter} onChange={(e) => setCutter(e.target.value)}>
+          <option value="">Choose an object…</option>
+          {solids.map((k) => (
+            <option key={k} value={k}>{objects[k].name}</option>
+          ))}
+        </select>
+      </label>
+      <div className="prop-actions">
+        <button className="btn" data-testid="bool-apply" disabled={!cutter || busy} onClick={() => void run()}>
+          {busy ? 'Working…' : 'Apply boolean'}
+        </button>
+      </div>
+    </>
   );
 }
 

@@ -838,6 +838,33 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Hard-surface tools (v2.0): bevel modifier, creased subdivision, boolean from the Shape panel.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'block', name: 'Block' },
+      { type: 'add', primitive: 'cylinder', id: 'drill', name: 'Drill', params: { radiusTop: 0.4, radiusBottom: 0.4, segments: 32 }, transform: { rotation: [90, 0, 0], scale: [1, 1, 2] } },
+    ] });
+    s.select('block');
+  });
+  await page.click('[data-bevel="0.03"]');
+  await page.click('[data-subdiv="2"]');
+  await page.click('[data-testid="subdiv-sharp"]');
+  const mods = await page.evaluate(() => window.__b3d.store.getState().doc.objects.block.modifiers);
+  check('v2.0: Shape panel sets Bevel and Subdivision with sharp edges', mods?.bevel?.width === 0.03 && mods?.subdivision?.levels === 2 && mods?.subdivision?.sharpAngle === 30, JSON.stringify(mods));
+  await page.selectOption('#bool-cutter', 'drill');
+  await page.click('[data-testid="bool-apply"]');
+  await page.waitForFunction(() => !window.__b3d.store.getState().doc.objects.drill.visible, null, { timeout: 30000 });
+  const res = await page.evaluate(() => { const o = window.__b3d.store.getState().doc.objects.block; return { faces: o.mesh.faces.length, mods: !!o.modifiers }; });
+  check('v2.0: Boolean cut applies (WASM loads in the browser) and hides the cutter', res.faces > 100 && !res.mods, JSON.stringify(res));
+  await page.screenshot({ path: `${shots}/boolean.png` });
+  check('v2.0: no errors (hard-surface tools)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // iPad: edit mode by touch.
 {
   const { ctx, page, errors } = await open({ width: 820, height: 1180 }, { touch: true, dpr: 2 });
