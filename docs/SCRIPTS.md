@@ -239,6 +239,21 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
 - Order in the stack: Mirror → Array → Solidify → Bevel → Subdivision → Displace (fixed; Blender
   lets you reorder). A patch changes only the settings you give, e.g. `{"array":{"count":12}}`.
 
+## 3D text (v2.9)
+
+```json
+{"type":"addText","id":"title","text":{"body":"THE END","font":"display","size":1.5,"depth":0.3},"material":{"baseColor":"#ffcc33","metallic":1,"roughness":0.25},"transform":{"position":[0,0,1]}}
+{"type":"setText","id":"title","text":{"body":"THE END?","align":"left"}}
+```
+
+- `text`: `body` (up to 500 characters; `\n` for new lines), `font` (`sans`, `serif`, `display`),
+  `size` (letter size in m, default 1), `depth` (thickness in m, default 0.2; 0 = flat),
+  `align` (`left`, `center` (default), `right`), `lineHeight` (default 1.2).
+- The text stands up facing −Y (towards the default front view) with its baseline at the object's
+  origin, unless `transform.rotation` is given. Letters the font lacks are left out (Latin only).
+- Any other change to its mesh (edit ops, sculpt, booleans, applying modifiers) makes it a plain
+  mesh, after which `setText` refuses.
+
 ## Camera lens and depth of field (v2.7)
 
 ```json

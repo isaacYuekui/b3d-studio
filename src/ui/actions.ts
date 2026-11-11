@@ -7,6 +7,7 @@ import { createDefaultDoc } from '../core/store';
 import { loadLocal, parseProject, saveLocal, serializeProject } from '../core/serialize';
 import type { LightType, ObjectType } from '../core/types';
 import { animationOf, keyFrames } from '../core/animation';
+import { loadFont } from '../engine/fonts';
 import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit, togglePose } from './editing';
 import { poseAt } from '../core/rig';
 import { subtree } from '../core/commands';
@@ -417,6 +418,19 @@ export const actions = {
   'add.torus': add('torus'),
   'add.capsule': add('capsule'),
   'add.empty': add('empty'),
+  'add.text': {
+    id: 'add.text',
+    label: 'Text',
+    run: async (c) => {
+      try {
+        await loadFont('sans');
+      } catch {
+        c.store.notify("Couldn't load the font — check the connection and try again");
+        return;
+      }
+      c.store.dispatch({ type: 'addText', text: { body: 'Text' } });
+    },
+  },
   'add.pointLight': addLight('point', 'Point'),
   'add.sunLight': addLight('sun', 'Sun'),
   'add.spotLight': addLight('spot', 'Spot'),

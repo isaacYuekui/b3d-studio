@@ -12,6 +12,9 @@ import { useCatalog, useUserModels } from './LibraryDialog';
 import { guessUnitScale, isUserAsset } from '../engine/userModels';
 import { TIMES } from '../core/sky';
 import { FOCAL_PRESETS, FSTOP_PRESETS } from '../core/lens';
+import { ALIGNS, FONTS, FONT_LABEL, MAX_TEXT_LENGTH, isFontLoaded, missingChars } from '../core/text';
+import type { FontId, TextData } from '../core/text';
+import { loadFont } from '../engine/fonts';
 import { prepareBooleans } from './prepare';
 import type { Quality } from '../core/store';
 import { PATTERNS } from '../core/patterns';
@@ -192,6 +195,7 @@ export function Properties() {
 
       {o.type === 'model' && <ModelSection id={o.id} />}
 
+      {o.text && <TextSection id={o.id} />}
       {canEdit(o) && <ModifiersSection id={o.id} />}
 
       {o.type === 'armature' && <PoseSection id={o.id} />}
@@ -659,6 +663,78 @@ function EditSection() {
         </div>
       )}
       <p className="prop-hint">Tap to select, Shift or the ⊞ button to add. Move with the gizmo, or use Extrude, Inset, Bevel, Loop Cut on the left.</p>
+    </Section>
+  );
+}
+
+/** Text objects: the words, font, size, thickness and alignment (Blender's Text properties). */
+function TextSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const text = useApp((s) => s.doc.objects[id].text)!;
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Fonts load on demand; a change waits for its font, then rebuilds the letters.
+  const apply = async (patch: Partial<TextData>, mode: 'set' | 'preview' | 'commit' = 'set') => {
+    const font = patch.font ?? text.font;
+    if (!isFontLoaded(font)) {
+      setBusy(true);
+      try {
+        await loadFont(font);
+      } catch {
+        store.notify("Couldn't load the font — check the connection and try again");
+        return;
+      } finally {
+        setBusy(false);
+      }
+    }
+    const cmd: Command = { type: 'setText', id, text: patch };
+    if (mode === 'set') store.dispatch(cmd, { select: false });
+    else store.preview(cmd);
+    if (mode === 'commit') store.commitPreview();
+  };
+  const body = draft ?? text.body;
+  const missing = missingChars({ body, font: text.font });
+  return (
+    <Section title="Text">
+      <textarea
+        className="text-body"
+        data-testid="text-body"
+        aria-label="Text"
+        rows={Math.min(5, body.split('\n').length + 1)}
+        maxLength={MAX_TEXT_LENGTH}
+        value={body}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          if (e.target.value.trim()) void apply({ body: e.target.value }, 'preview');
+        }}
+        onBlur={() => {
+          if (draft !== null && draft.trim()) void apply({ body: draft }, 'commit');
+          else store.cancelPreview();
+          setDraft(null);
+        }}
+      />
+      <label className="prop-row">
+        <span>Font</span>
+        <select data-testid="text-font" value={text.font} disabled={busy} onChange={(e) => void apply({ font: e.target.value as FontId })}>
+          {FONTS.map((f) => (
+            <option key={f} value={f}>{FONT_LABEL[f]}</option>
+          ))}
+        </select>
+      </label>
+      <NumberField label="Size" value={text.size} step={0.1} dragRate={0.01} suffix=" m" onPreview={(v) => void apply({ size: Math.max(0.01, Math.min(100, v)) }, 'preview')} onCommit={(v) => void apply({ size: Math.max(0.01, Math.min(100, v)) }, 'commit')} onCancel={() => store.cancelPreview()} />
+      <NumberField label="Thickness" value={text.depth} step={0.05} dragRate={0.005} suffix=" m" onPreview={(v) => void apply({ depth: Math.max(0, Math.min(100, v)) }, 'preview')} onCommit={(v) => void apply({ depth: Math.max(0, Math.min(100, v)) }, 'commit')} onCancel={() => store.cancelPreview()} />
+      <div className="prop-row">
+        <span>Align</span>
+        <div className="seg-text" role="radiogroup" aria-label="Alignment">
+          {ALIGNS.map((a) => (
+            <button key={a} role="radio" aria-checked={text.align === a} className={text.align === a ? 'active' : ''} onClick={() => void apply({ align: a })}>
+              {a[0].toUpperCase() + a.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
+      {missing.length > 0 && <p className="prop-hint warn">This font can't draw {missing.slice(0, 6).join(' ')}{missing.length > 6 ? '…' : ''} — those are left out (Latin letters, digits and punctuation only for now).</p>}
+      <p className="prop-hint">Bevel (Shape panel) rounds the letter edges. Edit Mode or Sculpt turns the text into a plain mesh, like Blender's Convert to Mesh.</p>
     </Section>
   );
 }

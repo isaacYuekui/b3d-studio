@@ -15,6 +15,8 @@ import type { Animation, Easing, PoseKey } from './animation';
 import type { ArmatureData, Bone, BonePose, Background, CameraLens, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
+import { ALIGNS, DEFAULT_TEXT, FONTS, MAX_TEXT_LENGTH, textMesh } from './text';
+import type { FontId, TextAlign, TextData } from './text';
 import { compact } from './mesh/topology';
 import { PATTERNS } from './patterns';
 import type { PatternType } from './patterns';
@@ -120,6 +122,10 @@ export type Command =
   /** Sky, sun light, exposure and haze for a time of day; heading turns the sky so the sun shines from that azimuth (degrees). */
   | { type: 'setTimeOfDay'; time: TimeOfDay; heading?: number; fog?: number }
   | { type: 'setCamera'; position: Vec3; target: Vec3 }
+  /** 3D text: letters from a font, extruded (Blender's Add → Text). Stands up facing −Y unless a rotation is given. */
+  | { type: 'addText'; id?: string; name?: string; text: Partial<TextData> & { body: string }; transform?: Partial<Transform>; material?: Partial<Material>; parentId?: string | null }
+  /** Change a text object's words, font, size, thickness or alignment (rebuilds its mesh). */
+  | { type: 'setText'; id: string; text: Partial<TextData> }
   /** Camera lens: focal length (mm), depth of field, f-stop, focus distance (m). null clears a setting. */
   | { type: 'setLens'; lens: { [K in keyof CameraLens]?: CameraLens[K] | null } }
   | { type: 'setKeyframe'; id: string; frame: number; transform?: Transform; easing?: Easing }
@@ -234,7 +240,48 @@ const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 // ---------------------------------------------------------------- apply
 
 export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = defaultIdGen): ApplyResult {
+  const r = applyCommandInner(doc, cmd, idGen);
+  if (r.doc === doc || cmd.type === 'setText' || cmd.type === 'addText' || cmd.type === 'batch') return r;
+  return { ...r, doc: dropStaleText(doc, r.doc) };
+}
+
+/** A text object whose mesh was changed by anything but setText is now a plain mesh (Blender: Convert to Mesh). */
+function dropStaleText(before: SceneDoc, after: SceneDoc): SceneDoc {
+  let objects = after.objects;
+  for (const [id, o] of Object.entries(after.objects)) {
+    if (!o.text || !before.objects[id] || before.objects[id].mesh === o.mesh) continue;
+    if (objects === after.objects) objects = { ...objects };
+    const rest = { ...o };
+    delete rest.text;
+    objects[id] = rest;
+  }
+  return objects === after.objects ? after : { ...after, objects };
+}
+
+function buildText(t: TextData): MeshData {
+  try {
+    return textMesh(t);
+  } catch (e) {
+    throw new CommandError(e instanceof Error ? e.message : String(e));
+  }
+}
+
+function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResult {
   switch (cmd.type) {
+    case 'addText': {
+      const t: TextData = { ...DEFAULT_TEXT, ...cmd.text };
+      const r = applyCommand(doc, { type: 'add', primitive: 'mesh', id: cmd.id, name: cmd.name ?? 'Text', mesh: buildText(t), parentId: cmd.parentId, material: cmd.material, transform: { rotation: [90, 0, 0], ...cmd.transform } }, idGen);
+      const id = r.created[0];
+      return { doc: withObject(r.doc, { ...r.doc.objects[id], text: t }), created: r.created };
+    }
+
+    case 'setText': {
+      const o = requireObj(doc, cmd.id);
+      if (!o.text) throw new CommandError(`${o.name} isn't a text object (it was turned into a mesh)`);
+      const t: TextData = { ...o.text, ...cmd.text };
+      return { doc: withObject(doc, { ...o, text: t, mesh: buildText(t) }), created: [] };
+    }
+
     case 'add': {
       if (cmd.parentId) requireObj(doc, cmd.parentId);
       if (cmd.id !== undefined && doc.objects[cmd.id]) throw new CommandError(`Id already in use: ${cmd.id}`);
@@ -1176,6 +1223,7 @@ export function validateSceneObject(raw: unknown): SceneObject {
   if (v.params !== undefined) obj.params = validateParams(v.params);
   if (obj.type === 'mesh') obj.mesh = validateMeshData(v.mesh);
   if (obj.type === 'mesh' && v.modifiers !== undefined) obj.modifiers = validateModifiers(v.modifiers);
+  if (obj.type === 'mesh' && v.text !== undefined) obj.text = validateText(v.text, false) as TextData;
   if (obj.type === 'light') obj.light = { ...DEFAULT_LIGHT.point, ...validateLight(v.light, false) } as LightData;
   if (obj.type === 'model') obj.asset = typeof v.asset === 'string' && ASSET_ID.test(v.asset) ? v.asset : fail(`object ${v.id}: asset invalid`);
   if (obj.type === 'armature') {
@@ -1240,6 +1288,26 @@ export function validateSceneDoc(v: unknown): SceneDoc {
     if (Object.keys(lens).length) doc.lens = lens;
   }
   return doc;
+}
+
+/** Text settings; `partial` checks only the fields given. */
+export function validateText(v: unknown, partial: boolean): Partial<TextData> {
+  if (!isRecord(v)) fail('text must be an object');
+  const out: Partial<TextData> = {};
+  for (const k of Object.keys(v)) if (!['body', 'font', 'size', 'depth', 'align', 'lineHeight'].includes(k)) fail(`text has no setting "${k}" (use body, font, size, depth, align, lineHeight)`);
+  if (v.body !== undefined) {
+    if (typeof v.body !== 'string' || !v.body.trim() || v.body.length > MAX_TEXT_LENGTH) fail(`text.body must be 1..${MAX_TEXT_LENGTH} characters`);
+    out.body = v.body;
+  }
+  if (v.font !== undefined) out.font = (FONTS as readonly unknown[]).includes(v.font) ? (v.font as FontId) : fail(`text.font must be one of ${FONTS.join(', ')}`);
+  if (v.size !== undefined) out.size = inRange(v.size, 0.01, 100) ? (v.size as number) : fail('text.size must be 0.01..100 m');
+  if (v.depth !== undefined) out.depth = inRange(v.depth, 0, 100) ? (v.depth as number) : fail('text.depth must be 0..100 m');
+  if (v.align !== undefined) out.align = (ALIGNS as readonly unknown[]).includes(v.align) ? (v.align as TextAlign) : fail(`text.align must be one of ${ALIGNS.join(', ')}`);
+  if (v.lineHeight !== undefined) out.lineHeight = inRange(v.lineHeight, 0.5, 5) ? (v.lineHeight as number) : fail('text.lineHeight must be 0.5..5');
+  if (!partial) {
+    for (const k of ['body', 'font', 'size', 'depth', 'align'] as const) if (out[k] === undefined) fail(`text.${k} is missing`);
+  }
+  return out;
 }
 
 /** Lens settings; with `allowNull` (setLens), null clears a setting. Unknown keys are refused. */
@@ -1620,6 +1688,25 @@ export function validateCommand(v: unknown, depth = 0): Command {
     case 'setCamera':
       if (!isVec3(v.position) || !isVec3(v.target)) fail('setCamera needs position and target as [x,y,z]');
       return { type: 'setCamera', position: [...v.position], target: [...v.target] };
+    case 'addText': {
+      if (!isRecord(v.text)) fail('addText needs text: {body, font?, size?, depth?, align?}');
+      const cmd: Extract<Command, { type: 'addText' }> = { type: 'addText', text: validateText(v.text, true) as TextData };
+      if (typeof cmd.text.body !== 'string') fail('addText needs text.body (the words)');
+      if (v.id !== undefined) cmd.id = typeof v.id === 'string' && REF_ID.test(v.id) ? v.id : fail('id may only use letters, digits, _ . - (max 64)');
+      if (v.name !== undefined) cmd.name = isStr(v.name, 100) ? v.name : fail('name invalid');
+      if (v.parentId !== undefined && v.parentId !== null) cmd.parentId = isId(v.parentId) ? v.parentId : fail('parentId invalid');
+      if (v.material !== undefined) cmd.material = validateMaterial(v.material, true);
+      if (v.transform !== undefined) {
+        if (!isRecord(v.transform)) fail('transform invalid');
+        const tr: Partial<Transform> = {};
+        for (const k of ['position', 'rotation', 'scale'] as const) if (v.transform[k] !== undefined) tr[k] = isVec3(v.transform[k]) ? ([...v.transform[k]] as Vec3) : fail(`transform.${k} must be [x,y,z]`);
+        cmd.transform = tr;
+      }
+      return cmd;
+    }
+    case 'setText':
+      if (!isId(v.id) || !isRecord(v.text)) fail('setText needs id and text: {body?, font?, size?, depth?, align?}');
+      return { type: 'setText', id: v.id, text: validateText(v.text, true) };
     case 'setLens':
       if (!isRecord(v.lens)) fail('setLens needs lens: {focal?, dof?, fStop?, focus?}');
       return { type: 'setLens', lens: validateLens(v.lens, true) as Extract<Command, { type: 'setLens' }>['lens'] };

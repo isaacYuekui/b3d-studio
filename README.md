@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## 3D text (v2.9)
+
+- **Add → Text**: standing 3D letters (Blender's Text object). In Properties → Text: type the words (several lines are fine), pick a font — Sans (Inter Bold), Serif (Playfair Display Bold) or Display (Bebas Neue) — size, thickness and alignment
+- Works with materials, modifiers (Bevel rounds the letter edges) and animation, so it's ready for video titles
+- Edit Mode or Sculpt turns it into a plain mesh, like Blender's Convert to Mesh. Fonts cover Latin letters, digits and punctuation for now
+- Fonts are bundled with the app under the SIL Open Font License
+
 ## Graph Editor (v2.8)
 
 - **〰 Graph** (Timeline): the selected object's animation as curves — Location, Rotation, Scale X/Y/Z in red/green/blue, like Blender's F-curves. With nothing selected it shows the camera's (position and target)

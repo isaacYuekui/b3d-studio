@@ -974,6 +974,40 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// 3D text (v2.9): Add → Text, edit the words, change font; mesh edits convert it.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'delete', ids: [...s.getState().doc.order] });
+  });
+  await page.click('[data-menu="Add"]');
+  await page.click('.menu [data-action="add.text"]');
+  await page.waitForFunction(() => Object.values(window.__b3d.store.getState().doc.objects).some((o) => o.text), null, { timeout: 30000 });
+  const t0 = await page.evaluate(() => { const o = Object.values(window.__b3d.store.getState().doc.objects).find((x) => x.text); return { id: o.id, body: o.text.body, faces: o.mesh.faces.length, rot: o.transform.rotation }; });
+  check('v2.9: Add → Text makes standing 3D letters', t0.body === 'Text' && t0.faces > 50 && t0.rot[0] === 90, JSON.stringify(t0));
+  await page.fill('[data-testid="text-body"]', 'Hello B3D');
+  await page.click('.prop-section-head:has-text("Text")'); // blur the box (commits), closes the section
+  await page.click('.prop-section-head:has-text("Text")');
+  await page.selectOption('[data-testid="text-font"]', 'display');
+  await page.waitForFunction((id) => window.__b3d.store.getState().doc.objects[id].text.font === 'display', t0.id, { timeout: 30000 });
+  const t1 = await page.evaluate((id) => { const o = window.__b3d.store.getState().doc.objects[id]; return { body: o.text.body, font: o.text.font, faces: o.mesh.faces.length }; }, t0.id);
+  check('v2.9: typing new words and picking another font rebuilds the letters', t1.body === 'Hello B3D' && t1.font === 'display' && t1.faces > t0.faces, JSON.stringify(t1));
+  await page.evaluate(() => window.__b3d.viewport().frame(false));
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: `${shots}/text-3d.png` });
+  await page.keyboard.press('Control+z');
+  const t2 = await page.evaluate((id) => window.__b3d.store.getState().doc.objects[id].text, t0.id);
+  check('v2.9: undo steps back one text change', t2.font === 'sans' && t2.body === 'Hello B3D', JSON.stringify(t2));
+  await page.click('[data-testid="mode-toggle"]');
+  await page.keyboard.press('Alt+s');
+  await page.click('[data-testid="mode-toggle"]');
+  const t3 = await page.evaluate((id) => !!window.__b3d.store.getState().doc.objects[id].text, t0.id);
+  check('v2.9: editing the mesh turns the text into a plain mesh', t3 === false);
+  check('v2.9: no errors (text)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Graph Editor (v2.8): curves per channel; drag a key up to change a value, sideways to retime.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });
