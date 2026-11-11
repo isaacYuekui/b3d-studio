@@ -52,6 +52,13 @@ export function DopeSheet() {
     setSel(new Set([...live].map((k) => { const r = parse(k); return id({ ...r, frame: r.frame + offset }); })));
   };
 
+  // Retime around the first selected key; the selection follows the keys to their new frames.
+  const retime = (factor: number) => {
+    const pivot = Math.min(...[...live].map((k) => parse(k).frame));
+    edit({ op: 'scale', factor, pivot });
+    setSel(new Set([...live].map((k) => { const r = parse(k); return id({ ...r, frame: Math.round(pivot + (r.frame - pivot) * factor) }); })));
+  };
+
   const onDiamondDown = (e: RPointerEvent, key: string) => {
     e.stopPropagation();
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -127,8 +134,8 @@ export function DopeSheet() {
         }}>Copy to playhead</button>
         <button className="tl-btn" disabled={!n} title="Move the selected keys one frame earlier" onClick={() => moveSel(-1)}>−1</button>
         <button className="tl-btn" disabled={!n} title="Move the selected keys one frame later" onClick={() => moveSel(1)}>+1</button>
-        <button className="tl-btn" disabled={n < 2} data-testid="ds-slower" title="Stretch the selected keys: twice as slow" onClick={() => edit({ op: 'scale', factor: 2, pivot: first })}>Slower ×2</button>
-        <button className="tl-btn" disabled={n < 2} title="Squash the selected keys: twice as fast" onClick={() => edit({ op: 'scale', factor: 0.5, pivot: first })}>Faster ×½</button>
+        <button className="tl-btn" disabled={n < 2} data-testid="ds-slower" title="Stretch the selected keys: twice as slow" onClick={() => retime(2)}>Slower ×2</button>
+        <button className="tl-btn" disabled={n < 2} title="Squash the selected keys: twice as fast" onClick={() => retime(0.5)}>Faster ×½</button>
         <button className="tl-btn danger" disabled={!n} data-testid="ds-delete" onClick={() => { edit({ op: 'delete' }); setSel(new Set()); }}>Delete</button>
       </div>
       <div className="ds-body">
