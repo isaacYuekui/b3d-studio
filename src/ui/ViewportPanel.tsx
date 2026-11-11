@@ -48,6 +48,8 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
   const edit = useApp((s) => s.edit);
   const posing = useApp((s) => s.pose);
   const xray = useApp((s) => s.xray);
+  const snap = useApp((s) => s.snap);
+  const prop = useApp((s) => s.proportional);
   const addSelect = useApp((s) => s.addSelect);
   const boxMode = useApp((s) => s.boxMode);
   const selEditable = useApp((s) => canEdit(s.selection ? s.doc.objects[s.selection] : null));
@@ -167,13 +169,30 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
             <button className={`tool-btn${xray ? ' active' : ''}`} aria-pressed={xray} aria-label="X-ray" title="X-ray: see and select through the mesh (⌥ Z)" data-testid="xray" onClick={() => run('view.xray')}>
               <Icon.xray />
             </button>
+            <button className={`tool-btn${prop.on ? ' active' : ''}`} aria-pressed={prop.on} aria-label="Proportional editing" title="Proportional editing: nearby vertices follow smoothly (O)" data-testid="proportional" onClick={() => run('edit.proportional')}>
+              <Icon.proportional />
+            </button>
+            {prop.on && (
+              <label className="vp-radius" title="How far the effect reaches">
+                <span className="muted">Radius</span>
+                <input type="number" min={0.01} max={100} step={0.1} value={prop.radius} aria-label="Proportional radius" data-testid="prop-radius" onChange={(e) => ctx.store.setProportional({ ...prop, radius: Number(e.target.value) || prop.radius })} />
+              </label>
+            )}
+            <button className={`tool-btn${snap ? ' active' : ''}`} aria-pressed={snap} aria-label="Snapping" title="Snap: 0.25 m, 15°, 0.1 steps (⇧ Tab)" data-testid="snap" onClick={() => run('view.snap')}>
+              <Icon.snap />
+            </button>
             <span className="vp-info muted" data-testid="edit-counts">{counts}</span>
           </>
         ) : posing ? null : (
+          <>
+          <button className={`tool-btn${snap ? ' active' : ''}`} aria-pressed={snap} aria-label="Snapping" title="Snap: 0.25 m, 15°, 0.1 steps (⇧ Tab)" data-testid="snap" onClick={() => run('view.snap')}>
+            <Icon.snap />
+          </button>
           <span className="vp-info">
             {selName ? <b>{selName}</b> : <span className="muted">Nothing selected</span>}
             <span className="muted"> · {count} object{count === 1 ? '' : 's'}</span>
           </span>
+          </>
         )}
       </div>
 

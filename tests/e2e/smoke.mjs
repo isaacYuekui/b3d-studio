@@ -912,6 +912,43 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Edit tools (v2.2): snapping, proportional editing, separate, join.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'a', name: 'Alpha' },
+      { type: 'add', primitive: 'cube', id: 'b', name: 'Beta', transform: { position: [4, 0, 0] } },
+    ] });
+    s.select('a');
+  });
+  await page.click('[data-testid="snap"]');
+  const snap = await page.evaluate(() => ({ on: window.__b3d.store.getState().snap, step: window.__b3d.viewport().gizmos.gizmos.positionGizmo.snapDistance }));
+  check('v2.2: Snap button turns on 0.25 m gizmo steps', snap.on === true && snap.step === 0.25, JSON.stringify(snap));
+  await page.click('[data-testid="snap"]');
+  // Join Beta into Alpha from the Shape panel, then split again by loose parts.
+  await page.selectOption('#join-other', 'b');
+  await page.click('[data-testid="join-apply"]');
+  const joined = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; return { beta: !!d.objects.b, faces: d.objects.a.mesh?.faces.length }; });
+  check('v2.2: Join pulls the other object into this one', !joined.beta && joined.faces === 12, JSON.stringify(joined));
+  await page.click('[data-menu="Object"]');
+  await page.click('.menu [data-action="object.separateLoose"]');
+  const split = await page.evaluate(() => Object.values(window.__b3d.store.getState().doc.objects).filter((o) => o.mesh?.faces.length === 6).length);
+  check('v2.2: Separate by Loose Parts splits it back into two objects', split === 2, String(split));
+  // Proportional editing toggle in edit mode, with its radius field.
+  await page.evaluate(() => window.__b3d.store.select('a'));
+  await page.click('[data-testid="mode-toggle"]');
+  await page.click('[data-testid="proportional"]');
+  const prop = await page.evaluate(() => window.__b3d.store.getState().proportional);
+  check('v2.2: Proportional editing toggles in edit mode and shows its radius', prop.on === true && (await page.isVisible('[data-testid="prop-radius"]')), JSON.stringify(prop));
+  await page.click('[data-testid="proportional"]');
+  await page.click('[data-testid="mode-toggle"]');
+  check('v2.2: no errors (edit tools)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // iPad: edit mode by touch.
 {
   const { ctx, page, errors } = await open({ width: 820, height: 1180 }, { touch: true, dpr: 2 });

@@ -57,6 +57,7 @@ import { buildVertexData } from './geometry';
 import { subtree } from '../core/commands';
 import { EditOverlay } from './EditOverlay';
 import { rippleNormalTexture } from './water';
+import { proportionalWeights } from '../core/mesh/proportional';
 import { TerrainPlugin } from './terrainMaterial';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import { Matrix as BMatrix } from '@babylonjs/core/Maths/math.vector';
@@ -127,7 +128,7 @@ export class Viewport {
   private helperMat: StandardMaterial;
   private overlay: EditOverlay;
   private editPivot: TransformNode;
-  private editDrag: { id: string; mesh: MeshData; verts: number[]; startInv: Matrix; world: Matrix; worldInv: Matrix } | null = null;
+  private editDrag: { id: string; mesh: MeshData; verts: number[]; startInv: Matrix; world: Matrix; worldInv: Matrix; weights?: Map<number, number> } | null = null;
   private lastEditKey = '';
 
   constructor(private canvas: HTMLCanvasElement, private store: Store) {
@@ -286,6 +287,7 @@ export class Viewport {
 
   private lastFrame = -1;
   private lastQuality: Quality | null = null;
+  private lastSnap: boolean | null = null;
   /** Video export renders at Best whatever this device's setting is. */
   private forceBest = false;
   private recording = false;
@@ -323,6 +325,14 @@ export class Viewport {
       this.lastWorld = world;
       this.applyShading();
       this.applyWorld(world, state.shading === 'rendered');
+    }
+    if (state.snap !== this.lastSnap) {
+      this.lastSnap = state.snap;
+      const g = this.gizmos.gizmos;
+      // Increments, like Blender's Increment snapping: 0.25 m, 15°, 0.1×.
+      if (g.positionGizmo) g.positionGizmo.snapDistance = state.snap ? 0.25 : 0;
+      if (g.rotationGizmo) g.rotationGizmo.snapDistance = state.snap ? Math.PI / 12 : 0;
+      if (g.scaleGizmo) g.scaleGizmo.snapDistance = state.snap ? 0.1 : 0;
     }
     const editKey = state.edit ? `${state.edit.id}|${state.edit.mode}|${state.xray}` : '';
     const editChanged = editKey !== this.lastEditKey || state.edit !== this.lastEdit || (state.edit && docChanged);
@@ -642,7 +652,26 @@ export class Viewport {
     const e = ed ? this.entries.get(ed.id) : undefined;
     if (!ed || !o?.mesh || !e || !ed.sel.verts.length) return;
     const world = e.node.computeWorldMatrix(true).clone();
-    this.editDrag = { id: ed.id, mesh: o.mesh, verts: [...ed.sel.verts], startInv: this.editPivot.computeWorldMatrix(true).clone().invert(), world, worldInv: world.clone().invert() };
+    const prop = st.proportional;
+    const weights = prop.on
+      ? proportionalWeights(
+          o.mesh.vertices.map((v) => {
+            const b = Vector3.TransformCoordinates(new Vector3(...toBabylonVec(v)), world);
+            return fromBabylonVec([b.x, b.y, b.z]);
+          }),
+          ed.sel.verts,
+          prop.radius,
+        )
+      : undefined;
+    this.editDrag = {
+      id: ed.id,
+      mesh: o.mesh,
+      verts: weights ? [...weights.keys()] : [...ed.sel.verts],
+      startInv: this.editPivot.computeWorldMatrix(true).clone().invert(),
+      world,
+      worldInv: world.clone().invert(),
+      weights,
+    };
   }
 
   private stepEditDrag() {
@@ -653,9 +682,11 @@ export class Viewport {
     const m = d.world.multiply(d.startInv).multiply(cur).multiply(d.worldInv);
     const mods = this.store.getState().doc.objects[d.id]?.modifiers;
     const clip = mods?.mirror?.clip ? mods.mirror : null;
-    const mesh = transformVerts(d.mesh, d.verts, (p) => {
+    const mesh = transformVerts(d.mesh, d.verts, (p, i) => {
       const b = Vector3.TransformCoordinates(new Vector3(...toBabylonVec(p)), m);
-      const out = fromBabylonVec([b.x, b.y, b.z]);
+      let out = fromBabylonVec([b.x, b.y, b.z]);
+      const w = d.weights?.get(i) ?? 1;
+      if (w < 1) out = [p[0] + (out[0] - p[0]) * w, p[1] + (out[1] - p[1]) * w, p[2] + (out[2] - p[2]) * w];
       if (clip) {
         const merge = clip.merge ?? 0.001;
         ([clip.x, clip.y, clip.z] as boolean[]).forEach((on, ax) => {

@@ -48,6 +48,8 @@ export const Icon = {
   vert: () => <S><path d="M4 15 10 4l6 11z" strokeOpacity=".45" /><circle cx="10" cy="4" r="2.2" fill="currentColor" /><circle cx="4" cy="15" r="1.4" /><circle cx="16" cy="15" r="1.4" /></S>,
   edge: () => <S><path d="M4 15 10 4l6 11z" strokeOpacity=".45" /><path d="M4 15 10 4" strokeWidth="3" /></S>,
   face: () => <S><path d="M4 15 10 4l6 11z" fill="currentColor" fillOpacity=".55" /></S>,
+  snap: () => <S><path d="M6 4v7a4 4 0 0 0 8 0V4" /><path d="M6 7h3M11 7h3" /></S>,
+  proportional: () => <S><circle cx="10" cy="10" r="6.5" strokeDasharray="2.2 1.6" /><circle cx="10" cy="10" r="2" /></S>,
   xray: () => <S><rect x="4" y="4" width="9" height="9" /><rect x="7" y="7" width="9" height="9" strokeDasharray="2 1.6" /></S>,
   addSel: () => <S><rect x="3" y="3" width="8" height="8" strokeDasharray="2 1.6" /><path d="M14 10v7M10.5 13.5h7" /></S>,
   box: () => <S><rect x="3" y="4" width="14" height="11" strokeDasharray="2.4 1.8" /><path d="M12 12l5 5" /></S>,

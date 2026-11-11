@@ -116,12 +116,12 @@ export const ADD_ITEMS: MenuItem[] = [
 
 export const MESH_ITEMS: MenuItem[] = [
   'mesh.extrude', 'mesh.inset', 'mesh.bevel', 'mesh.loopcut', 'mesh.subdivide',
-  '-', 'edit.duplicate', 'mesh.fill', 'mesh.merge', 'mesh.mergeDistance', 'edit.delete',
+  '-', 'edit.duplicate', 'mesh.fill', 'mesh.merge', 'mesh.mergeDistance', 'mesh.separate', 'edit.delete',
   '-', 'mesh.recalc', 'mesh.flip', 'mesh.smooth', 'mesh.flat',
   '-', 'mod.mirrorX', 'mod.subdiv1', 'mod.subdiv2', 'mod.subdiv0', 'mod.apply',
 ];
 
-export const SELECT_ITEMS: MenuItem[] = ['select.all', 'select.none', 'select.invert', '-', 'select.linked', 'select.loop', 'select.box', '-', 'select.vert', 'select.edge', 'select.face', '-', 'view.xray'];
+export const SELECT_ITEMS: MenuItem[] = ['select.all', 'select.none', 'select.invert', '-', 'select.linked', 'select.loop', 'select.box', '-', 'select.vert', 'select.edge', 'select.face', '-', 'view.xray', 'edit.proportional', 'view.snap'];
 
 export const EDIT_CONTEXT: MenuItem[] = [
   'mesh.extrude', 'mesh.inset', 'mesh.bevel', 'mesh.loopcut', 'mesh.subdivide',

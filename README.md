@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Edit tools (v2.2)
+
+- **Snapping** (magnet button, ⇧ Tab): moves in 0.25 m steps, rotations in 15°, scale in 0.1, in Object and Edit Mode
+- **Proportional editing** (circle button in Edit Mode, O): nearby vertices follow the selection with a smooth falloff, up to the radius you set. Good for shaping terrain-like surfaces, cloth folds and organic bumps
+- **Separate** (Mesh menu, P): selected faces become their own object. **Object → Separate by Loose Parts** splits every disconnected piece
+- **Join** (Shape panel): pulls another object into this one, keeping each shape as it is, like Blender's Ctrl J
+
 ## Dope Sheet (v2.1)
 
 - Timeline → **◆◆ Dope Sheet**: every keyframe in the scene, one row each for Summary, Camera, every animated object and every armature's pose
@@ -15,7 +22,7 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 - **Bevel modifier**: rounds every edge sharper than 30° so parts catch the light (1, 3 or 8 cm, 1–3 segments)
 - **Subdivision → Keep sharp edges**: curved but crisp shapes (armour, cars) instead of blobs
-- **Boolean** (Cut / Join / Keep overlap) with any other solid, for panel lines, vents, windows and holes. Uses manifold-3d (Apache-2.0), loaded only when you first use it
+- **Boolean** (Cut / Union / Intersect) with any other solid, for panel lines, vents, windows and holes. Uses manifold-3d (Apache-2.0), loaded only when you first use it
 
 ## Scout mech example (v1.9)
 
