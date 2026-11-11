@@ -1154,7 +1154,7 @@ export class Viewport {
   }
 
   private keyFor(o: SceneObject): string {
-    return `${o.type}|${JSON.stringify(o.params ?? {})}|${o.light?.type ?? ''}|${o.asset ?? ''}`;
+    return `${o.type}|${JSON.stringify(o.params ?? {})}|${o.light?.type ?? ''}|${o.asset ?? ''}|${o.field ? `${o.field.type}:${o.field.radius}` : ''}`;
   }
 
   private disposeEntry(e: Entry) {
@@ -1260,16 +1260,35 @@ export class Viewport {
       // Bones are drawn in applyRigs (they follow the pose).
       return { node, pick: null, key, meshes: [] };
     }
-    // empty: small axes cross
+    // empty: small axes cross; a force field also shows its reach (rings) and direction.
     const size = 0.5;
-    const helper = MeshBuilder.CreateLineSystem(`${o.id}-helper`, {
-      lines: [
-        [new Vector3(-size, 0, 0), new Vector3(size, 0, 0)],
-        [new Vector3(0, -size, 0), new Vector3(0, size, 0)],
-        [new Vector3(0, 0, -size), new Vector3(0, 0, size)],
-      ],
-    }, s);
-    helper.color = HELPER_COLOR;
+    const lines: Vector3[][] = [
+      [new Vector3(-size, 0, 0), new Vector3(size, 0, 0)],
+      [new Vector3(0, -size, 0), new Vector3(0, size, 0)],
+      [new Vector3(0, 0, -size), new Vector3(0, 0, size)],
+    ];
+    if (o.field) {
+      const r = o.field.radius > 0 ? o.field.radius : 2;
+      const ring = (f: (a: number) => Vector3) => Array.from({ length: 49 }, (_, i) => f((i / 48) * Math.PI * 2));
+      // Babylon Y = Blender Z.
+      lines.push(ring((a) => new Vector3(Math.cos(a) * r, 0, Math.sin(a) * r)));
+      if (o.field.type === 'force') {
+        lines.push(ring((a) => new Vector3(Math.cos(a) * r, Math.sin(a) * r, 0)), ring((a) => new Vector3(0, Math.cos(a) * r, Math.sin(a) * r)));
+        for (let k = 0; k < 8; k++) {
+          const a = (k / 8) * Math.PI * 2;
+          lines.push([new Vector3(Math.cos(a) * 0.6, 0, Math.sin(a) * 0.6), new Vector3(Math.cos(a) * 1.4, 0, Math.sin(a) * 1.4)]);
+        }
+      } else if (o.field.type === 'wind') {
+        lines.push([new Vector3(0, 0, 0), new Vector3(0, 2.5, 0)], [new Vector3(0, 2.5, 0), new Vector3(0.3, 2.1, 0)], [new Vector3(0, 2.5, 0), new Vector3(-0.3, 2.1, 0)]);
+      } else {
+        lines.push(Array.from({ length: 97 }, (_, i) => {
+          const a = (i / 48) * Math.PI * 2, rr = (i / 96) * r;
+          return new Vector3(Math.cos(a) * rr, (i / 96) * 2, Math.sin(a) * rr);
+        }));
+      }
+    }
+    const helper = MeshBuilder.CreateLineSystem(`${o.id}-helper`, { lines }, s);
+    helper.color = o.field ? new Color3(0.55, 0.75, 1) : HELPER_COLOR;
     helper.intersectionThreshold = 0.15;
     helper.metadata = { id: o.id };
     helper.parent = node;

@@ -23,6 +23,8 @@ import type { ParticleSettings } from './particles';
 import type { FloatSettings, Surge, WaterSettings } from './ocean';
 import { DEFAULT_SURGE } from './ocean';
 import type { CameraShake } from './shake';
+import { DEFAULT_FIELD, FIELD_TYPES } from './fields';
+import type { FieldType, ForceField } from './fields';
 import type { RigidBody } from './physics';
 import type { FontId, TextAlign, TextData } from './text';
 import { compact } from './mesh/topology';
@@ -136,6 +138,8 @@ export type Command =
   | { type: 'addText'; id?: string; name?: string; text: Partial<TextData> & { body: string }; transform?: Partial<Transform>; material?: Partial<Material>; parentId?: string | null }
   /** Change a text object's words, font, size, thickness or alignment (rebuilds its mesh). */
   | { type: 'setText'; id: string; text: Partial<TextData> }
+  /** Force field on an empty (null removes it): Force, Wind or Vortex, acting in the physics bake. */
+  | { type: 'setField'; id: string; field: Partial<ForceField> | null }
   /** Float an object on the water under it (null stops it floating). */
   | { type: 'setFloat'; id: string; float: FloatSettings | null }
   /** Camera shake from `start` to `end` (an impact, explosion or earthquake). */
@@ -991,6 +995,21 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       return { doc: withAnimation(base, next), created: [] };
     }
 
+    case 'setField': {
+      const o = requireObj(doc, cmd.id);
+      if (o.type !== 'empty') throw new CommandError(`${o.name}: force fields go on empties (Add → Force Field)`);
+      const next = { ...o };
+      if (cmd.field === null) delete next.field;
+      else {
+        const f: ForceField = { ...DEFAULT_FIELD, ...o.field, ...cmd.field };
+        if (f.start === undefined) delete f.start;
+        if (f.end === undefined) delete f.end;
+        if (f.start !== undefined && f.end !== undefined && f.end < f.start) throw new CommandError('The field must end after it starts');
+        next.field = f;
+      }
+      return { doc: withObject(doc, next), created: [] };
+    }
+
     case 'setFloat': {
       const o = requireObj(doc, cmd.id);
       if (o.water) throw new CommandError("Water can't float on water");
@@ -1391,6 +1410,7 @@ export function validateSceneObject(raw: unknown): SceneObject {
   if (obj.type === 'mesh' && v.skin !== undefined) {
     obj.skin = validateSkin(v.skin, `object ${v.id}`);
   }
+  if (obj.type === 'empty' && v.field !== undefined) obj.field = validateField(v.field, false) as ForceField;
   if (v.float !== undefined) {
     if (!isRecord(v.float) || !inRange(v.float.offset, -100, 100)) fail(`object ${v.id}: float invalid`);
     obj.float = { offset: v.float.offset as number };
@@ -1440,6 +1460,23 @@ export function validateSceneDoc(v: unknown): SceneDoc {
     if (Object.keys(lens).length) doc.lens = lens;
   }
   return doc;
+}
+
+/** Force field settings; `partial` checks only the fields given. */
+export function validateField(v: unknown, partial: boolean): Partial<ForceField> {
+  if (!isRecord(v)) fail('field must be an object: {type, strength, radius, start?, end?}');
+  const out: Partial<ForceField> = {};
+  for (const k of Object.keys(v)) if (!['type', 'strength', 'radius', 'start', 'end'].includes(k)) fail(`field has no setting "${k}" (use type, strength, radius, start, end)`);
+  if (v.type !== undefined) out.type = (FIELD_TYPES as readonly unknown[]).includes(v.type) ? (v.type as FieldType) : fail(`field.type must be one of ${FIELD_TYPES.join(', ')}`);
+  if (v.strength !== undefined) out.strength = inRange(v.strength, -100000, 100000) ? (v.strength as number) : fail('field.strength must be -100000..100000 m/s²');
+  if (v.radius !== undefined) out.radius = inRange(v.radius, 0, 100000) ? (v.radius as number) : fail('field.radius must be 0..100000 m (0 = everywhere)');
+  // null clears the frame window (active all the time).
+  if (v.start === null && partial) out.start = undefined;
+  else if (v.start !== undefined) out.start = isFrame(v.start) ? (v.start as number) : fail('field.start must be a frame');
+  if (v.end === null && partial) out.end = undefined;
+  else if (v.end !== undefined) out.end = isFrame(v.end) ? (v.end as number) : fail('field.end must be a frame');
+  if (!partial) return { ...DEFAULT_FIELD, ...out };
+  return out;
 }
 
 /** Water settings; `partial` checks only the fields given. */
@@ -2002,6 +2039,10 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (cmd.op === 'easing' && cmd.easing === undefined) fail('editKeys easing needs easing');
       return cmd;
     }
+    case 'setField':
+      if (!isId(v.id)) fail('setField needs id');
+      if (v.field === null) return { type: 'setField', id: v.id, field: null };
+      return { type: 'setField', id: v.id, field: validateField(v.field, true) };
     case 'setFloat':
       if (!isId(v.id)) fail('setFloat needs id');
       if (v.float === null) return { type: 'setFloat', id: v.id, float: null };

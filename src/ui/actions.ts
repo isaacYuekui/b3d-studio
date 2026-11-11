@@ -9,6 +9,7 @@ import type { LightType, ObjectType } from '../core/types';
 import { animationOf, keyFrames } from '../core/animation';
 import { loadFont } from '../engine/fonts';
 import { bakePhysics, freePhysics } from './physicsUi';
+import { FIELD_PRESETS } from '../core/fields';
 import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit, togglePose } from './editing';
 import { poseAt } from '../core/rig';
 import { subtree } from '../core/commands';
@@ -128,6 +129,20 @@ export function pickFile(accept: string | null = '.json,.b3d,application/json'):
     input.addEventListener('cancel', () => done(null));
     input.click();
   });
+}
+
+/** Add → Force Field: an empty carrying a field preset (explosions start at the current frame). */
+function addField(preset: string): Action {
+  const p = FIELD_PRESETS.find((x) => x.id === preset)!;
+  return {
+    id: `add.field.${preset}`,
+    label: p.label,
+    run: (c) => {
+      const frame = c.store.getState().frame;
+      const [id] = c.store.dispatch({ type: 'add', primitive: 'empty', name: `${p.label} field`, transform: { position: [0, 0, 1] } });
+      if (id) c.store.dispatch({ type: 'setField', id, field: p.frames ? { ...p.field, start: frame, end: frame + p.frames } : p.field }, { select: false });
+    },
+  };
 }
 
 export const actions = {
@@ -429,6 +444,10 @@ export const actions = {
     label: 'Free Physics Bake',
     run: (c) => freePhysics(c.store),
   },
+  'add.field.blast': addField('blast'),
+  'add.field.push': addField('push'),
+  'add.field.wind': addField('wind'),
+  'add.field.vortex': addField('vortex'),
   'add.water': {
     id: 'add.water',
     label: 'Water / Ocean',

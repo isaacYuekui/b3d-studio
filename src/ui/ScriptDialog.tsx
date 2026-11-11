@@ -15,6 +15,7 @@ const EXAMPLES: { id: string; label: string; load: () => Promise<{ default: stri
   { id: 'campfire', label: 'Campfire (fire + smoke)', load: () => import('../../examples/campfire.b3d-script.json?raw') },
   { id: 'storm', label: 'Storm at the lighthouse (ocean + rain)', load: () => import('../../examples/storm-lighthouse.b3d-script.json?raw') },
   { id: 'tsunami', label: 'Tsunami harbour (giant wave)', load: () => import('../../examples/tsunami-harbour.b3d-script.json?raw') },
+  { id: 'meteor', label: 'Meteor strike (blast + fracture)', load: () => import('../../examples/meteor-strike.b3d-script.json?raw') },
   { id: 'scout-mech', label: 'Scout mech (modelled)', load: () => import('../../examples/scout-mech.b3d-script.json?raw') },
   { id: 'village-walk', label: 'Village walk (video)', load: () => import('../../examples/village-walk.b3d-script.json?raw') },
   { id: 'village-valley', label: 'Village valley (Roblox-ready)', load: () => import('../../examples/village-valley.b3d-script.json?raw') },

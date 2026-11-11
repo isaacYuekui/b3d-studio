@@ -6,6 +6,7 @@
 import type * as CannonNS from 'cannon-es';
 import type { TransformKey } from './animation';
 import { transformAt } from './animation';
+import { activeFields, fieldAcceleration } from './fields';
 import { applyModifiers } from './mesh/modifiers';
 import { primitiveMesh } from './mesh/primitives';
 import { m4ToQuat, quatToM4, rotEuler, toEuler } from './rig';
@@ -209,8 +210,21 @@ export function simulate(doc: SceneDoc, start: number, end: number, fps: number)
   // Fixed small steps (≈240 per second) keep stacks stable whatever the frame rate.
   const sub = Math.max(1, Math.ceil(STEP_HZ / fps));
   const dt = 1 / (fps * sub);
+  const hasFields = Object.values(doc.objects).some((o) => o.field);
   for (let f = start + 1; f <= end; f++) {
-    for (let i = 0; i < sub; i++) world.step(dt);
+    // Force fields push the active bodies during this frame (Blender's Force Field effectors).
+    const fields = hasFields ? activeFields(doc, f) : [];
+    for (let i = 0; i < sub; i++) {
+      if (fields.length)
+        for (const a of actives) {
+          const p = a.body.position;
+          const acc = fieldAcceleration(fields, [p.x, p.y, p.z]);
+          if (!acc[0] && !acc[1] && !acc[2]) continue;
+          if (a.body.sleepState === C.Body.SLEEPING) a.body.wakeUp();
+          a.body.applyForce(new C.Vec3(acc[0] * a.body.mass, acc[1] * a.body.mass, acc[2] * a.body.mass));
+        }
+      world.step(dt);
+    }
     record(f);
   }
   // A body that settled early gets one more key at the end, so later keys can't pull it along.

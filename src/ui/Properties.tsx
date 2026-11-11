@@ -21,6 +21,8 @@ import type { ParticleSettings } from '../core/particles';
 import type { Surge, WaterSettings } from '../core/ocean';
 import { DEFAULT_SURGE } from '../core/ocean';
 import { SHAKE_PRESETS } from '../core/shake';
+import { FIELD_PRESETS, FIELD_TYPES } from '../core/fields';
+import type { ForceField } from '../core/fields';
 import type { RigidBody } from '../core/physics';
 import { bakePhysics, freePhysics } from './physicsUi';
 import { prepareBooleans } from './prepare';
@@ -173,6 +175,7 @@ export function Properties() {
   // Tabs like Blender's Properties editor: only the ones this kind of object has.
   const tabs: [PropTab, string][] = [['scene', 'Scene'], ['object', 'Object']];
   if (canEdit(o)) tabs.push(['modifiers', 'Modifiers'], ['physics', 'Physics']);
+  else if (o.type === 'empty') tabs.push(['physics', 'Physics']);
   const dataLabel = o.text ? 'Text' : o.water ? 'Water' : o.light ? 'Light' : o.type === 'model' ? 'Model' : o.type === 'armature' ? 'Armature' : null;
   if (dataLabel) tabs.push(['data', dataLabel]);
   if (isRenderable(o.type) && o.type !== 'model') tabs.push(['material', 'Material']);
@@ -251,8 +254,9 @@ export function Properties() {
       {cur === 'data' && o.text && <TextSection id={o.id} />}
       {cur === 'data' && o.water && <WaterSection id={o.id} />}
       {cur === 'modifiers' && <ModifiersSection id={o.id} />}
-      {cur === 'physics' && <PhysicsSection id={o.id} />}
-      {cur === 'physics' && !o.water && <FloatSection id={o.id} />}
+      {cur === 'physics' && o.type === 'empty' && <FieldSection id={o.id} />}
+      {cur === 'physics' && o.type !== 'empty' && <PhysicsSection id={o.id} />}
+      {cur === 'physics' && !o.water && o.type !== 'empty' && <FloatSection id={o.id} />}
       {cur === 'data' && o.type === 'armature' && <PoseSection id={o.id} />}
 
       {cur === 'material' && (
@@ -1012,6 +1016,70 @@ function ScenePhysicsSection() {
         <button className="btn" disabled={!active} onClick={() => freePhysics(store)}>Free bake</button>
       </div>
       <p className="prop-hint">Gravity 9.81 m/s² down. Turn on Physics → Rigid body on each object first. Freeing the bake removes the keyframes of the active objects.</p>
+    </Section>
+  );
+}
+
+/** Force field on an empty (Blender's Physics → Force Field): acts on rigid bodies in the bake. */
+function FieldSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const f = useApp((s) => s.doc.objects[id].field);
+  const frame = useApp((s) => s.frame);
+  const set = (field: Partial<ForceField> | null) => store.dispatch({ type: 'setField', id, field }, { select: false });
+  const num = (key: 'strength' | 'radius' | 'start' | 'end', label: string, lo: number, hi: number, step: number, suffix: string, int = false) => (
+    <NumberField
+      label={label}
+      value={f![key] ?? 0}
+      step={step}
+      dragRate={step / 10}
+      suffix={suffix}
+      onPreview={(v) => store.preview({ type: 'setField', id, field: { [key]: clampN(v, lo, hi, int) } })}
+      onCommit={(v) => {
+        store.preview({ type: 'setField', id, field: { [key]: clampN(v, lo, hi, int) } });
+        store.commitPreview();
+      }}
+      onCancel={() => store.cancelPreview()}
+    />
+  );
+  return (
+    <Section title="Force field" defaultOpen>
+      <div className="seg-text" role="group" aria-label="Force field presets">
+        {FIELD_PRESETS.map((p) => (
+          <button key={p.id} data-field-preset={p.id} onClick={() => set(p.frames ? { ...p.field, start: frame, end: frame + p.frames } : { ...p.field, start: undefined, end: undefined })}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {f ? (
+        <>
+          <div className="prop-row">
+            <span>Type</span>
+            <div className="seg-text" role="radiogroup" aria-label="Field type">
+              {FIELD_TYPES.map((t) => (
+                <button key={t} role="radio" aria-checked={f.type === t} className={f.type === t ? 'active' : ''} onClick={() => set({ type: t })}>
+                  {t === 'force' ? 'Force' : t === 'wind' ? 'Wind' : 'Vortex'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {num('strength', 'Strength', -100000, 100000, 5, ' m/s²')}
+          {num('radius', 'Reach (0 = everywhere)', 0, 100000, 0.5, ' m')}
+          <label className="prop-row">
+            <span>Only some frames</span>
+            <input type="checkbox" checked={f.start !== undefined} onChange={(e) => set(e.target.checked ? { start: frame, end: frame + 2 } : { start: undefined, end: undefined })} />
+          </label>
+          {f.start !== undefined && num('start', 'From frame', -100000, 100000, 1, '', true)}
+          {f.end !== undefined && num('end', 'To frame', -100000, 100000, 1, '', true)}
+          <div className="prop-actions">
+            <button className="btn primary" onClick={() => void bakePhysics(store)}>Bake physics</button>
+            <button className="btn" onClick={() => set(null)}>Remove field</button>
+          </div>
+        </>
+      ) : null}
+      <p className="prop-hint">
+        Pushes rigid bodies when you bake physics: <b>Force</b> away from the centre (negative pulls in), <b>Wind</b> along the empty's blue (Z) axis, <b>Vortex</b> swirling around it. For an explosion: a
+        big strength for 1–2 frames, aimed at fractured objects.
+      </p>
     </Section>
   );
 }

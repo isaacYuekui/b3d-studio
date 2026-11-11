@@ -286,6 +286,20 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   Exact per frame (time = frame / fps). The surface is up to ~40,000 vertices, so very large seas get
   coarser — keep the sea around the camera.
 
+## Force fields (v3.9)
+
+```json
+{"type":"add","primitive":"empty","id":"blast","transform":{"position":[0,6,0.6]}}
+{"type":"setField","id":"blast","field":{"type":"force","strength":420,"radius":22,"start":60,"end":61}}
+{"type":"bakePhysics"}
+```
+
+- On empties only. `type`: `force` (away from the empty; negative strength pulls in), `wind` (along the
+  empty's local Z axis — rotate it to aim), `vortex` (swirls around its Z axis). `strength` is an
+  acceleration in m/s² (same push for light and heavy pieces), fading linearly to zero at `radius` m
+  (0 = everywhere, no fade). `start` / `end` frames limit it (null clears them). Acts during
+  `bakePhysics` only — put the bake after the field.
+
 ## Tsunami / giant wave (v3.8)
 
 ```json

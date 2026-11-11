@@ -5,6 +5,12 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Force fields (v3.9)
+
+- **Add → Force Field**: Explosion, Push, Wind, Tornado — an empty with Blender-style force field settings in its Physics tab: **Force** (away from the centre, or pulling with negative strength), **Wind** (along the empty's Z axis), **Vortex** (swirl), strength, reach and an optional frame window
+- Fields push rigid bodies when you **Bake physics** — an Explosion for 2 frames throws fractured pieces outwards
+- New example: *Meteor strike* — a burning meteor, fireball, dust cloud, a town blown apart and camera shake
+
 ## Tsunami / giant wave (v3.8)
 
 - Water tab → **Giant wave (tsunami)**: one wall of water (height, speed, length, start frame) runs across the sea in the wave direction, lifting and carrying everything that floats. Run the water on under the land and the wave floods over the shore

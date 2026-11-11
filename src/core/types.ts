@@ -172,6 +172,8 @@ export interface SceneObject {
   text?: import('./text').TextData;
   /** Water surfaces: animated ripples (size of the waves in metres, speed in m/s). */
   water?: import('./ocean').WaterSettings;
+  /** Force field (on an empty): pushes rigid bodies during the physics bake. */
+  field?: import('./fields').ForceField;
   /** Floats on the water under it, bobbing and tilting with the waves. */
   float?: import('./ocean').FloatSettings;
 }

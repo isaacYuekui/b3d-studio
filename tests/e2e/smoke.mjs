@@ -1013,6 +1013,41 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Force fields (v3.9): Add → Force Field → Explosion; it blows rigid bodies apart in the bake.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'ground', transform: { position: [0, 0, -0.5], scale: [20, 20, 0.5] } },
+      { type: 'setRigidBody', id: 'ground', rigid: { type: 'passive' } },
+      { type: 'add', primitive: 'cube', id: 'l', transform: { position: [-1.2, 0, 0.5], scale: [0.5, 0.5, 0.5] } },
+      { type: 'setRigidBody', id: 'l', rigid: {} },
+      { type: 'add', primitive: 'cube', id: 'r', transform: { position: [1.2, 0, 0.5], scale: [0.5, 0.5, 0.5] } },
+      { type: 'setRigidBody', id: 'r', rigid: {} },
+      { type: 'setAnimation', start: 1, end: 48 },
+    ] });
+    s.setFrame(10);
+  });
+  await page.click('[data-menu="Add"]');
+  await page.hover('.menu-item:has-text("Force Field")');
+  await page.click('.menu [data-action="add.field.blast"]');
+  const field = await page.evaluate(() => {
+    const s = window.__b3d.store, id = s.getState().selection;
+    s.dispatch({ type: 'transform', id, position: [0, 0, 0.3] }, { select: false });
+    return s.getState().doc.objects[id];
+  });
+  check('v3.9: Add → Force Field → Explosion makes an empty with a blast at the current frame', field.type === 'empty' && field.field?.type === 'force' && field.field.start === 10 && field.field.end === 12, JSON.stringify(field.field));
+  await page.click('[data-prop-tab="physics"]');
+  const panel = await page.isVisible('[data-field-preset="wind"]');
+  await page.evaluate(async () => { await window.__b3d.prepare([{ type: 'bakePhysics' }]); window.__b3d.store.dispatch({ type: 'bakePhysics' }); });
+  const xs = await page.evaluate(() => { const t = window.__b3d.store.getState().doc.animation.tracks; return [t.l[t.l.length - 1].transform.position[0], t.r[t.r.length - 1].transform.position[0]]; });
+  check('v3.9: the bake blows the boxes apart (field settings in the Physics tab)', panel && xs[0] < -3 && xs[1] > 3, JSON.stringify(xs));
+  check('v3.9: no errors (force fields)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Tsunami surge (v3.8): a giant wave crosses the water and lifts what floats.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });
