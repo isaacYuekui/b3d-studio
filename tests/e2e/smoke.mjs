@@ -974,6 +974,52 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// More Edit Mode tools (v2.6): connect, dissolve, triangulate / tris to quads, shrink/fatten.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'cube', id: 'c', name: 'Block' }] });
+    s.select('c');
+  });
+  await page.click('[data-testid="mode-toggle"]');
+  const faces = () => page.evaluate(() => window.__b3d.store.getState().doc.objects.c.mesh.faces.length);
+  // Two opposite corners of the top face, then J.
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const m = s.getState().doc.objects.c.mesh;
+    const top = m.faces.find((f) => f.every((v) => m.vertices[v][2] > 0.99));
+    s.setEdit({ ...s.getState().edit, mode: 'vert', sel: { verts: [top[0], top[2]], edges: [], faces: [] } });
+  });
+  await page.mouse.move(640, 400);
+  await page.keyboard.press('j');
+  const f1 = await faces();
+  check('v2.6: J connects two corners, splitting the face', f1 === 7, String(f1));
+  await page.keyboard.press('Control+x');
+  const f2 = await faces();
+  check('v2.6: Ctrl+X dissolves the new edge (faces merge back, no hole)', f2 === 6, String(f2));
+  await page.keyboard.press('3');
+  await page.keyboard.press('a');
+  await page.keyboard.press('Control+t');
+  const f3 = await faces();
+  await page.keyboard.press('Alt+j');
+  const f4 = await faces();
+  check('v2.6: Triangulate then Tris to Quads round-trips the cube', f3 === 12 && f4 === 6, `${f3} → ${f4}`);
+  const v0 = await page.evaluate(() => window.__b3d.store.getState().doc.objects.c.mesh.vertices[0].map(Math.abs));
+  await page.keyboard.press('a');
+  await page.keyboard.press('Alt+s');
+  const v1 = await page.evaluate(() => window.__b3d.store.getState().doc.objects.c.mesh.vertices[0].map(Math.abs));
+  const panel = await page.textContent('[data-testid="lastop"]').catch(() => '');
+  check('v2.6: Shrink/Fatten (Alt+S) pushes vertices out and shows its settings', v1[0] > v0[0] && /Shrink\/Fatten/.test(panel), JSON.stringify({ v0, v1, panel }));
+  await page.click('[data-menu="Mesh"]');
+  const inMenu = await page.isVisible('.menu [data-action="mesh.bridge"]');
+  await page.keyboard.press('Escape');
+  check('v2.6: Bridge Edge Loops and Dissolve are in the Mesh menu', inMenu);
+  await page.click('[data-testid="mode-toggle"]');
+  check('v2.6: no errors (edit tools 2)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // More modifiers (v2.5): Array, Solidify, Displace from the Shape panel.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 800 });

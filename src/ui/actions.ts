@@ -312,6 +312,15 @@ export const actions = {
   'mesh.fill': meshOp('fill', 'Fill (Make Face)', 'F'),
   'mesh.flip': meshOp('flip', 'Flip Normals', '⌥ N'),
   'mesh.recalc': meshOp('recalc', 'Recalculate Normals', '⇧ N'),
+  'mesh.dissolve': meshOp('dissolve', 'Dissolve', `${MOD} X`),
+  'mesh.connect': meshOp('connect', 'Connect Vertex Path', 'J'),
+  'mesh.bridge': meshOp('bridge', 'Bridge Edge Loops'),
+  'mesh.smoothVerts': meshOp('smoothVerts', 'Smooth Vertices'),
+  'mesh.shrinkFatten': meshOp('shrinkFatten', 'Shrink/Fatten', '⌥ S'),
+  'mesh.toSphere': meshOp('toSphere', 'To Sphere', '⇧ ⌥ S'),
+  'mesh.triangulate': meshOp('triangulate', 'Triangulate Faces', `${MOD} T`),
+  'mesh.trisToQuads': meshOp('trisToQuads', 'Tris to Quads', '⌥ J'),
+  'mesh.poke': meshOp('poke', 'Poke Faces'),
   'mesh.separate': {
     id: 'mesh.separate',
     label: 'Separate Selection',
@@ -683,12 +692,16 @@ export function shortcutFor(e: KeyboardEvent, editMode = false): ActionId | null
     if (mod && !e.shiftKey) {
       if (k === 'b') return 'mesh.bevel';
       if (k === 'r') return 'mesh.loopcut';
+      if (k === 'x') return 'mesh.dissolve';
+      if (k === 't') return 'mesh.triangulate';
       if (k === 'i') return 'select.invert';
       if (k === 'l') return 'select.linked';
     }
     if (e.altKey && !mod) {
       if (code === 'KeyA') return 'select.none';
       if (code === 'KeyN') return 'mesh.flip';
+      if (code === 'KeyJ') return 'mesh.trisToQuads';
+      if (code === 'KeyS') return e.shiftKey ? 'mesh.toSphere' : 'mesh.shrinkFatten';
     }
     if (e.shiftKey && !mod && !e.altKey && code === 'KeyN') return 'mesh.recalc';
     if (!mod && !e.altKey && !e.shiftKey) {
@@ -705,6 +718,7 @@ export function shortcutFor(e: KeyboardEvent, editMode = false): ActionId | null
         case 'KeyL': return 'select.linked';
         case 'KeyO': return 'edit.proportional';
         case 'KeyP': return 'mesh.separate';
+        case 'KeyJ': return 'mesh.connect';
         case 'KeyH': return null;
       }
     }

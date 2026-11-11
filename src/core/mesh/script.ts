@@ -7,6 +7,7 @@ import type { MeshSelection, SelectMode } from './select';
 import { EMPTY_SEL, edgeLoop, flush, selectAll, selectLinked } from './select';
 import type { OpResult } from './ops';
 import { MeshOpError, bevel, deleteSelected, duplicateFaces, extrude, fill, flipNormals, inset, loopCut, mergeAtCenter, mergeByDistance, recalcNormals, subdivide, transformVerts } from './ops';
+import { bridgeLoops, connectVerts, dissolve, pokeFaces, shrinkFatten, smoothVerts, toSphere, triangulateFaces, trisToQuads } from './ops2';
 import type { V } from './topology';
 import { add, centroid, dist, dot, edgeMap, ekParse, faceNormal, lerp, norm, scale, sub } from './topology';
 
@@ -34,7 +35,7 @@ export interface SelectQuery {
 
 export type EditStep = { op: string; select?: SelectQuery } & Record<string, unknown>;
 
-export const EDIT_OPS = ['select', 'extrude', 'inset', 'bevel', 'loopcut', 'subdivide', 'delete', 'merge', 'mergeDistance', 'fill', 'flip', 'recalc', 'duplicate', 'move', 'scale', 'rotate', 'smooth'] as const;
+export const EDIT_OPS = ['select', 'extrude', 'inset', 'bevel', 'loopcut', 'subdivide', 'delete', 'merge', 'mergeDistance', 'fill', 'flip', 'recalc', 'duplicate', 'move', 'scale', 'rotate', 'smooth', 'dissolve', 'connect', 'bridge', 'smoothVerts', 'shrinkFatten', 'toSphere', 'triangulate', 'trisToQuads', 'poke'] as const;
 
 const DEFAULT_MODE: Record<string, SelectMode> = { extrude: 'face', inset: 'face', subdivide: 'face', duplicate: 'face', fill: 'vert', merge: 'vert', bevel: 'edge', loopcut: 'edge' };
 
@@ -253,6 +254,29 @@ function apply(mesh: MeshData, op: string, p: Record<string, unknown>, sel: Mesh
     }
     case 'smooth':
       return { mesh: { ...mesh, smooth: p.smooth !== false }, sel, mode };
+    case 'dissolve':
+      need('dissolve');
+      return dissolve(mesh, mode, sel);
+    case 'connect':
+      return connectVerts(mesh, sel);
+    case 'bridge':
+      need('bridge');
+      return bridgeLoops(mesh, sel, mode);
+    case 'smoothVerts':
+      need('smoothVerts');
+      return smoothVerts(mesh, sel, mode, num(p.factor, 0.5), num(p.repeat, 1));
+    case 'shrinkFatten':
+      need('shrinkFatten');
+      return shrinkFatten(mesh, sel, mode, num(p.offset, 0.05));
+    case 'toSphere':
+      need('toSphere');
+      return toSphere(mesh, sel, mode, num(p.factor, 1));
+    case 'triangulate':
+      return triangulateFaces(mesh, sel);
+    case 'trisToQuads':
+      return trisToQuads(mesh, sel, num(p.angle, 40));
+    case 'poke':
+      return pokeFaces(mesh, sel, num(p.offset, 0));
     default:
       throw new MeshOpError(`unknown op "${op}" (use one of ${EDIT_OPS.join(', ')})`);
   }

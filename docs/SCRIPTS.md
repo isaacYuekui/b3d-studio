@@ -101,6 +101,11 @@ rejected and the error names the step.
 `loopcut {cuts, factor}` (through the first selected edge) · `subdivide` · `delete` · `merge` ·
 `mergeDistance {distance}` · `fill` · `flip` · `recalc` · `duplicate` · `move {by | along: "normal", distance}` ·
 `scale {by: number | [x,y,z], about}` · `rotate {by: [x°,y°,z°], about}` · `smooth {smooth}` · `select`.
+v2.6 adds: `dissolve` (in the select mode: faces merge into one, edges merge their two faces,
+vertices merge the faces around them) · `connect` (split faces between selected vertices, like J) ·
+`bridge` (two edge loops around holes, or two face patches → a band / tunnel) ·
+`smoothVerts {factor, repeat}` · `shrinkFatten {offset}` · `toSphere {factor}` · `triangulate` ·
+`trisToQuads {angle}` · `poke {offset}`.
 `move`, `scale` and `rotate` take `radius` for proportional editing (nearby vertices follow with a smooth falloff).
 
 Add `setModifiers` with `subdivision: {levels: 2}` after modelling for smooth, rounded results;

@@ -8,6 +8,7 @@ import type { MeshSelection, SelectMode } from '../core/mesh/select';
 import { EMPTY_SEL, convertMode, flush, invert, selectAll, selectLinked, selectLoop } from '../core/mesh/select';
 import type { OpResult } from '../core/mesh/ops';
 import { MeshOpError, bevel, deleteSelected, duplicateFaces, extrude, fill, flipNormals, inset, loopCut, mergeAtCenter, mergeByDistance, recalcNormals, selectionScale, subdivide } from '../core/mesh/ops';
+import { bridgeLoops, connectVerts, dissolve, pokeFaces, shrinkFatten, smoothVerts, toSphere, triangulateFaces, trisToQuads } from '../core/mesh/ops2';
 
 export const canEdit = (o?: SceneObject | null) => !!o && (o.type === 'mesh' || (PRIMITIVES as readonly string[]).includes(o.type));
 
@@ -239,6 +240,72 @@ export const MESH_OPS: Record<string, MeshOp> = {
     params: [],
     defaults: () => ({}),
     run: (m, s, mode) => recalcNormals(m, s, mode),
+  },
+  dissolve: {
+    id: 'dissolve',
+    label: 'Dissolve',
+    params: [],
+    defaults: () => ({}),
+    run: (m, s, mode) => dissolve(m, mode, s),
+  },
+  connect: {
+    id: 'connect',
+    label: 'Connect Vertex Path',
+    params: [],
+    defaults: () => ({}),
+    run: (m, s) => connectVerts(m, s),
+  },
+  bridge: {
+    id: 'bridge',
+    label: 'Bridge Edge Loops',
+    params: [],
+    defaults: () => ({}),
+    run: (m, s, mode) => bridgeLoops(m, s, mode),
+  },
+  smoothVerts: {
+    id: 'smoothVerts',
+    label: 'Smooth Vertices',
+    params: [
+      { key: 'factor', label: 'Smoothing', kind: 'number', min: 0, max: 1, step: 0.05 },
+      { key: 'repeat', label: 'Repeat', kind: 'int', min: 1, max: 100, step: 1 },
+    ],
+    defaults: () => ({ factor: 0.5, repeat: 1 }),
+    run: (m, s, mode, p) => smoothVerts(m, s, mode, num(p, 'factor'), num(p, 'repeat')),
+  },
+  shrinkFatten: {
+    id: 'shrinkFatten',
+    label: 'Shrink/Fatten',
+    params: [{ key: 'offset', label: 'Offset', kind: 'number', step: 0.01, suffix: ' m' }],
+    defaults: (m, s) => ({ offset: round(Math.max(0.01, selectionScale(m, s) * 0.1)) }),
+    run: (m, s, mode, p) => shrinkFatten(m, s, mode, num(p, 'offset')),
+  },
+  toSphere: {
+    id: 'toSphere',
+    label: 'To Sphere',
+    params: [{ key: 'factor', label: 'Factor', kind: 'number', min: 0, max: 1, step: 0.05 }],
+    defaults: () => ({ factor: 1 }),
+    run: (m, s, mode, p) => toSphere(m, s, mode, num(p, 'factor')),
+  },
+  triangulate: {
+    id: 'triangulate',
+    label: 'Triangulate Faces',
+    params: [],
+    defaults: () => ({}),
+    run: (m, s) => triangulateFaces(m, s),
+  },
+  trisToQuads: {
+    id: 'trisToQuads',
+    label: 'Tris to Quads',
+    params: [{ key: 'angle', label: 'Max Angle', kind: 'number', min: 0, max: 180, step: 5, suffix: '°' }],
+    defaults: () => ({ angle: 40 }),
+    run: (m, s, _mode, p) => trisToQuads(m, s, num(p, 'angle')),
+  },
+  poke: {
+    id: 'poke',
+    label: 'Poke Faces',
+    params: [{ key: 'offset', label: 'Offset', kind: 'number', step: 0.01, suffix: ' m' }],
+    defaults: () => ({ offset: 0 }),
+    run: (m, s, _mode, p) => pokeFaces(m, s, num(p, 'offset')),
   },
 };
 

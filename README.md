@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## More Edit Mode tools (v2.6)
+
+- **Dissolve** (Mesh menu, Ctrl/⌘ X): removes vertices, edges or faces without leaving a hole — faces merge into one
+- **Connect Vertex Path** (J): cut a face between two selected vertices. **Bridge Edge Loops**: join two holes with a band of faces, or select two faces to punch a tunnel through
+- **Deform**: Smooth Vertices, Shrink/Fatten (⌥ S), To Sphere (⇧ ⌥ S). **Faces**: Poke, Triangulate (Ctrl/⌘ T), Tris to Quads (⌥ J)
+- Every tool has its settings in the Adjust Last Operation panel, and works in scripts (`editMesh`)
+
 ## More modifiers (v2.5)
 
 - Shape panel: **Array** (×2 to ×10, direction, gap, count), **Solidify** (thickness for flat surfaces), **Displace** (noise bumps; Low / Medium / High, bump size, New pattern)
