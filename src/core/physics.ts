@@ -47,6 +47,8 @@ export interface RigidBody {
   bounce: number;
   /** Starting velocity in m/s (e.g. a thrown ball). */
   velocity?: Vec3;
+  /** Passive only: follows its own keyframes and shoves active bodies out of the way (Blender's "Animated"). */
+  animated?: boolean;
 }
 
 export const DEFAULT_RIGID: RigidBody = { type: 'active', shape: 'auto', mass: 1, friction: 0.5, bounce: 0 };
@@ -143,6 +145,7 @@ export function simulate(doc: SceneDoc, start: number, end: number, fps: number)
   world.defaultContactMaterial.frictionEquationStiffness = 1e8;
 
   const actives: { id: string; body: CannonNS.Body; scale: Vec3 }[] = [];
+  const movers: { id: string; body: CannonNS.Body }[] = [];
   let count = 0;
   for (const id of doc.order) {
     const o = doc.objects[id];
@@ -162,7 +165,8 @@ export function simulate(doc: SceneDoc, start: number, end: number, fps: number)
     const center = new C.Vec3((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2);
     const material = new C.Material({ friction: r.friction, restitution: r.bounce });
     const active = r.type === 'active';
-    const body = new C.Body({ mass: active ? Math.max(0.001, r.mass) : 0, type: active ? C.Body.DYNAMIC : C.Body.STATIC, material });
+    const kinematic = !active && !!r.animated && (doc.animation?.tracks[id]?.length ?? 0) > 0;
+    const body = new C.Body({ mass: active ? Math.max(0.001, r.mass) : 0, type: active ? C.Body.DYNAMIC : kinematic ? C.Body.KINEMATIC : C.Body.STATIC, material });
     const shape = r.shape === 'auto' ? autoShape(o) : r.shape;
     if (shape === 'hull') body.addShape(hullShape(C, geo, s));
     else if (shape === 'sphere') body.addShape(new C.Sphere(Math.max(...half)), center);
@@ -182,6 +186,7 @@ export function simulate(doc: SceneDoc, start: number, end: number, fps: number)
     world.addBody(body);
     count++;
     if (active) actives.push({ id, body, scale: [...s] as Vec3 });
+    if (kinematic) movers.push({ id, body });
   }
 
   const tracks: Record<string, TransformKey[]> = {};
@@ -215,6 +220,23 @@ export function simulate(doc: SceneDoc, start: number, end: number, fps: number)
     // Force fields push the active bodies during this frame (Blender's Force Field effectors).
     const fields = hasFields ? activeFields(doc, f) : [];
     for (let i = 0; i < sub; i++) {
+      // Animated passive bodies follow their keys; their velocity is what pushes others.
+      for (const m of movers) {
+        const ft = f - 1 + (i + 1) / sub;
+        const tr = transformAt(doc, m.id, ft);
+        if (!tr) continue;
+        const b = m.body;
+        b.velocity.set((tr.position[0] - b.position.x) / dt, (tr.position[1] - b.position.y) / dt, (tr.position[2] - b.position.z) / dt);
+        const [qx, qy, qz, qw] = m4ToQuat(rotEuler(tr.rotation));
+        // Angular velocity from the rotation step: q_new · q_old⁻¹ → axis × angle / dt.
+        const q0 = b.quaternion;
+        const dq = new C.Quaternion(qx, qy, qz, qw).mult(new C.Quaternion(-q0.x, -q0.y, -q0.z, q0.w));
+        const sgn = dq.w < 0 ? -1 : 1;
+        const sinH = Math.hypot(dq.x, dq.y, dq.z);
+        const ang = 2 * Math.atan2(sinH, sgn * dq.w);
+        if (sinH > 1e-9) b.angularVelocity.set((sgn * dq.x / sinH) * (ang / dt), (sgn * dq.y / sinH) * (ang / dt), (sgn * dq.z / sinH) * (ang / dt));
+        else b.angularVelocity.set(0, 0, 0);
+      }
       if (fields.length)
         for (const a of actives) {
           const p = a.body.position;

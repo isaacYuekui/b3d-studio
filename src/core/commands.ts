@@ -1534,7 +1534,8 @@ export function validateParticles(v: unknown, partial: boolean): Partial<Particl
 export function validateRigid(v: unknown, partial: boolean): Partial<RigidBody> {
   if (!isRecord(v)) fail('rigid must be an object');
   const out: Partial<RigidBody> = {};
-  for (const k of Object.keys(v)) if (!['type', 'shape', 'mass', 'friction', 'bounce', 'velocity'].includes(k)) fail(`rigid has no setting "${k}" (use type, shape, mass, friction, bounce, velocity)`);
+  for (const k of Object.keys(v)) if (!['type', 'shape', 'mass', 'friction', 'bounce', 'velocity', 'animated'].includes(k)) fail(`rigid has no setting "${k}" (use type, shape, mass, friction, bounce, velocity, animated)`);
+  if (v.animated !== undefined) out.animated = typeof v.animated === 'boolean' ? v.animated : fail('rigid.animated must be true/false');
   if (v.type !== undefined) out.type = (RIGID_TYPES as readonly unknown[]).includes(v.type) ? (v.type as RigidBody['type']) : fail(`rigid.type must be one of ${RIGID_TYPES.join(', ')}`);
   if (v.shape !== undefined) out.shape = (RIGID_SHAPES as readonly unknown[]).includes(v.shape) ? (v.shape as RigidBody['shape']) : fail(`rigid.shape must be one of ${RIGID_SHAPES.join(', ')}`);
   if (v.mass !== undefined) out.mass = inRange(v.mass, 0.001, 100000) ? (v.mass as number) : fail('rigid.mass must be 0.001..100000 kg');

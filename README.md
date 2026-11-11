@@ -5,6 +5,10 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Animated rigid bodies (v3.10)
+
+- Physics → Rigid body → Passive → **Animated (follows its keys)**: a keyframed object (wrecking ball, bulldozer, meteor) that smashes into active objects during the bake, like Blender's Animated option
+
 ## Force fields (v3.9)
 
 - **Add → Force Field**: Explosion, Push, Wind, Tornado — an empty with Blender-style force field settings in its Physics tab: **Force** (away from the centre, or pulling with negative strength), **Wind** (along the empty's Z axis), **Vortex** (swirl), strength, reach and an optional frame window

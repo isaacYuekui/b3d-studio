@@ -1013,6 +1013,35 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Animated rigid bodies (v3.10): a keyed passive paddle shoves an active box in the bake.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'ground', transform: { position: [0, 0, -0.5], scale: [30, 30, 0.5] } },
+      { type: 'setRigidBody', id: 'ground', rigid: { type: 'passive' } },
+      { type: 'add', primitive: 'cube', id: 'box', transform: { position: [0, 0, 0.5], scale: [0.5, 0.5, 0.5] } },
+      { type: 'setRigidBody', id: 'box', rigid: {} },
+      { type: 'add', primitive: 'cube', id: 'paddle', name: 'Paddle', transform: { position: [-4, 0, 0.6], scale: [0.2, 1, 0.6] } },
+      { type: 'setKeyframe', id: 'paddle', frame: 1, easing: 'linear', transform: { position: [-4, 0, 0.6], rotation: [0, 0, 0], scale: [0.2, 1, 0.6] } },
+      { type: 'setKeyframe', id: 'paddle', frame: 25, easing: 'linear', transform: { position: [4, 0, 0.6], rotation: [0, 0, 0], scale: [0.2, 1, 0.6] } },
+      { type: 'setRigidBody', id: 'paddle', rigid: { type: 'passive' } },
+      { type: 'setAnimation', start: 1, end: 48 },
+    ] });
+    s.select('paddle');
+  });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('[data-testid="rigid-animated"]');
+  await page.click('[data-testid="physics-bake"]');
+  await page.waitForFunction(() => (window.__b3d.store.getState().doc.animation?.tracks.box?.length ?? 0) > 5, null, { timeout: 60000 });
+  const r = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; const k = d.animation.tracks.box; return { animated: d.objects.paddle.rigid.animated, x: k[k.length - 1].transform.position[0], paddleKeys: d.animation.tracks.paddle.length }; });
+  check('v3.10: an Animated passive paddle pushes the box during the bake and keeps its own keys', r.animated === true && r.x > 4 && r.paddleKeys === 2, JSON.stringify(r));
+  check('v3.10: no errors (animated rigid bodies)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Force fields (v3.9): Add → Force Field → Explosion; it blows rigid bodies apart in the bake.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });

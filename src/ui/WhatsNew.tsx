@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 /** Newest first. The first entry is the current version. */
 const CHANGES: { v: string; items: string[] }[] = [
+  { v: '3.10', items: ['Animated rigid bodies: a keyframed passive object (wrecking ball, meteor) shoves things in the physics bake'] },
   { v: '3.9', items: ['Force fields (Add → Force Field): explosions, wind, tornado push rigid bodies (example: Meteor strike)'] },
   { v: '3.8', items: ['Giant wave / tsunami on water (Water tab), carrying floating boats (example: Tsunami harbour)'] },
   { v: '3.7', items: ['Camera shake (Scene tab): impact, explosion, earthquake', 'Float on water (Physics tab): boats bob with the waves'] },

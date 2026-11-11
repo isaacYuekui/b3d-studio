@@ -65,3 +65,26 @@ describe('force fields', () => {
     expect(doc.objects.f.field).toBeUndefined();
   });
 });
+
+describe('animated passive bodies', () => {
+  it('a keyframed passive paddle shoves an active box along', () => {
+    const doc = scene([
+      { type: 'add', primitive: 'cube', id: 'ground', transform: { position: [0, 0, -0.5], scale: [30, 30, 0.5] } },
+      { type: 'setRigidBody', id: 'ground', rigid: { type: 'passive' } },
+      { type: 'add', primitive: 'cube', id: 'box', transform: { position: [0, 0, 0.5], scale: [0.5, 0.5, 0.5] } },
+      { type: 'setRigidBody', id: 'box', rigid: {} },
+      { type: 'add', primitive: 'cube', id: 'paddle', transform: { position: [-4, 0, 0.6], scale: [0.2, 1, 0.6] } },
+      { type: 'setKeyframe', id: 'paddle', frame: 1, easing: 'linear', transform: { position: [-4, 0, 0.6], rotation: [0, 0, 0], scale: [0.2, 1, 0.6] } },
+      { type: 'setKeyframe', id: 'paddle', frame: 25, easing: 'linear', transform: { position: [4, 0, 0.6], rotation: [0, 0, 0], scale: [0.2, 1, 0.6] } },
+      { type: 'setRigidBody', id: 'paddle', rigid: { type: 'passive', animated: true } },
+    ]);
+    const { tracks } = simulate(doc, 1, 48, 24);
+    expect(tracks.paddle).toBeUndefined(); // it isn't baked, it keeps its own keys
+    const x = tracks.box[tracks.box.length - 1].transform.position[0];
+    expect(x).toBeGreaterThan(4); // pushed past where the paddle stopped
+    // Not animated → a static wall at its start pose: the box stays put.
+    const still = applyCommand(doc, validateCommand({ type: 'setRigidBody', id: 'paddle', rigid: { animated: false } })).doc;
+    const t2 = simulate(still, 1, 48, 24).tracks.box;
+    expect(Math.abs(t2[t2.length - 1].transform.position[0])).toBeLessThan(0.05);
+  });
+});

@@ -286,6 +286,16 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   Exact per frame (time = frame / fps). The surface is up to ~40,000 vertices, so very large seas get
   coarser — keep the sea around the camera.
 
+## Animated rigid bodies (v3.10)
+
+```json
+{"type":"setRigidBody","id":"wreckingBall","rigid":{"type":"passive","animated":true}}
+```
+
+- A passive body with `animated: true` follows its own keyframes during `bakePhysics` (it isn't baked)
+  and pushes active bodies with its motion — Blender's Rigid Body → Animated. Key it first (e.g. a
+  swinging wrecking ball, a bulldozer blade, a meteor), then bake.
+
 ## Force fields (v3.9)
 
 ```json

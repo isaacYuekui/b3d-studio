@@ -825,6 +825,12 @@ function PhysicsSection({ id }: { id: string }) {
               ))}
             </select>
           </label>
+          {r.type === 'passive' && (
+            <label className="prop-row" title="Follows its keyframes and shoves active objects (Blender's Animated)">
+              <span>Animated (follows its keys)</span>
+              <input type="checkbox" data-testid="rigid-animated" checked={!!r.animated} onChange={(e) => set({ animated: e.target.checked })} />
+            </label>
+          )}
           {r.type === 'active' && num('mass', 'Mass', 0.001, 100000, 0.5, ' kg')}
           {num('friction', 'Friction', 0, 1, 0.05)}
           {num('bounce', 'Bounciness', 0, 1, 0.05)}
