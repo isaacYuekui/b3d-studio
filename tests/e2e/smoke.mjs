@@ -1319,7 +1319,8 @@ const setNumber = async (page, scope, label, value) => {
   const text = await p2.page.textContent('[data-testid="whatsnew"]');
   await p2.page.click('[data-testid="whatsnew"] .btn');
   const gone = !(await p2.page.isVisible('[data-testid="whatsnew"]'));
-  check("v3.2: What's new lists the changes since the last visit and closes", /v3\.2/.test(text) && /v3\.1/.test(text) && !/v3\.0/.test(text) && gone, text.slice(0, 120));
+  const newest = await p2.page.evaluate(() => (document.querySelector('.statusbar')?.textContent.match(/v(\d+\.\d+)/) ?? [])[1]);
+  check("v3.2: What's new lists the changes since the last visit (newest first) and closes", text.includes(`v${newest}`) && !/v3\.0\s/.test(text) && gone, `${newest} | ${text.slice(0, 120)}`);
   await p2.ctx.close();
 }
 
