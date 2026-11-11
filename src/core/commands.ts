@@ -20,6 +20,7 @@ import { DEFAULT_RIGID, RIGID_SHAPES, RIGID_TYPES, simulate } from './physics';
 import { fracturePieces } from './fracture';
 import { DEFAULT_PARTICLES, PARTICLE_GROUND, PARTICLE_SHAPES } from './particles';
 import type { ParticleSettings } from './particles';
+import type { WaterSettings } from './ocean';
 import type { RigidBody } from './physics';
 import type { FontId, TextAlign, TextData } from './text';
 import { compact } from './mesh/topology';
@@ -123,7 +124,9 @@ export type Command =
   /** Boolean (applied): cut / join / intersect `cutter` into `id`. The cutter is hidden unless keepCutter. */
   | { type: 'boolean'; id: string; cutter: string; op: BooleanOp; keepCutter?: boolean }
   /** Lake / sea / river surface: a flat plane at z = level with animated ripples. */
-  | { type: 'addWater'; id: string; name?: string; size: [number, number]; level: number; position?: [number, number]; color?: string; clarity?: number; waves?: number; speed?: number }
+  | { type: 'addWater'; id: string; name?: string; size: [number, number]; level: number; position?: [number, number]; color?: string; clarity?: number; waves?: number; speed?: number; height?: number; direction?: number }
+  /** Change a water surface: ripple size and speed, ocean wave height and direction. */
+  | { type: 'setWater'; id: string; water: Partial<WaterSettings> }
   /** Sky, sun light, exposure and haze for a time of day; heading turns the sky so the sun shines from that azimuth (degrees). */
   | { type: 'setTimeOfDay'; time: TimeOfDay; heading?: number; fog?: number }
   | { type: 'setCamera'; position: Vec3; target: Vec3 }
@@ -875,7 +878,16 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       const [x, y] = cmd.position ?? [0, 0];
       const clarity = cmd.clarity ?? 0.35;
       const r = applyCommand(doc, { type: 'add', primitive: 'mesh', id: cmd.id, name: cmd.name ?? 'Water', mesh, material: { baseColor: cmd.color ?? '#1d4f5c', roughness: 0.03, metallic: 0, alpha: Math.round((1 - clarity * 0.6) * 100) / 100 }, transform: { position: [x, y, cmd.level] } }, idGen);
-      return { doc: withObject(r.doc, { ...r.doc.objects[cmd.id], water: { waves: cmd.waves ?? 1.2, speed: cmd.speed ?? 0.25 } }), created: r.created };
+      const water: WaterSettings = { waves: cmd.waves ?? 1.2, speed: cmd.speed ?? 0.25 };
+      if (cmd.height) water.height = cmd.height;
+      if (cmd.direction !== undefined) water.direction = cmd.direction;
+      return { doc: withObject(r.doc, { ...r.doc.objects[cmd.id], water }), created: r.created };
+    }
+
+    case 'setWater': {
+      const o = requireObj(doc, cmd.id);
+      if (!o.water) throw new CommandError(`${o.name} isn't water (add water with Add → Water or addWater)`);
+      return { doc: withObject(doc, { ...o, water: { ...o.water, ...cmd.water } }), created: [] };
     }
 
     case 'setTimeOfDay': {
@@ -1346,8 +1358,8 @@ export function validateSceneObject(raw: unknown): SceneObject {
   }
   if (obj.type === 'mesh' && v.water !== undefined) {
     const w = v.water;
-    if (!isRecord(w) || !inRange(w.waves, 0.05, 50) || !inRange(w.speed, 0, 20)) fail(`object ${v.id}: water invalid`);
-    obj.water = { waves: w.waves as number, speed: w.speed as number };
+    if (!isRecord(w)) fail(`object ${v.id}: water invalid`);
+    obj.water = validateWater(w, false) as WaterSettings;
   }
   return obj;
 }
@@ -1388,6 +1400,19 @@ export function validateSceneDoc(v: unknown): SceneDoc {
     if (Object.keys(lens).length) doc.lens = lens;
   }
   return doc;
+}
+
+/** Water settings; `partial` checks only the fields given. */
+export function validateWater(v: unknown, partial: boolean): Partial<WaterSettings> {
+  if (!isRecord(v)) fail('water must be an object');
+  const out: Partial<WaterSettings> = {};
+  for (const k of Object.keys(v)) if (!['waves', 'speed', 'height', 'direction'].includes(k)) fail(`water has no setting "${k}" (use waves, speed, height, direction)`);
+  if (v.waves !== undefined) out.waves = inRange(v.waves, 0.05, 50) ? (v.waves as number) : fail('water.waves must be 0.05..50 m');
+  if (v.speed !== undefined) out.speed = inRange(v.speed, 0, 20) ? (v.speed as number) : fail('water.speed must be 0..20 m/s');
+  if (v.height !== undefined) out.height = inRange(v.height, 0, 30) ? (v.height as number) : fail('water.height must be 0..30 m');
+  if (v.direction !== undefined) out.direction = inRange(v.direction, -3600, 3600) ? (v.direction as number) : fail('water.direction must be degrees');
+  if (!partial && (out.waves === undefined || out.speed === undefined)) fail('water needs waves and speed');
+  return out;
 }
 
 /** Particle settings; `partial` checks only the fields given. */
@@ -1822,7 +1847,13 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (v.clarity !== undefined) cmd.clarity = inRange(v.clarity, 0, 1) ? (v.clarity as number) : fail('addWater clarity must be 0..1');
       if (v.waves !== undefined) cmd.waves = inRange(v.waves, 0.05, 50) ? (v.waves as number) : fail('addWater waves must be 0.05..50 m');
       if (v.speed !== undefined) cmd.speed = inRange(v.speed, 0, 20) ? (v.speed as number) : fail('addWater speed must be 0..20 m/s');
+      if (v.height !== undefined) cmd.height = inRange(v.height, 0, 30) ? (v.height as number) : fail('addWater height must be 0..30 m (wave height)');
+      if (v.direction !== undefined) cmd.direction = inRange(v.direction, -3600, 3600) ? (v.direction as number) : fail('addWater direction must be degrees');
       return cmd;
+    }
+    case 'setWater': {
+      if (!isId(v.id) || !isRecord(v.water)) fail('setWater needs id and water: {waves?, speed?, height?, direction?}');
+      return { type: 'setWater', id: v.id, water: validateWater(v.water, true) };
     }
     case 'setTimeOfDay': {
       if (!(TIMES as readonly unknown[]).includes(v.time)) fail(`setTimeOfDay time must be one of ${TIMES.join(', ')}`);

@@ -110,7 +110,7 @@ export const ADD_ITEMS: MenuItem[] = [
   'file.importModel',
   '-',
   'add.cube', 'add.sphere', 'add.cylinder', 'add.cone', 'add.torus', 'add.capsule', 'add.plane',
-  '-', 'add.text', 'add.empty',
+  '-', 'add.text', 'add.water', 'add.empty',
   { label: 'Light', items: ['add.pointLight', 'add.sunLight', 'add.spotLight'] },
 ];
 

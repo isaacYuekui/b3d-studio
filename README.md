@@ -5,6 +5,11 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Ocean waves and explosions (v3.6)
+
+- **Add → Water / Ocean**: a 40 m sea with real waves. Water tab: **Calm / Choppy / Rough / Storm**, wave height, wave size, direction — the surface itself moves frame by frame, like Blender's Ocean modifier (simplified: no foam or spray)
+- Particle presets **Explosion** (a fire burst) and **Dust cloud** start at the current frame — combine with Cell Fracture and physics for blasts
+
 ## Fire and smoke (v3.5)
 
 - Particle shapes **Fire** (glowing puffs that start white-hot, turn orange then dark red and fade) and **Smoke** (soft grey puffs that grow and thin out), with presets in Physics → Particles. They always face the camera

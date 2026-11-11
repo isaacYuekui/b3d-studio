@@ -10,6 +10,7 @@ import { Camera } from '@babylonjs/core/Cameras/camera';
 import { DepthOfFieldEffectBlurLevel } from '@babylonjs/core/PostProcesses/depthOfFieldEffect';
 import { cameraFov, equivalentFocal } from '../core/lens';
 import { isBillboard, particlesAt } from '../core/particles';
+import { oceanDisplace, oceanGrid } from '../core/ocean';
 import type { ParticleFrame, ParticleSettings } from '../core/particles';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
@@ -74,6 +75,7 @@ import { MeshoptSimplifier } from 'meshoptimizer';
 import { Matrix as BMatrix } from '@babylonjs/core/Maths/math.vector';
 import type { M4, PosedBones, Weights } from '../core/rig';
 import { humanWeights, loadHuman } from '../core/humans';
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { apply as m4apply, rotEuler as rotEulerM, boneBase, invert as m4invert, m4ToQuat, mul as m4mul, poseAt, poseBones, poseEdit, quatToM4, rotationOnly, skinMesh, toEuler, worldMatrix } from '../core/rig';
 import { applyModifiers } from '../core/mesh/modifiers';
@@ -387,6 +389,7 @@ export class Viewport {
       this.lastWireShading = state.shading;
     }
     if (docChanged || state.frame !== this.lastParticleFrame || state.shading !== this.lastParticleShading) {
+      this.syncOcean(state);
       this.syncParticles(state);
       this.lastParticleFrame = state.frame;
       this.lastParticleShading = state.shading;
@@ -410,6 +413,75 @@ export class Viewport {
 
   private lastEdit: AppState['edit'] = null;
   private lastPose: AppState['pose'] = null;
+
+  // ---------------------------------------------------------------- ocean waves
+
+  private oceans = new Map<string, { key: string; xy: Float32Array; indices: number[] }>();
+
+  /** Water with wave height: a fine grid moved by Gerstner waves for this frame (Ocean modifier). */
+  private syncOcean(state: AppState) {
+    const doc = state.doc;
+    const t = state.frame / animationOf(doc).fps;
+    for (const id of doc.order) {
+      const o = doc.objects[id];
+      const e = this.entries.get(id);
+      const want = !!o?.water && (o.water.height ?? 0) > 0 && !!o.mesh && e?.node instanceof Mesh;
+      if (!want) {
+        if (this.oceans.has(id)) {
+          this.oceans.delete(id);
+          if (o?.mesh && e?.node instanceof Mesh) buildVertexData(applyModifiers(o.mesh, o.modifiers)).applyToMesh(e.node, true);
+        }
+        continue;
+      }
+      const node = e!.node as Mesh;
+      const w = o!.water!;
+      const xs = o!.mesh!.vertices.map((v) => v[0]), ys = o!.mesh!.vertices.map((v) => v[1]);
+      const x0 = Math.min(...xs), y0 = Math.min(...ys), sx = Math.max(...xs) - x0, sy = Math.max(...ys) - y0;
+      const [nx, ny] = oceanGrid(sx, sy, w);
+      const key = `${x0},${y0},${sx},${sy},${nx},${ny}`;
+      let g = this.oceans.get(id);
+      if (!g || g.key !== key || node.getTotalVertices() !== (nx + 1) * (ny + 1)) {
+        const xy = new Float32Array((nx + 1) * (ny + 1) * 2);
+        const indices: number[] = [];
+        const uvs: number[] = [];
+        for (let j = 0; j <= ny; j++)
+          for (let i = 0; i <= nx; i++) {
+            const k = j * (nx + 1) + i;
+            xy[k * 2] = x0 + (sx * i) / nx;
+            xy[k * 2 + 1] = y0 + (sy * j) / ny;
+            uvs.push(xy[k * 2], xy[k * 2 + 1]);
+          }
+        for (let j = 0; j < ny; j++)
+          for (let i = 0; i < nx; i++) {
+            const a = j * (nx + 1) + i, b = a + 1, c = a + nx + 2, d = a + nx + 1;
+            indices.push(a, b, c, a, c, d);
+          }
+        const vd = new VertexData();
+        vd.positions = new Array(xy.length * 1.5).fill(0);
+        vd.indices = indices;
+        vd.uvs = uvs;
+        vd.normals = new Array(xy.length * 1.5).fill(0);
+        vd.applyToMesh(node, true);
+        g = { key, xy, indices };
+        this.oceans.set(id, g);
+      }
+      const n = g.xy.length / 2;
+      const pos = new Float32Array(n * 3);
+      for (let k = 0; k < n; k++) {
+        const x = g.xy[k * 2], y = g.xy[k * 2 + 1];
+        const [dx, dy, dz] = oceanDisplace(x, y, t, w);
+        // Blender (x, y, z) → Babylon (x, z, y)
+        pos[k * 3] = x + dx;
+        pos[k * 3 + 1] = dz;
+        pos[k * 3 + 2] = y + dy;
+      }
+      const normals: number[] = [];
+      VertexData.ComputeNormals(pos, g.indices, normals);
+      node.updateVerticesData(VertexBuffer.PositionKind, pos);
+      node.updateVerticesData(VertexBuffer.NormalKind, normals);
+      node.refreshBoundingInfo();
+    }
+  }
 
   // ---------------------------------------------------------------- particles
 

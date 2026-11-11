@@ -1013,6 +1013,47 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Ocean waves and burst presets (v3.6).
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'delete', ids: [...s.getState().doc.order] });
+  });
+  await page.click('[data-menu="Add"]');
+  await page.click('.menu [data-action="add.water"]');
+  await page.waitForTimeout(500);
+  const sea = await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const id = s.getState().selection;
+    const node = window.__b3d.viewport().entries.get(id).node;
+    const y = (f) => { s.setFrame(f); return node.getVerticesData('position')[301]; };
+    return { id, water: s.getState().doc.objects[id].water, verts: node.getTotalVertices(), a: y(1), b: y(13), a2: y(1) };
+  });
+  check('v3.6: Add → Water / Ocean makes a wavy surface that moves with the frame', sea.water?.height > 0 && sea.verts > 2000 && sea.a !== sea.b && sea.a === sea.a2, JSON.stringify(sea));
+  await page.click('[data-prop-tab="data"]');
+  await page.click('[data-sea="storm"]');
+  const storm = await page.evaluate((id) => window.__b3d.store.getState().doc.objects[id].water, sea.id);
+  check('v3.6: the Storm button raises the waves', storm.height === 3.5 && storm.waves >= 5.6, JSON.stringify(storm));
+  await page.evaluate(() => window.__b3d.viewport().frame(false));
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: `${shots}/ocean.png` });
+  // A burst preset starts at the current frame.
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'add', primitive: 'sphere', id: 'bomb', name: 'Bomb', transform: { position: [0, 0, 1] } });
+    s.select('bomb');
+    s.setFrame(30);
+  });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('.prop-section-head:has-text("Particles")');
+  await page.click('[data-particle-preset="explosion"]');
+  const ex = await page.evaluate(() => window.__b3d.store.getState().doc.objects.bomb.particles);
+  check('v3.6: the Explosion preset bursts at the current frame', ex?.start === 30 && ex.end === 33 && ex.shape === 'fire', JSON.stringify(ex));
+  check('v3.6: no errors (ocean, bursts)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Fire and smoke (v3.5): camera-facing puffs with a colour per particle.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 800 });

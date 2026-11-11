@@ -171,7 +171,7 @@ export interface SceneObject {
   /** Text objects (a mesh made from a font): editing the mesh itself turns it into a plain mesh. */
   text?: import('./text').TextData;
   /** Water surfaces: animated ripples (size of the waves in metres, speed in m/s). */
-  water?: { waves: number; speed: number };
+  water?: import('./ocean').WaterSettings;
 }
 
 export const BACKGROUNDS = ['color', 'hdri', 'blurred'] as const;

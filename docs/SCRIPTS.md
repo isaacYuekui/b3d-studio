@@ -274,6 +274,18 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   `[x, y, z]` m/s² is a steady push (e.g. `[0.4, 0, 0]` for drifting smoke).
 - Closed-form motion: the same frame always looks the same. No collisions with objects yet.
 
+## Ocean waves (v3.6)
+
+```json
+{"type":"addWater","id":"sea","size":[200,200],"level":0,"waves":4,"height":2.5,"direction":30}
+{"type":"setWater","id":"sea","water":{"height":0.4}}
+```
+
+- `height` (0–30 m, crest to trough; 0 = flat with ripples only) moves the surface with four Gerstner
+  waves; `waves` is the ripple/wave size (the main wavelength is 8 × waves), `direction` in degrees.
+  Exact per frame (time = frame / fps). The surface is up to ~40,000 vertices, so very large seas get
+  coarser — keep the sea around the camera.
+
 ## Cell Fracture (v3.3)
 
 ```json

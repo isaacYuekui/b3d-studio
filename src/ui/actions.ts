@@ -429,6 +429,16 @@ export const actions = {
     label: 'Free Physics Bake',
     run: (c) => freePhysics(c.store),
   },
+  'add.water': {
+    id: 'add.water',
+    label: 'Water / Ocean',
+    run: (c) => {
+      const doc = c.store.getState().doc;
+      let id = 'water';
+      for (let k = 2; doc.objects[id]; k++) id = `water-${k}`;
+      c.store.dispatch({ type: 'addWater', id, size: [40, 40], level: 0, height: 0.6, waves: 1.5 });
+    },
+  },
   'add.text': {
     id: 'add.text',
     label: 'Text',

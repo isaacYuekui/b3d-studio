@@ -18,6 +18,7 @@ import { loadFont } from '../engine/fonts';
 import { RIGID_SHAPES, RIGID_TYPES } from '../core/physics';
 import { PARTICLE_PRESETS, PARTICLE_SHAPES } from '../core/particles';
 import type { ParticleSettings } from '../core/particles';
+import type { WaterSettings } from '../core/ocean';
 import type { RigidBody } from '../core/physics';
 import { bakePhysics, freePhysics } from './physicsUi';
 import { prepareBooleans } from './prepare';
@@ -170,7 +171,7 @@ export function Properties() {
   // Tabs like Blender's Properties editor: only the ones this kind of object has.
   const tabs: [PropTab, string][] = [['scene', 'Scene'], ['object', 'Object']];
   if (canEdit(o)) tabs.push(['modifiers', 'Modifiers'], ['physics', 'Physics']);
-  const dataLabel = o.text ? 'Text' : o.light ? 'Light' : o.type === 'model' ? 'Model' : o.type === 'armature' ? 'Armature' : null;
+  const dataLabel = o.text ? 'Text' : o.water ? 'Water' : o.light ? 'Light' : o.type === 'model' ? 'Model' : o.type === 'armature' ? 'Armature' : null;
   if (dataLabel) tabs.push(['data', dataLabel]);
   if (isRenderable(o.type) && o.type !== 'model') tabs.push(['material', 'Material']);
   const cur: PropTab = tabs.some(([t]) => t === tab) ? tab : 'object';
@@ -246,6 +247,7 @@ export function Properties() {
 
       {cur === 'data' && o.type === 'model' && <ModelSection id={o.id} />}
       {cur === 'data' && o.text && <TextSection id={o.id} />}
+      {cur === 'data' && o.water && <WaterSection id={o.id} />}
       {cur === 'modifiers' && <ModifiersSection id={o.id} />}
       {cur === 'physics' && <PhysicsSection id={o.id} />}
       {cur === 'data' && o.type === 'armature' && <PoseSection id={o.id} />}
@@ -810,6 +812,7 @@ function PhysicsSection({ id }: { id: string }) {
 function ParticlesSection({ id }: { id: string }) {
   const { store } = useCtx();
   const p = useApp((s) => s.doc.objects[id].particles);
+  const frame = useApp((s) => s.frame);
   const set = (particles: Partial<ParticleSettings> | null) => store.dispatch({ type: 'setParticles', id, particles }, { select: false });
   const num = (key: 'count' | 'start' | 'end' | 'lifetime' | 'speed' | 'random' | 'gravity' | 'size' | 'sizeRandom' | 'glow', label: string, lo: number, hi: number, step: number, suffix = '', int = false) => (
     <NumberField
@@ -836,7 +839,7 @@ function ParticlesSection({ id }: { id: string }) {
         <span>Presets</span>
         <div className="seg-text" role="group" aria-label="Particle presets">
           {PARTICLE_PRESETS.map((pr) => (
-            <button key={pr.id} data-particle-preset={pr.id} onClick={() => set(pr.settings)}>
+            <button key={pr.id} data-particle-preset={pr.id} onClick={() => set(pr.burst ? { ...pr.settings, start: frame, end: frame + pr.burst } : pr.settings)} title={pr.burst ? `Bursts at the current frame (${frame})` : undefined}>
               {pr.label}
             </button>
           ))}
@@ -971,6 +974,51 @@ function ScenePhysicsSection() {
         <button className="btn" disabled={!active} onClick={() => freePhysics(store)}>Free bake</button>
       </div>
       <p className="prop-hint">Gravity 9.81 m/s² down. Turn on Physics → Rigid body on each object first. Freeing the bake removes the keyframes of the active objects.</p>
+    </Section>
+  );
+}
+
+/** Water: ripples and ocean waves (Blender's Ocean modifier, simplified). */
+function WaterSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const w = useApp((s) => s.doc.objects[id].water)!;
+  const set = (water: Partial<WaterSettings>) => store.dispatch({ type: 'setWater', id, water }, { select: false });
+  const field = (key: keyof WaterSettings, label: string, lo: number, hi: number, step: number, suffix: string) => (
+    <NumberField
+      label={label}
+      value={w[key] ?? 0}
+      step={step}
+      dragRate={step / 10}
+      suffix={suffix}
+      onPreview={(v) => store.preview({ type: 'setWater', id, water: { [key]: clampN(v, lo, hi, false) } })}
+      onCommit={(v) => {
+        store.preview({ type: 'setWater', id, water: { [key]: clampN(v, lo, hi, false) } });
+        store.commitPreview();
+      }}
+      onCancel={() => store.cancelPreview()}
+    />
+  );
+  const seas: [string, number][] = [['Calm', 0], ['Choppy', 0.4], ['Rough', 1.5], ['Storm', 3.5]];
+  return (
+    <Section title="Water">
+      <div className="prop-row">
+        <span>Sea</span>
+        <div className="seg-text" role="radiogroup" aria-label="Sea state">
+          {seas.map(([label, h]) => {
+            const on = (w.height ?? 0) === h;
+            return (
+              <button key={label} role="radio" aria-checked={on} className={on ? 'active' : ''} data-sea={label.toLowerCase()} onClick={() => set({ height: h, waves: h >= 1.5 ? Math.max(w.waves, Math.round(h * 16) / 10) : w.waves })}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {field('height', 'Wave height', 0, 30, 0.1, ' m')}
+      {field('waves', 'Wave size', 0.05, 50, 0.1, ' m')}
+      {field('direction', 'Direction', -3600, 3600, 5, '°')}
+      {field('speed', 'Ripple speed', 0, 20, 0.05, ' m/s')}
+      <p className="prop-hint">Wave height moves the surface itself, frame by frame (like Blender's Ocean modifier): rolling swells for boats, storms and floods. Wave size sets how long they are. Calm water keeps just the ripples.</p>
     </Section>
   );
 }

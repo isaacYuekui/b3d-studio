@@ -67,14 +67,16 @@ export const DEFAULT_PARTICLES: ParticleSettings = {
   seed: 1,
 };
 
-/** Quick setups for common effects. */
-export const PARTICLE_PRESETS: { id: string; label: string; settings: Partial<ParticleSettings> }[] = [
+/** Quick setups. `burst`: emit everything within this many frames from the current frame (explosions). */
+export const PARTICLE_PRESETS: { id: string; label: string; settings: Partial<ParticleSettings>; burst?: number }[] = [
   { id: 'sparks', label: 'Sparks', settings: { count: 600, lifetime: 24, speed: 4, random: 3, gravity: 1, size: 0.025, sizeRandom: 0.5, shape: 'sphere', color: '#ffb347', glow: 1, ground: 'stop' } },
   { id: 'fountain', label: 'Fountain', settings: { count: 1500, lifetime: 40, speed: 6, random: 0.6, gravity: 1, size: 0.04, sizeRandom: 0.3, shape: 'drop', color: '#9fd3ff', glow: 0, ground: 'none' } },
   { id: 'rain', label: 'Rain', settings: { count: 3000, lifetime: 40, speed: 0, random: 0.2, gravity: 1.2, size: 0.03, sizeRandom: 0.2, shape: 'drop', color: '#cfe4ff', glow: 0, ground: 'none', hideEmitter: true } },
   { id: 'snow', label: 'Snow', settings: { count: 2500, lifetime: 160, speed: 0, random: 0.4, gravity: 0.06, size: 0.04, sizeRandom: 0.5, shape: 'flake', color: '#ffffff', glow: 0, ground: 'stop', hideEmitter: true } },
   { id: 'fire', label: 'Fire', settings: { count: 1800, lifetime: 26, speed: 0.6, random: 0.35, gravity: -0.3, size: 0.32, sizeRandom: 0.4, shape: 'fire', color: '#ff7a1a', glow: 1, ground: 'none' } },
   { id: 'smoke', label: 'Smoke', settings: { count: 700, lifetime: 130, speed: 0.5, random: 0.3, gravity: -0.12, size: 0.7, sizeRandom: 0.4, shape: 'smoke', color: '#5d5d5d', glow: 0, ground: 'none', wind: [0.35, 0, 0] } },
+  { id: 'explosion', label: 'Explosion', burst: 3, settings: { count: 900, lifetime: 34, speed: 5, random: 5, gravity: 0.3, size: 0.55, sizeRandom: 0.5, shape: 'fire', color: '#ff8a2a', glow: 1, ground: 'none' } },
+  { id: 'dust', label: 'Dust cloud', burst: 4, settings: { count: 450, lifetime: 140, speed: 2.5, random: 3, gravity: -0.03, size: 1.1, sizeRandom: 0.5, shape: 'smoke', color: '#8a7f72', glow: 0, ground: 'none', wind: [0.3, 0, 0] } },
   { id: 'debris', label: 'Debris', settings: { count: 400, lifetime: 120, speed: 5, random: 4, gravity: 1, size: 0.12, sizeRandom: 0.7, shape: 'cube', color: '#7d746a', glow: 0, ground: 'stop' } },
 ];
 
