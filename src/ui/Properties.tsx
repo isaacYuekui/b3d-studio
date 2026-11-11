@@ -857,7 +857,7 @@ function ParticlesSection({ id }: { id: string }) {
             <span>Shape</span>
             <select value={p.shape} onChange={(e) => set({ shape: e.target.value as ParticleSettings['shape'] })}>
               {PARTICLE_SHAPES.map((sh) => (
-                <option key={sh} value={sh}>{sh === 'drop' ? 'Drop (stretched)' : sh[0].toUpperCase() + sh.slice(1)}</option>
+                <option key={sh} value={sh}>{sh === 'drop' ? 'Drop (stretched)' : sh === 'fire' ? 'Fire (glowing puffs)' : sh === 'smoke' ? 'Smoke (soft puffs)' : sh[0].toUpperCase() + sh.slice(1)}</option>
               ))}
             </select>
           </label>
@@ -866,6 +866,28 @@ function ParticlesSection({ id }: { id: string }) {
             <input type="color" value={p.color} onChange={(e) => set({ color: e.target.value })} />
           </label>
           {num('glow', 'Glow', 0, 1, 0.1)}
+          {([0, 1] as const).map((k) => (
+            <NumberField
+              key={k}
+              label={k === 0 ? 'Wind X' : 'Wind Y'}
+              value={p.wind?.[k] ?? 0}
+              step={0.1}
+              dragRate={0.01}
+              suffix=" m/s²"
+              onPreview={(v) => {
+                const w: [number, number, number] = [...(p.wind ?? [0, 0, 0])];
+                w[k] = clampN(v, -100, 100, false);
+                store.preview({ type: 'setParticles', id, particles: { wind: w } });
+              }}
+              onCommit={(v) => {
+                const w: [number, number, number] = [...(p.wind ?? [0, 0, 0])];
+                w[k] = clampN(v, -100, 100, false);
+                store.preview({ type: 'setParticles', id, particles: { wind: w } });
+                store.commitPreview();
+              }}
+              onCancel={() => store.cancelPreview()}
+            />
+          ))}
           <label className="prop-row">
             <span>At the ground</span>
             <select value={p.ground} onChange={(e) => set({ ground: e.target.value as ParticleSettings['ground'] })}>
@@ -882,7 +904,7 @@ function ParticlesSection({ id }: { id: string }) {
           </div>
         </>
       )}
-      <p className="prop-hint">Particles fly off the object's surface, fall with gravity and vanish after their lifetime — sparks, fountains, rain, snow, debris. No baking: scrub and play. For rain or snow, use a big plane high up as the emitter.</p>
+      <p className="prop-hint">Particles fly off the object's surface, fall with gravity and vanish after their lifetime — sparks, fountains, rain, snow, debris, fire and smoke (negative gravity makes them rise; wind pushes them sideways). No baking: scrub and play. For rain or snow, use a big plane high up as the emitter. Fire and smoke look best in Rendered shading.</p>
     </Section>
   );
 }

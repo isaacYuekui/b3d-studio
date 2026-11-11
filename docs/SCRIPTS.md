@@ -269,6 +269,9 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   its motion), `flake`; `color`, `glow` (0–1, glows with bloom in Rendered); `ground`: `none` or `stop`
   (land at z = 0 and stay); `hideEmitter` hides the emitter in Rendered/videos; `seed` changes the pattern.
 - Start before frame 1 (e.g. `"start": -40`) to have the effect already running when the video begins.
+- v3.5: `shape` `fire` (white-hot → colour → dark red, fading; use negative gravity, e.g. −0.3) and
+  `smoke` (grows and thins out; colour is the smoke's grey), both camera-facing puffs; `wind`
+  `[x, y, z]` m/s² is a steady push (e.g. `[0.4, 0, 0]` for drifting smoke).
 - Closed-form motion: the same frame always looks the same. No collisions with objects yet.
 
 ## Cell Fracture (v3.3)

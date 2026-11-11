@@ -67,3 +67,16 @@ describe('particles', () => {
     expect(() => validateCommand({ type: 'setParticles', id: 'e', particles: { colour: '#fff' } })).toThrow(/no setting/);
   });
 });
+
+describe('fire, smoke and wind', () => {
+  it('negative gravity rises, wind pushes sideways, life runs 0 → 1', () => {
+    const doc = emitter({ count: 40, start: 1, end: 1, lifetime: 48, speed: 0, random: 0, gravity: -0.2, wind: [1, 0, 0], shape: 'smoke' });
+    const f = particlesAt(doc, 'e', 25, 24); // 1 s in
+    const cz = f.positions.reduce((s, p) => s + p[2], 0) / f.positions.length;
+    const cx = f.positions.reduce((s, p) => s + p[0], 0) / f.positions.length;
+    expect(cz).toBeCloseTo(2 + 0.5 * 0.2 * 9.81, 1);
+    expect(cx).toBeCloseTo(0.5, 1);
+    expect(f.life.every((t) => Math.abs(t - 0.5) < 1e-9)).toBe(true);
+    expect(() => validateCommand({ type: 'setParticles', id: 'e', particles: { wind: [1, 2] } })).toThrow(/wind/);
+  });
+});

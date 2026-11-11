@@ -1013,6 +1013,34 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Fire and smoke (v3.5): camera-facing puffs with a colour per particle.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'sphere', id: 'f', name: 'Fire source', transform: { position: [0, 0, 0.3], scale: [0.3, 0.3, 0.1] } },
+      { type: 'setAnimation', start: 1, end: 60 },
+    ] });
+    s.select('f');
+  });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('.prop-section-head:has-text("Particles")');
+  await page.click('[data-particle-preset="fire"]');
+  await page.evaluate(() => { const s = window.__b3d.store; s.setFrame(40); s.setShading('rendered'); window.__b3d.viewport().frame(false); });
+  await page.waitForTimeout(1500);
+  const fire = await page.evaluate(() => {
+    const m = window.__b3d.viewport().scene.getMeshByName('f-particles');
+    return { n: m?.thinInstanceCount, unlit: m?.material?.unlit, add: m?.material?.alphaMode, colours: !!m?.getVertexBuffer('instanceColor'), shape: window.__b3d.store.getState().doc.objects.f.particles.shape };
+  });
+  check('v3.5: the Fire preset makes glowing, camera-facing puffs with their own colours', fire.shape === 'fire' && fire.n > 100 && fire.unlit === true && fire.add === 1 && fire.colours, JSON.stringify(fire));
+  await page.screenshot({ path: `${shots}/fire.png` });
+  await page.evaluate(() => window.__b3d.store.setShading('solid'));
+  check('v3.5: no errors (fire)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Cell Fracture (v3.3): break a block into rigid pieces from the Physics tab, then bake.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });

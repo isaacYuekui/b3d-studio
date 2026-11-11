@@ -5,6 +5,12 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Fire and smoke (v3.5)
+
+- Particle shapes **Fire** (glowing puffs that start white-hot, turn orange then dark red and fade) and **Smoke** (soft grey puffs that grow and thin out), with presets in Physics → Particles. They always face the camera
+- **Wind** (X / Y, m/s²) pushes particles sideways — smoke drifting, slanted rain. Negative gravity makes particles rise
+- New example: *Campfire*. It's a sprite effect, not a fluid simulation like Blender's Mantaflow — it reads well in shorts but won't swirl around objects
+
 ## Particles (v3.4)
 
 - Physics tab → **Particles** (Blender's Particles, Emitter type): an object emits up to 20,000 small spheres, cubes, drops or flakes from its surface over a frame range — speed along the surface, random speed, gravity, lifetime, size, colour, glow, land-on-the-ground, hide the emitter in renders

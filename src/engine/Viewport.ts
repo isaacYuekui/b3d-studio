@@ -9,7 +9,9 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { Camera } from '@babylonjs/core/Cameras/camera';
 import { DepthOfFieldEffectBlurLevel } from '@babylonjs/core/PostProcesses/depthOfFieldEffect';
 import { cameraFov, equivalentFocal } from '../core/lens';
-import { particlesAt } from '../core/particles';
+import { isBillboard, particlesAt } from '../core/particles';
+import type { ParticleFrame, ParticleSettings } from '../core/particles';
+import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { PointLight } from '@babylonjs/core/Lights/pointLight';
@@ -247,6 +249,7 @@ export class Viewport {
 
     scene.onBeforeRenderObservable.add(() => this.stepTween());
     scene.onBeforeRenderObservable.add(() => this.applyLens());
+    scene.onBeforeRenderObservable.add(() => this.aimBillboards());
     scene.onBeforeRenderObservable.add(() => {
       if (!this.waters.size) return;
       const dt = Math.min(0.1, this.engine.getDeltaTime() / 1000);
@@ -410,9 +413,28 @@ export class Viewport {
 
   // ---------------------------------------------------------------- particles
 
-  private particleMeshes = new Map<string, { key: string; mesh: Mesh; mat: PBRMaterial }>();
+  private particleMeshes = new Map<string, { key: string; mesh: Mesh; mat: PBRMaterial | StandardMaterial; frame: ParticleFrame; settings: ParticleSettings }>();
   private lastParticleFrame = -1;
   private lastParticleShading: AppState['shading'] = 'solid';
+  private puffTex: DynamicTexture | null = null;
+
+  /** A soft round puff (white, alpha falling off to the edge) for fire and smoke. */
+  private puffTexture(): DynamicTexture {
+    if (this.puffTex) return this.puffTex;
+    const t = new DynamicTexture('particle-puff', { width: 64, height: 64 }, this.scene, true);
+    const c = t.getContext() as unknown as CanvasRenderingContext2D;
+    const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.45, 'rgba(255,255,255,0.55)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g;
+    c.fillRect(0, 0, 64, 64);
+    t.update();
+    t.hasAlpha = true;
+    t.metadata = { shared: true };
+    this.puffTex = t;
+    return t;
+  }
 
   /** Particle systems: one thin-instanced mesh per emitter, positions worked out for this frame. */
   private syncParticles(state: AppState) {
@@ -432,48 +454,48 @@ export class Viewport {
         pm?.mesh.dispose();
         pm?.mat.dispose();
         const sc = this.scene;
-        const mesh =
-          s.shape === 'cube'
-            ? MeshBuilder.CreateBox(`${id}-particles`, { size: 1 }, sc)
-            : s.shape === 'flake'
-              ? MeshBuilder.CreatePolyhedron(`${id}-particles`, { type: 1, size: 0.5 }, sc)
-              : MeshBuilder.CreateSphere(`${id}-particles`, { diameter: 1, segments: 4 }, sc);
-        const mat = new PBRMaterial(`${id}-particles-mat`, sc);
-        const c = Color3.FromHexString(s.color);
-        mat.albedoColor = c;
-        mat.metallic = 0;
-        mat.roughness = s.shape === 'drop' ? 0.15 : 0.55;
-        mat.emissiveColor = c.scale(s.glow * 3);
+        let mesh: Mesh;
+        let mat: PBRMaterial | StandardMaterial;
+        if (isBillboard(s.shape)) {
+          // Fire and smoke: camera-facing soft puffs, coloured and faded per particle.
+          mesh = MeshBuilder.CreatePlane(`${id}-particles`, { size: 1, sideOrientation: Mesh.DOUBLESIDE }, sc);
+          // Unlit: each puff shows its own colour (set per particle), shaped by the soft texture.
+          const um = new PBRMaterial(`${id}-particles-mat`, sc);
+          um.unlit = true;
+          um.albedoColor = Color3.White();
+          um.albedoTexture = this.puffTexture();
+          um.useAlphaFromAlbedoTexture = true;
+          um.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
+          um.disableDepthWrite = true;
+          um.alphaMode = s.shape === 'fire' ? 1 /* additive */ : 2 /* blend */;
+          um.backFaceCulling = false;
+          mesh.hasVertexAlpha = true;
+          mat = um;
+        } else {
+          mesh =
+            s.shape === 'cube'
+              ? MeshBuilder.CreateBox(`${id}-particles`, { size: 1 }, sc)
+              : s.shape === 'flake'
+                ? MeshBuilder.CreatePolyhedron(`${id}-particles`, { type: 1, size: 0.5 }, sc)
+                : MeshBuilder.CreateSphere(`${id}-particles`, { diameter: 1, segments: 4 }, sc);
+          const pb = new PBRMaterial(`${id}-particles-mat`, sc);
+          const c = Color3.FromHexString(s.color);
+          pb.albedoColor = c;
+          pb.metallic = 0;
+          pb.roughness = s.shape === 'drop' ? 0.15 : 0.55;
+          pb.emissiveColor = c.scale(s.glow * 3);
+          mat = pb;
+        }
         mesh.material = mat;
         mesh.isPickable = false;
         mesh.alwaysSelectAsActiveMesh = true;
         mesh.metadata = { particles: id };
-        pm = { key, mesh, mat };
+        pm = { key, mesh, mat, frame: { positions: [], sizes: [], spins: [], dirs: [], life: [] }, settings: s };
         this.particleMeshes.set(id, pm);
       }
-      const f = particlesAt(doc, id, state.frame, fps);
-      const n = f.positions.length;
-      const buf = new Float32Array(Math.max(1, n) * 16);
-      const m = new Matrix();
-      const q = new Quaternion();
-      const up = Vector3.Up();
-      for (let i = 0; i < n; i++) {
-        const [x, y, z] = toBabylonVec(f.positions[i]);
-        const sz = f.sizes[i];
-        if (s.shape === 'drop') {
-          // Raindrops and water: stretched along their direction of travel.
-          const d = toBabylonVec(f.dirs[i]);
-          Quaternion.FromUnitVectorsToRef(up, new Vector3(d[0], d[1], d[2]), q);
-          Matrix.ComposeToRef(new Vector3(sz * 0.6, sz * 2.4, sz * 0.6), q, new Vector3(x, y, z), m);
-        } else {
-          Quaternion.RotationYawPitchRollToRef((f.spins[i] * Math.PI) / 180, (f.spins[i] * Math.PI) / 360, 0, q);
-          Matrix.ComposeToRef(new Vector3(sz, sz, sz), q, new Vector3(x, y, z), m);
-        }
-        m.copyToArray(buf, i * 16);
-      }
-      pm.mesh.thinInstanceSetBuffer('matrix', buf, 16, false);
-      pm.mesh.thinInstanceCount = n;
-      pm.mesh.setEnabled(n > 0);
+      pm.frame = particlesAt(doc, id, state.frame, fps);
+      pm.settings = s;
+      this.layoutParticles(pm);
       // "Show Emitter" off: the emitter disappears in Rendered shading and videos.
       if (e && state.shading !== 'wireframe') for (const mm of e.meshes) mm.visibility = s.hideEmitter && rendered ? 0 : 1;
     }
@@ -486,6 +508,72 @@ export class Viewport {
         if (e && state.shading !== 'wireframe') for (const mm of e.meshes) mm.visibility = 1;
       }
   }
+
+  /** Instance matrices (and, for fire and smoke, colours) for one particle system. */
+  private layoutParticles(pm: { mesh: Mesh; frame: ParticleFrame; settings: ParticleSettings }) {
+    const { frame: f, settings: s, mesh } = pm;
+    const n = f.positions.length;
+    const buf = new Float32Array(Math.max(1, n) * 16);
+    const m = new Matrix();
+    const q = new Quaternion();
+    const up = Vector3.Up();
+    const bill = isBillboard(s.shape);
+    const camQ = bill ? this.camera.absoluteRotation : null;
+    const cols = bill ? new Float32Array(Math.max(1, n) * 4) : null;
+    const base = Color3.FromHexString(s.color);
+    for (let i = 0; i < n; i++) {
+      const [x, y, z] = toBabylonVec(f.positions[i]);
+      let sz = f.sizes[i];
+      if (bill) {
+        const t = f.life[i];
+        let r: number, g: number, b: number, a: number;
+        if (s.shape === 'fire') {
+          // Hot white-yellow core → the flame colour → dark red, fading in and out; flames taper.
+          sz *= t < 0.25 ? 0.6 + 1.6 * t : 1 - (t - 0.25) * 0.9;
+          const hot = Math.max(0, 1 - t / 0.22);
+          const cool = Math.min(1, Math.max(0, (t - 0.25) / 0.5));
+          r = (base.r + (1 - base.r) * hot) * (1 - cool * 0.35);
+          g = (base.g + (0.9 - base.g) * hot) * (1 - cool * 0.85);
+          b = (base.b + (0.55 - base.b) * hot) * (1 - cool);
+          a = Math.min(1, t / 0.08) * Math.pow(1 - t, 1.5) * 0.8;
+        } else {
+          // Smoke: grows and spreads, fades in quickly and thins out slowly.
+          sz *= 1 + t * 2.2;
+          r = base.r + (1 - base.r) * t * 0.25;
+          g = base.g + (1 - base.g) * t * 0.25;
+          b = base.b + (1 - base.b) * t * 0.25;
+          a = Math.min(1, t / 0.12) * (1 - t) * 0.55;
+        }
+        cols!.set([r, g, b, a], i * 4);
+        Quaternion.RotationAxisToRef(Vector3.Forward(), (f.spins[i] * Math.PI) / 180, q);
+        camQ!.multiplyToRef(q, q);
+        Matrix.ComposeToRef(new Vector3(sz, sz, sz), q, new Vector3(x, y, z), m);
+      } else if (s.shape === 'drop') {
+        // Raindrops and water: stretched along their direction of travel.
+        const d = toBabylonVec(f.dirs[i]);
+        Quaternion.FromUnitVectorsToRef(up, new Vector3(d[0], d[1], d[2]), q);
+        Matrix.ComposeToRef(new Vector3(sz * 0.6, sz * 2.4, sz * 0.6), q, new Vector3(x, y, z), m);
+      } else {
+        Quaternion.RotationYawPitchRollToRef((f.spins[i] * Math.PI) / 180, (f.spins[i] * Math.PI) / 360, 0, q);
+        Matrix.ComposeToRef(new Vector3(sz, sz, sz), q, new Vector3(x, y, z), m);
+      }
+      m.copyToArray(buf, i * 16);
+    }
+    mesh.thinInstanceSetBuffer('matrix', buf, 16, false);
+    if (cols) mesh.thinInstanceSetBuffer('color', cols, 4, false);
+    mesh.thinInstanceCount = n;
+    mesh.setEnabled(n > 0);
+  }
+
+  /** Fire and smoke face the camera: re-aim them whenever the view turns. */
+  private aimBillboards() {
+    const rot = this.camera.absoluteRotation;
+    const k = `${rot.x.toFixed(4)},${rot.y.toFixed(4)},${rot.z.toFixed(4)},${rot.w.toFixed(4)}`;
+    if (k === this.lastBillboardKey) return;
+    this.lastBillboardKey = k;
+    for (const pm of this.particleMeshes.values()) if (isBillboard(pm.settings.shape) && pm.frame.positions.length) this.layoutParticles(pm);
+  }
+  private lastBillboardKey = '';
 
   // ---------------------------------------------------------------- wireframe shading
 

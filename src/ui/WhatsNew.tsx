@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 /** Newest first. The first entry is the current version. */
 const CHANGES: { v: string; items: string[] }[] = [
+  { v: '3.5', items: ['Fire and smoke particles (presets in Physics → Particles), plus wind (example: Campfire)'] },
   { v: '3.4', items: ['Particles: Physics tab → Particles — sparks, fountains, rain, snow, debris (example: Particle night)'] },
   { v: '3.3', items: ['Cell Fracture: Physics tab → Fracture breaks an object into rigid pieces (example: Wall breach)', 'Convex hull collision shape; faster physics'] },
   { v: '3.2', items: ['Wireframe shading (⇧ Z or the first shading button): every edge, see-through'] },

@@ -1407,6 +1407,7 @@ export function validateParticles(v: unknown, partial: boolean): Partial<Particl
     color: [(x) => isColor(x), 'a colour like #ffaa33'],
     glow: [(x) => inRange(x, 0, 1), '0..1'],
     ground: [(x) => (PARTICLE_GROUND as readonly unknown[]).includes(x), PARTICLE_GROUND.join(', ')],
+    wind: [(x) => isVec3In(x, 100), '[x, y, z] m/s², each -100..100'],
     hideEmitter: [(x) => typeof x === 'boolean', 'true/false'],
     seed: [(x) => Number.isInteger(x) && inRange(x, 0, 99999), 'a whole number 0..99999'],
   };
