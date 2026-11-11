@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { DopeSheet } from './DopeSheet';
 import { useApp, useCtx } from './context';
 import { Icon } from './icons';
 import { NumberField } from './NumberField';
@@ -18,6 +19,21 @@ export function Timeline() {
   const sel = useApp((s) => s.selection);
   const selName = useApp((s) => (s.selection ? s.doc.objects[s.selection]?.name : null));
   const cameraView = useApp((s) => s.cameraView);
+  const [sheet, setSheetOpen] = useState(() => {
+    try {
+      return localStorage.getItem('b3d.dopesheet') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleSheet = () => {
+    setSheetOpen(!sheet);
+    try {
+      localStorage.setItem('b3d.dopesheet', sheet ? '0' : '1');
+    } catch {
+      /* per session only */
+    }
+  };
   const { fps, start, end, tracks, camera } = animationOf({ animation: anim });
 
   useEffect(() => {
@@ -72,6 +88,9 @@ export function Timeline() {
           <button className="tl-btn cam" data-testid="tl-camkey" title="Save the current view as a camera keyframe" onClick={() => runAction(ctx, 'anim.cameraKey')}>
             ◆ Camera
           </button>
+          <button className={`tl-btn${sheet ? ' on' : ''}`} aria-pressed={sheet} data-testid="tl-dopesheet" title="Dope Sheet: see, move, copy and retime every keyframe" onClick={toggleSheet}>
+            ◆◆ Dope Sheet
+          </button>
           <button className={`tl-btn${cameraView ? ' on' : ''}`} aria-pressed={cameraView} data-testid="tl-camview" title="Look through the scene camera (0)" onClick={() => (cameraView ? store.setCameraView(false) : runAction(ctx, 'view.camera'))}>
             🎥 Camera view
           </button>
@@ -107,6 +126,7 @@ export function Timeline() {
           style={{ ['--pct' as string]: pct(frame) }}
         />
       </div>
+      {sheet && <DopeSheet />}
       <div className="tl-foot muted">
         {(end - start + 1) / fps < 60 ? `${((end - start + 1) / fps).toFixed(1)} s` : `${Math.floor((end - start + 1) / fps / 60)} min ${Math.round(((end - start + 1) / fps) % 60)} s`} at {fps} fps
         {keyFrames(animationOf({ animation: anim }), null).length ? ` · ${Object.keys(tracks).length} animated object${Object.keys(tracks).length === 1 ? '' : 's'}${camera.length ? ', animated camera' : ''}` : ' · no animation yet: select an object and press ◆ Key'}

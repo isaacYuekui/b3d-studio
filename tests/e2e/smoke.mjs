@@ -865,6 +865,53 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Dope Sheet (v2.1): every key in rows; drag to move, Add + Slower ×2 to retime, Delete.
+{
+  const { ctx, page, errors } = await open({ width: 1180, height: 820 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const k = (id, frame, x) => ({ type: 'setKeyframe', id, frame, transform: { position: [x, 0, 1], rotation: [0, 0, 0], scale: [1, 1, 1] } });
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'a', name: 'Box' }, { type: 'add', primitive: 'sphere', id: 'b', name: 'Ball' },
+      k('a', 1, 0), k('a', 30, 2), k('a', 60, 4), k('b', 30, 1), k('b', 90, 3),
+      { type: 'setCameraKey', frame: 1, position: [0, -10, 3], target: [0, 0, 0] }, { type: 'setCameraKey', frame: 120, position: [6, -10, 3], target: [0, 0, 0] },
+    ] });
+  });
+  const opened = await page.evaluate(() => document.querySelector('[data-testid="tl-dopesheet"]')?.getAttribute('aria-pressed'));
+  if (opened !== 'true') await page.click('[data-testid="tl-dopesheet"]');
+  await page.waitForSelector('[data-ds-key="obj:a@30"]');
+  const rows = await page.evaluate(() => [...document.querySelectorAll('.ds-label')].map((e) => e.textContent));
+  check('v2.1: Dope Sheet lists Summary, Camera and each animated object', JSON.stringify(rows) === JSON.stringify(['Summary', 'Camera', 'Box', 'Ball']), JSON.stringify(rows));
+  const kb = await page.locator('[data-ds-key="obj:a@30"]').boundingBox();
+  const g = await page.locator('[data-testid="ds-grid"]').boundingBox();
+  const end = await page.evaluate(() => window.__b3d.store.getState().doc.animation.end);
+  const ppf = (g.width - 18) / (end - 1);
+  await page.mouse.move(kb.x + kb.width / 2, kb.y + kb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(kb.x + kb.width / 2 + ppf * 8, kb.y + kb.height / 2, { steps: 4 });
+  await page.mouse.move(kb.x + kb.width / 2 + ppf * 15, kb.y + kb.height / 2, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  const moved = await page.evaluate(() => window.__b3d.store.getState().doc.animation.tracks.a.map((k) => k.frame));
+  check('v2.1: dragging a key moves it (one undo step)', JSON.stringify(moved) === JSON.stringify([1, 45, 60]), JSON.stringify(moved));
+  await page.click('[data-testid="ds-add"]');
+  await page.click('[data-ds-key="obj:a@45"]'); // unselect (was selected)
+  await page.click('[data-ds-key="obj:b@30"]');
+  await page.click('[data-ds-key="obj:b@90"]');
+  await page.click('[data-testid="ds-slower"]');
+  const slower = await page.evaluate(() => window.__b3d.store.getState().doc.animation.tracks.b.map((k) => k.frame));
+  check('v2.1: Add + Slower ×2 retimes the picked keys', JSON.stringify(slower) === JSON.stringify([30, 150]), JSON.stringify(slower));
+  await page.click('[data-testid="ds-delete"]');
+  const gone = await page.evaluate(() => window.__b3d.store.getState().doc.animation.tracks.b);
+  await page.keyboard.press('Control+z');
+  const back = await page.evaluate(() => window.__b3d.store.getState().doc.animation.tracks.b?.map((k) => k.frame));
+  check('v2.1: Delete removes the selected keys and Undo brings them back', gone === undefined && JSON.stringify(back) === JSON.stringify([30, 150]), JSON.stringify({ gone, back }));
+  await page.screenshot({ path: `${shots}/dopesheet.png` });
+  check('v2.1: no errors (dope sheet)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // iPad: edit mode by touch.
 {
   const { ctx, page, errors } = await open({ width: 820, height: 1180 }, { touch: true, dpr: 2 });

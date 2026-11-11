@@ -9,6 +9,8 @@
 
 import { BACKGROUNDS, DEFAULT_LIGHT, DEFAULT_MATERIAL, DEFAULT_WORLD, IDENTITY, worldOf, LIGHT_TYPES, OBJECT_TYPES, PRIMITIVES } from './types';
 import { DEFAULT_ANIMATION, EASINGS, animationOf, transformAt, upsertKey } from './animation';
+import { KEY_OPS, editKeys as editKeysIn } from './dopesheet';
+import type { KeyOp, KeyRef } from './dopesheet';
 import type { Animation, Easing, PoseKey } from './animation';
 import type { ArmatureData, Bone, BonePose, Background, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
@@ -117,6 +119,8 @@ export type Command =
   | { type: 'deleteCameraKey'; frame: number }
   | { type: 'clearAnimation'; id: string | null }
   | { type: 'setAnimation'; fps?: number; start?: number; end?: number }
+  /** Dope Sheet edit of many keys at once: move / duplicate (offset), scale (factor, pivot), delete, easing. */
+  | { type: 'editKeys'; keys: KeyRef[]; op: KeyOp; offset?: number; factor?: number; pivot?: number; easing?: Easing }
   | { type: 'batch'; commands: Command[] }
   | { type: 'replaceScene'; doc: SceneDoc };
 
@@ -739,6 +743,17 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       const tracks = { ...anim.tracks };
       delete tracks[cmd.id];
       return { doc: withAnimation(doc, { ...anim, tracks }), created: [] };
+    }
+
+    case 'editKeys': {
+      if (!doc.animation || !cmd.keys.length) return { doc, created: [] };
+      const next = editKeysIn(doc, cmd.keys, { op: cmd.op, offset: cmd.offset, factor: cmd.factor, pivot: cmd.pivot, easing: cmd.easing });
+      // An object whose last key was deleted keeps the pose of that key, so nothing jumps.
+      let base = doc;
+      for (const [id, keys] of Object.entries(doc.animation.tracks)) {
+        if (!next.tracks[id] && keys.length && base.objects[id]) base = withObject(base, { ...base.objects[id], transform: clone(keys[0].transform) });
+      }
+      return { doc: withAnimation(base, next), created: [] };
     }
 
     case 'setAnimation': {
@@ -1450,6 +1465,20 @@ export function validateCommand(v: unknown, depth = 0): Command {
     case 'clearAnimation':
       if (!(v.id === null || isId(v.id))) fail('clearAnimation needs id (or null for the camera)');
       return { type: 'clearAnimation', id: v.id as string | null };
+    case 'editKeys': {
+      if (!(KEY_OPS as readonly unknown[]).includes(v.op)) fail(`editKeys op must be one of ${KEY_OPS.join(', ')}`);
+      if (!Array.isArray(v.keys) || v.keys.length > 100000 || !v.keys.every((k) => isRecord(k) && typeof k.channel === 'string' && /^(summary|camera|obj:.+|pose:.+)$/.test(k.channel) && isFrame(k.frame)))
+        fail('editKeys keys must be a list of {channel, frame}');
+      const cmd: Extract<Command, { type: 'editKeys' }> = { type: 'editKeys', op: v.op as KeyOp, keys: (v.keys as KeyRef[]).map((k) => ({ channel: k.channel, frame: k.frame })) };
+      if (v.offset !== undefined) cmd.offset = isNum(v.offset) && Number.isInteger(v.offset) && Math.abs(v.offset) <= 100000 ? v.offset : fail('editKeys offset must be a whole number of frames');
+      if (v.factor !== undefined) cmd.factor = inRange(v.factor, 0.01, 100) ? (v.factor as number) : fail('editKeys factor must be 0.01..100');
+      if (v.pivot !== undefined) cmd.pivot = isFrame(v.pivot) ? v.pivot : fail('editKeys pivot must be a frame');
+      if (v.easing !== undefined) cmd.easing = isEasing(v.easing) ? v.easing : fail(`easing must be one of ${EASINGS.join(', ')}`);
+      if ((cmd.op === 'move' || cmd.op === 'duplicate') && cmd.offset === undefined) fail(`editKeys ${cmd.op} needs offset`);
+      if (cmd.op === 'scale' && cmd.factor === undefined) fail('editKeys scale needs factor');
+      if (cmd.op === 'easing' && cmd.easing === undefined) fail('editKeys easing needs easing');
+      return cmd;
+    }
     case 'setAnimation':
       if (v.fps !== undefined && !inRange(v.fps, 1, 240)) fail('fps must be 1..240');
       if (v.start !== undefined && !isFrame(v.start)) fail('start invalid');

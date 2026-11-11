@@ -510,6 +510,34 @@ button.vp-mode.editing { background: #7a4a12; border-color: var(--select); color
 .tl-diamond.cam { top: -6px; background: #6fb0ff; width: 10px; height: 10px; margin-left: -5px; }
 .tl-diamond.current { background: #fff3c4; }
 .tl-foot { font-size: 11px; padding-top: 2px; }
+
+/* ---------- dope sheet ---------- */
+.dopesheet { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--border, #2a2a2a); padding-top: 4px; position: relative; }
+.ds-tools { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.ds-tools select { height: calc(var(--tap) - 6px); border-radius: var(--radius); background: var(--bg-btn); border: 0; padding: 0 6px; font-size: 12px; }
+.ds-count { font-size: 11.5px; min-width: 70px; }
+.tl-btn.danger { color: #ff8f8f; }
+.tl-btn:disabled { opacity: 0.45; }
+.ds-body { display: flex; max-height: 190px; overflow-y: auto; overscroll-behavior: contain; }
+.ds-labels { flex: none; width: 130px; }
+.ds-label { height: 26px; line-height: 26px; font-size: 11.5px; padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.ds-label.summary { font-weight: 700; color: var(--select); }
+.ds-label.camera { color: #8fc4ff; }
+.ds-label.pose { color: #c9a8ff; }
+.ds-grid { position: relative; flex: 1; touch-action: none; background: rgba(0,0,0,0.12); border-radius: 4px; min-width: 0; }
+.ds-row { position: relative; height: 26px; margin: 0 9px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.ds-row.summary { background: rgba(255,255,255,0.03); }
+.ds-key { position: absolute; top: 6px; width: 13px; height: 13px; margin-left: -6.5px; transform: rotate(45deg); border: 1px solid #000; background: #d9d9d9; padding: 0; border-radius: 2px; touch-action: none; cursor: grab; }
+.ds-key::after { content: ''; position: absolute; inset: -7px; } /* bigger touch target */
+.ds-row.object .ds-key { background: #f0a050; }
+.ds-row.camera .ds-key { background: #6fb0ff; }
+.ds-row.pose .ds-key { background: #b88cff; }
+.ds-key.sel { background: #ffe680 !important; box-shadow: 0 0 0 2px rgba(255,230,128,0.45); }
+.ds-key.current { outline: 1px solid #fff; }
+.ds-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--select); opacity: 0.8; pointer-events: none; z-index: 1; }
+.ds-out { position: absolute; top: 0; bottom: 0; background: rgba(0,0,0,0.25); pointer-events: none; }
+.ds-hint { position: absolute; right: 8px; bottom: 6px; background: rgba(0,0,0,0.75); padding: 2px 8px; border-radius: 4px; font-size: 11.5px; pointer-events: none; }
+.ds-empty { font-size: 12px; padding: 6px 2px; }
 @media (max-width: 759px) { .tl-range { margin-left: 0; } }
 
 /* ---------- video dialog ---------- */

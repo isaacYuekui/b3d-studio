@@ -215,3 +215,19 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   closed solids (shapes, meshes). The result is applied to `id` (its modifiers are baked first);
   the cutter is hidden unless `"keepCutter": true`. Use it for panel lines, vents, windows, holes.
   In the app: select an object → Shape → Boolean → pick the other object → Apply boolean.
+
+## Editing keyframes (v2.1)
+
+```json
+{"type":"editKeys","op":"move","offset":12,"keys":[{"channel":"obj:box","frame":24}]}
+{"type":"editKeys","op":"scale","factor":2,"pivot":1,"keys":[{"channel":"summary","frame":24},{"channel":"summary","frame":48}]}
+```
+
+- `keys`: `{channel, frame}` where `channel` is `summary` (everything keyed on that frame),
+  `camera`, `obj:<id>`, or `pose:<armature id>` (all of that armature's bone keys on that frame).
+- `op`:
+  - `move` / `duplicate` with `offset` (whole frames);
+  - `scale` with `factor` and optional `pivot` (default: the earliest selected frame);
+  - `delete`;
+  - `easing` with `easing` (`linear`, `ease`, `easeIn`, `easeOut`, `constant`).
+- Moved or copied keys replace keys already on their new frame. One command is one undo step.
