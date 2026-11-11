@@ -10,6 +10,7 @@ import { animationOf, keyFrames } from '../core/animation';
 import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit, togglePose } from './editing';
 import { poseAt } from '../core/rig';
 import { subtree } from '../core/commands';
+import { catmullClark } from '../core/mesh/modifiers';
 import type { CameraMoveKind } from '../core/cameraMoves';
 import type { MeshOpId } from './editing';
 
@@ -224,6 +225,40 @@ export const actions = {
     shortcut: 'Tab',
     enabled: (c) => editable(c) || !!c.store.getState().pose || (() => { const st = c.store.getState(); return st.selection ? st.doc.objects[st.selection]?.type === 'armature' : false; })(),
     run: (c) => toggleEdit(c.store),
+  },
+  'mode.sculpt': {
+    id: 'mode.sculpt',
+    label: 'Toggle Sculpt Mode',
+    enabled: (c) => !!c.store.getState().sculpt || editable(c),
+    run: (c) => {
+      const st = c.store.getState();
+      if (st.sculpt) return c.store.setSculpt(null);
+      const o = st.selection ? st.doc.objects[st.selection] : null;
+      if (!o) return c.store.notify('Select an object to sculpt');
+      if (o.skin) return c.store.notify('Skinned characters can’t be sculpted yet');
+      try {
+        if (o.type !== 'mesh') c.store.dispatch({ type: 'convertToMesh', id: o.id }, { select: false });
+      } catch (e) {
+        return c.store.notify(e instanceof Error ? e.message : String(e));
+      }
+      c.store.setSculpt(o.id);
+      const n = c.store.getState().doc.objects[o.id]?.mesh?.vertices.length ?? 0;
+      c.store.notify(n < 3000 ? `Sculpt Mode. Only ${n} points: tap “Add detail” for smoother sculpting` : 'Sculpt Mode: drag on the model to sculpt, drag off it to turn the view');
+    },
+  },
+  'sculpt.detail': {
+    id: 'sculpt.detail',
+    label: 'Add Detail (Subdivide)',
+    enabled: (c) => !!c.store.getState().sculpt,
+    run: (c) => {
+      const st = c.store.getState();
+      const o = st.sculpt ? st.doc.objects[st.sculpt.id] : null;
+      if (!o?.mesh) return;
+      const faces = o.mesh.faces.reduce((n, f) => n + f.length, 0);
+      if (faces * 4 > 240_000) return c.store.notify('That is already very detailed: more would make it slow on a tablet');
+      c.store.dispatch({ type: 'setMesh', id: o.id, mesh: { ...catmullClark(o.mesh), smooth: true } }, { select: false });
+      c.store.notify(`Now ${c.store.getState().doc.objects[o.id].mesh!.vertices.length.toLocaleString()} points`);
+    },
   },
   'mode.pose': {
     id: 'mode.pose',

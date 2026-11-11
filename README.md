@@ -5,6 +5,25 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## More modifiers (v2.5)
+
+- Shape panel: **Array** (×2 to ×10, direction, gap, count), **Solidify** (thickness for flat surfaces), **Displace** (noise bumps; Low / Medium / High, bump size, New pattern)
+- Stack order: Mirror → Array → Solidify → Bevel → Subdivision → Displace. **Apply modifiers** bakes them in
+
+## Sculpt Mode (v2.4)
+
+- Select a model → **Sculpt** (top bar). Brushes: **Draw** (build up; **Invert** digs in), **Smooth**, **Inflate**, **Grab**, **Flatten**, with Size, Strength and **X symmetry**
+- Drag on the model to sculpt; drag off it (or use two fingers) to turn the view, like Nomad Sculpt. Each stroke is one undo step
+- **Add detail** subdivides the model for finer sculpting (up to about 240,000 faces, to stay smooth on a tablet)
+- Not yet: dynamic topology, masks, multires. Skinned characters can't be sculpted
+
+## Materials (v2.3)
+
+- **More: clearcoat, glass, sheen, skin…** in the Material panel, matching Blender's Principled BSDF: Clearcoat (car paint), Transmission + IOR (glass, water), Sheen (velvet, cloth), Subsurface (skin, wax, leaves), Anisotropy (brushed metal)
+- One-tap presets: Car paint, Glass, Brushed metal, Velvet, Skin, Plain
+- **Pattern** (procedural textures, like Blender's texture nodes): Noise, Voronoi, Checker, Bricks, Wood, Marble, Gradient, with two colours, scale and bump. They tile seamlessly and need no downloads
+- New example: *Materials showcase*
+
 ## Edit tools (v2.2)
 
 - **Snapping** (magnet button, ⇧ Tab): moves in 0.25 m steps, rotations in 15°, scale in 0.1, in Object and Edit Mode

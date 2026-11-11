@@ -57,7 +57,10 @@ import { buildVertexData } from './geometry';
 import { subtree } from '../core/commands';
 import { EditOverlay } from './EditOverlay';
 import { rippleNormalTexture } from './water';
+import { isSharedTexture, patternColorTexture, patternNormalTexture } from './patternTexture';
 import { proportionalWeights } from '../core/mesh/proportional';
+import { brushStep, strokeContext } from '../core/mesh/sculpt';
+import type { StrokeContext } from '../core/mesh/sculpt';
 import { TerrainPlugin } from './terrainMaterial';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import { Matrix as BMatrix } from '@babylonjs/core/Maths/math.vector';
@@ -109,6 +112,7 @@ export class Viewport {
   private dragging = false;
   private lastDoc: SceneDoc | null = null;
   private lastSel: string | null | undefined = undefined;
+  private lastSculpt: unknown = undefined;
   private lastTool: ToolMode | null = null;
   private lastShading: Shading | null = null;
   private resizeObs: ResizeObserver;
@@ -217,11 +221,18 @@ export class Viewport {
     });
     canvas.addEventListener('wheel', () => this.store.getState().cameraView && this.store.setCameraView(false), { passive: true });
 
+    // Sculpt strokes: a press on the sculpted mesh paints; anywhere else the view orbits as usual.
+    canvas.addEventListener('pointerdown', (ev) => this.sculptDown(ev), { capture: true });
+    canvas.addEventListener('pointermove', (ev) => this.sculptMove(ev));
+    canvas.addEventListener('pointerup', () => this.sculptUp());
+    canvas.addEventListener('pointercancel', () => this.sculptUp(true));
+
     // Tap to select
     scene.onPointerObservable.add((info) => {
       if (info.type !== PointerEventTypes.POINTERTAP) return;
       const ev = info.event as PointerEvent;
       if (ev.button !== 0) return;
+      if (this.store.getState().sculpt) return; // taps don't change the selection while sculpting
       if (this.store.getState().pose) this.poseTap(scene.pointerX, scene.pointerY, ev.pointerType !== 'mouse');
       else if (this.store.getState().edit) this.editTap(scene.pointerX, scene.pointerY, ev.shiftKey || this.store.getState().addSelect, ev.altKey, ev.pointerType !== 'mouse');
       else this.store.select(this.pickAt(scene.pointerX, scene.pointerY));
@@ -340,7 +351,9 @@ export class Viewport {
     const poseChanged = state.pose !== this.lastPose;
     this.lastPose = state.pose;
     if (poseChanged) this.applyRigs(state);
-    if (state.selection !== this.lastSel || state.tool !== this.lastTool || editChanged || poseChanged) {
+    const sculptChanged = state.sculpt !== this.lastSculpt;
+    this.lastSculpt = state.sculpt;
+    if (state.selection !== this.lastSel || state.tool !== this.lastTool || editChanged || poseChanged || sculptChanged) {
       this.syncSelection(state.selection, state.tool);
       this.lastSel = state.selection;
       this.lastTool = state.tool;
@@ -1100,10 +1113,19 @@ export class Viewport {
 
   /** Photo-scanned PBR maps from the library (colour, normal, AO/roughness/metal). */
   private applyTexture(mat: PBRMaterial, m: SceneMaterial, prev?: SceneMaterial) {
-    if (prev && prev.texture === m.texture && prev.textureScale === m.textureScale) return;
-    for (const t of [mat.albedoTexture, mat.bumpTexture, mat.metallicTexture]) t?.dispose();
+    if (prev && prev.texture === m.texture && prev.textureScale === m.textureScale && prev.pattern === m.pattern) return;
+    for (const t of [mat.albedoTexture, mat.bumpTexture, mat.metallicTexture]) if (t && !isSharedTexture(t)) t.dispose();
     mat.albedoTexture = mat.bumpTexture = mat.metallicTexture = null;
     mat.useAmbientOcclusionFromMetallicTextureRed = mat.useRoughnessFromMetallicTextureGreen = mat.useMetallnessFromMetallicTextureBlue = false;
+    if (!m.texture && m.pattern) {
+      // Procedural pattern: colour map + bump from the same values (Blender: texture → colour and bump).
+      mat.albedoTexture = patternColorTexture(this.scene, m.pattern);
+      if (m.pattern.bump > 0) {
+        mat.bumpTexture = patternNormalTexture(this.scene, m.pattern.type, m.pattern.scale, m.pattern.bump);
+        mat.invertNormalMapX = mat.invertNormalMapY = false;
+      }
+      return;
+    }
     if (!m.texture) return;
     const id = m.texture;
     const maps = catalogNow()?.textures.find((t) => t.id === id)?.maps ?? ['diff', 'nor', 'arm'];
@@ -1195,6 +1217,9 @@ export class Viewport {
       mat.emissiveColor = Color3.FromHexString(m.emission).toLinearSpace().scale(m.emissionStrength);
       mat.alpha = m.alpha;
       mat.transparencyMode = m.alpha < 1 ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
+      // A pattern carries the colour itself.
+      if (!m.texture && m.pattern) mat.albedoColor = Color3.White();
+      applyPrincipled(mat, m);
     }
     if (e.material && o.water && (o.water !== prev?.water || o.material !== prev?.material)) {
       const mat = e.material;
@@ -1367,6 +1392,13 @@ export class Viewport {
       gm.attachToNode(has ? this.bonePivot : null);
       return;
     }
+    if (st.sculpt) {
+      // Sculpt mode: no gizmo, no outline: the brush is the tool.
+      for (const m of this.entries.get(st.sculpt.id)?.meshes ?? []) m.renderOutline = false;
+      gm.positionGizmoEnabled = gm.rotationGizmoEnabled = gm.scaleGizmoEnabled = false;
+      gm.attachToNode(null);
+      return;
+    }
     if (st.edit) {
       // Edit mode: the gizmo moves the selected vertices (through the pivot), not the object.
       for (const m of this.entries.get(st.edit.id)?.meshes ?? []) m.renderOutline = false;
@@ -1424,6 +1456,124 @@ export class Viewport {
   // ---------------------------------------------------------------- public API
 
   /** Pick the object id under a canvas-relative CSS pixel position. */
+  // ---------------------------------------------------------------- sculpt
+
+  private stroke: {
+    id: string;
+    pointer: number;
+    ctx: StrokeContext;
+    faces: number[][];
+    verts: Vec3[];
+    world: Matrix;
+    worldInv: Matrix;
+    /** World metres per CSS pixel at the start point, and the local/world scale. */
+    mPerPx: number;
+    localPerWorld: number;
+    startLocal: Vec3;
+    startWorld: Vector3;
+    last: { x: number; y: number };
+    raf: number;
+    pending: { x: number; y: number } | null;
+  } | null = null;
+
+  private sculptPick(x: number, y: number, id: string) {
+    const e = this.entries.get(id);
+    if (!e) return null;
+    const pick = this.scene.pick(x, y, (m) => m === e.node || m.parent === e.node);
+    return pick?.hit && pick.pickedPoint ? pick.pickedPoint : null;
+  }
+
+  private sculptDown(ev: PointerEvent) {
+    const st = this.store.getState();
+    if (!st.sculpt || this.stroke || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
+    const o = st.doc.objects[st.sculpt.id];
+    const e = this.entries.get(st.sculpt.id);
+    if (!o?.mesh || !e) return;
+    const r = this.canvas.getBoundingClientRect();
+    const x = ev.clientX - r.left, y = ev.clientY - r.top;
+    const hit = this.sculptPick(x, y, o.id);
+    if (!hit) return; // off the mesh: let the camera orbit
+    ev.stopImmediatePropagation();
+    ev.preventDefault();
+    this.canvas.setPointerCapture?.(ev.pointerId);
+    this.camera.inputs.attached.pointers?.detachControl();
+    const world = e.node.computeWorldMatrix(true).clone();
+    const worldInv = world.clone().invert();
+    const scale = new Vector3();
+    world.decompose(scale);
+    const dist = Vector3.Distance(this.camera.position, hit);
+    const mPerPx = (2 * dist * Math.tan(this.camera.fov / 2)) / Math.max(1, r.height);
+    const local = Vector3.TransformCoordinates(hit, worldInv);
+    this.stroke = {
+      id: o.id,
+      pointer: ev.pointerId,
+      ctx: strokeContext(o.mesh),
+      faces: o.mesh.faces,
+      verts: o.mesh.vertices.map((v) => [...v] as Vec3),
+      world,
+      worldInv,
+      mPerPx,
+      localPerWorld: 1 / Math.max(1e-6, (Math.abs(scale.x) + Math.abs(scale.y) + Math.abs(scale.z)) / 3),
+      startLocal: fromBabylonVec([local.x, local.y, local.z]),
+      startWorld: hit.clone(),
+      last: { x, y },
+      raf: 0,
+      pending: { x, y },
+    };
+    this.sculptFlush();
+  }
+
+  private sculptMove(ev: PointerEvent) {
+    const s = this.stroke;
+    if (!s || ev.pointerId !== s.pointer) return;
+    const r = this.canvas.getBoundingClientRect();
+    s.pending = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+    if (!s.raf) s.raf = requestAnimationFrame(() => this.sculptFlush());
+  }
+
+  /** Apply the brush at the latest pointer position (at most once per frame). */
+  private sculptFlush() {
+    const s = this.stroke;
+    if (!s) return;
+    s.raf = 0;
+    const p = s.pending;
+    s.pending = null;
+    if (!p) return;
+    const b = this.store.getState().sculptBrush;
+    const radius = b.radius * s.mPerPx * s.localPerWorld;
+    let opts: Parameters<typeof brushStep>[3];
+    if (b.brush === 'grab') {
+      // Move in the view plane through the start point.
+      const ray = this.scene.createPickingRay(p.x, p.y, null, this.camera);
+      const n = this.camera.getForwardRay().direction;
+      const t = Vector3.Dot(s.startWorld.subtract(ray.origin), n) / Vector3.Dot(ray.direction, n);
+      const w = ray.origin.add(ray.direction.scale(t));
+      const l = Vector3.TransformCoordinates(w, s.worldInv);
+      const cur = fromBabylonVec([l.x, l.y, l.z]);
+      opts = { brush: 'grab', center: s.startLocal, radius, strength: b.strength, symmetryX: b.symmetry, grabStart: s.startLocal, grabDelta: [cur[0] - s.startLocal[0], cur[1] - s.startLocal[1], cur[2] - s.startLocal[2]] };
+    } else {
+      const hit = this.sculptPick(p.x, p.y, s.id);
+      if (!hit) return;
+      const l = Vector3.TransformCoordinates(hit, s.worldInv);
+      opts = { brush: b.brush, center: fromBabylonVec([l.x, l.y, l.z]), radius, strength: b.strength, invert: b.invert, symmetryX: b.symmetry };
+    }
+    s.verts = brushStep(s.verts, s.faces, s.ctx, opts);
+    s.last = p;
+    const o = this.store.getState().doc.objects[s.id];
+    if (o?.mesh) this.store.preview({ type: 'setMesh', id: s.id, mesh: { ...o.mesh, vertices: s.verts.map((v) => v.map((x) => Math.round(x * 1e5) / 1e5) as Vec3) } });
+  }
+
+  private sculptUp(cancel = false) {
+    const s = this.stroke;
+    if (!s) return;
+    if (s.raf) cancelAnimationFrame(s.raf);
+    if (!cancel) this.sculptFlush();
+    this.stroke = null;
+    if (cancel) this.store.cancelPreview();
+    else this.store.commitPreview();
+    this.camera.inputs.attached.pointers?.attachControl(true);
+  }
+
   pickAt(x: number, y: number): string | null {
     const pick = this.scene.pick(x, y, (m) => !!m.metadata?.id && m.isEnabled());
     return (pick?.pickedMesh?.metadata?.id as string | undefined) ?? null;
@@ -1817,4 +1967,38 @@ function robloxReadme(report: { parts: number; triangles: number; maxTriangles: 
     '   Terrain Editor → Settings → Decoration: ON adds swaying grass.',
   );
   return lines.join('\n') + '\n';
+}
+
+/** Blender Principled BSDF extras mapped onto Babylon's PBR material layers. */
+function applyPrincipled(mat: PBRMaterial, m: SceneMaterial) {
+  const cc = m.clearcoat ?? 0;
+  mat.clearCoat.isEnabled = cc > 0;
+  if (cc > 0) {
+    mat.clearCoat.intensity = cc;
+    mat.clearCoat.roughness = m.clearcoatRoughness ?? 0.03;
+  }
+  const sh = m.sheen ?? 0;
+  mat.sheen.isEnabled = sh > 0;
+  if (sh > 0) {
+    mat.sheen.intensity = sh;
+    mat.sheen.color = Color3.FromHexString(m.sheenColor ?? '#ffffff').toLinearSpace();
+  }
+  const tr = m.transmission ?? 0;
+  mat.subSurface.isRefractionEnabled = tr > 0;
+  if (tr > 0) {
+    mat.subSurface.refractionIntensity = tr;
+    mat.subSurface.indexOfRefraction = m.ior ?? 1.5;
+    mat.subSurface.tintColor = Color3.FromHexString(m.baseColor).toLinearSpace();
+  }
+  const ss = m.subsurface ?? 0;
+  mat.subSurface.isTranslucencyEnabled = ss > 0;
+  if (ss > 0) {
+    mat.subSurface.translucencyIntensity = ss;
+    mat.subSurface.thicknessTexture = null;
+    mat.subSurface.maximumThickness = 1;
+    if (!tr) mat.subSurface.tintColor = Color3.FromHexString(m.subsurfaceColor ?? '#ff6040').toLinearSpace();
+  }
+  const an = m.anisotropy ?? 0;
+  mat.anisotropy.isEnabled = an > 0;
+  if (an > 0) mat.anisotropy.intensity = an;
 }

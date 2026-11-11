@@ -9,6 +9,7 @@ import { runAction } from './actions';
 import type { ActionId } from './actions';
 import { Icon } from './icons';
 import type { ToolMode } from '../core/store';
+import type { SculptBrush } from '../core/mesh/sculpt';
 import { adjustLastOp, canEdit, clearLastOp, getLastOp, subscribeLastOp } from './editing';
 import type { SelectMode } from '../core/mesh/select';
 import { NumberField } from './NumberField';
@@ -25,6 +26,14 @@ const EDIT_TOOLS: { action: ActionId; label: string; icon: () => ReactElement }[
   { action: 'mesh.bevel', label: 'Bevel (Ctrl/⌘ B)', icon: Icon.bevel },
   { action: 'mesh.loopcut', label: 'Loop Cut (Ctrl/⌘ R): select an edge first', icon: Icon.loopcut },
   { action: 'mesh.subdivide', label: 'Subdivide', icon: Icon.subdivide },
+];
+
+const BRUSH_LIST: { id: SculptBrush; label: string; hint: string }[] = [
+  { id: 'draw', label: 'Draw', hint: 'Build up (or dig in with Invert)' },
+  { id: 'smooth', label: 'Smooth', hint: 'Even out bumps' },
+  { id: 'inflate', label: 'Inflate', hint: 'Puff the surface outwards' },
+  { id: 'grab', label: 'Grab', hint: 'Pull an area around' },
+  { id: 'flatten', label: 'Flatten', hint: 'Level the surface' },
 ];
 
 const TOOLS: { mode: ToolMode; label: string; key: string; icon: () => ReactElement }[] = [
@@ -49,6 +58,9 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
   const posing = useApp((s) => s.pose);
   const xray = useApp((s) => s.xray);
   const snap = useApp((s) => s.snap);
+  const sculpt = useApp((s) => s.sculpt);
+  const brush = useApp((s) => s.sculptBrush);
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const prop = useApp((s) => s.proportional);
   const addSelect = useApp((s) => s.addSelect);
   const boxMode = useApp((s) => s.boxMode);
@@ -136,22 +148,37 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
   const run = (id: ActionId) => runAction(ctx, id);
 
   return (
-    <section className={`viewport${edit ? ' editing' : ''}`} aria-label="3D Viewport">
-      <canvas ref={canvasRef} className="viewport-canvas" touch-action="none" tabIndex={-1} data-testid="viewport-canvas" />
+    <section className={`viewport${edit ? ' editing' : ''}${sculpt ? ' sculpting' : ''}`} aria-label="3D Viewport">
+      <canvas
+        ref={canvasRef}
+        className="viewport-canvas"
+        touch-action="none"
+        tabIndex={-1}
+        data-testid="viewport-canvas"
+        onPointerMove={(e) => {
+          if (!sculpt) return;
+          const r = e.currentTarget.getBoundingClientRect();
+          setCursor({ x: e.clientX - r.left, y: e.clientY - r.top });
+        }}
+        onPointerLeave={() => setCursor(null)}
+      />
+      {sculpt && cursor && <div className="brush-cursor" style={{ left: cursor.x, top: cursor.y, width: brush.radius * 2, height: brush.radius * 2 }} aria-hidden />}
 
       <div className="vp-header">
         <button
-          className={`vp-mode${edit ? ' editing' : posing ? ' posing' : ''}`}
+          className={`vp-mode${edit ? ' editing' : posing ? ' posing' : sculpt ? ' sculpting' : ''}`}
           data-testid="mode-toggle"
           aria-pressed={!!edit || !!posing}
           disabled={!edit && !posing && !selEditable && !selArmature}
           title={edit ? 'Back to Object Mode (Tab)' : posing ? 'Back to Object Mode (Tab)' : selArmature ? 'Pose Mode: pose the bones (Tab)' : 'Edit Mode: move vertices, edges and faces (Tab)'}
-          onClick={() => run('mode.edit')}
+          onClick={() => run(sculpt ? 'mode.sculpt' : 'mode.edit')}
         >
-          {edit ? 'Edit Mode' : posing ? 'Pose Mode' : 'Object Mode'}
+          {edit ? 'Edit Mode' : posing ? 'Pose Mode' : sculpt ? 'Sculpt Mode' : 'Object Mode'}
         </button>
         {posing && <span className="vp-info"><b data-testid="pose-bone">{posing.bone ?? 'Tap a bone'}</b></span>}
-        {edit ? (
+        {sculpt ? (
+          <span className="vp-info muted">Drag on the model to sculpt · off it to turn the view</span>
+        ) : edit ? (
           <>
             <div className="seg" role="radiogroup" aria-label="Select mode">
               {SELECT_MODES.map((m) => (
@@ -188,6 +215,11 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
           <button className={`tool-btn${snap ? ' active' : ''}`} aria-pressed={snap} aria-label="Snapping" title="Snap: 0.25 m, 15°, 0.1 steps (⇧ Tab)" data-testid="snap" onClick={() => run('view.snap')}>
             <Icon.snap />
           </button>
+          {selEditable && (
+            <button className="tool-btn text" title="Sculpt Mode: shape the model with brushes" data-testid="sculpt-toggle" onClick={() => run('mode.sculpt')}>
+              Sculpt
+            </button>
+          )}
           <span className="vp-info">
             {selName ? <b>{selName}</b> : <span className="muted">Nothing selected</span>}
             <span className="muted"> · {count} object{count === 1 ? '' : 's'}</span>
@@ -195,6 +227,30 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
           </>
         )}
       </div>
+
+      {sculpt && (
+        <div className="sculpt-bar" role="toolbar" aria-label="Sculpt brushes">
+            <div className="seg" role="radiogroup" aria-label="Sculpt brush">
+              {BRUSH_LIST.map((b) => (
+                <button key={b.id} role="radio" aria-checked={brush.brush === b.id} className={`tool-btn text${brush.brush === b.id ? ' active' : ''}`} title={b.hint} data-brush={b.id} onClick={() => ctx.store.setSculptBrush({ brush: b.id })}>
+                  {b.label}
+                </button>
+              ))}
+            </div>
+            <label className="vp-slider" title="Brush size on screen">
+              <span className="muted">Size</span>
+              <input type="range" min={10} max={300} value={brush.radius} aria-label="Brush size" data-testid="brush-size" onChange={(e) => ctx.store.setSculptBrush({ radius: Number(e.target.value) })} />
+            </label>
+            <label className="vp-slider" title="Brush strength">
+              <span className="muted">Strength</span>
+              <input type="range" min={1} max={100} value={Math.round(brush.strength * 100)} aria-label="Brush strength" onChange={(e) => ctx.store.setSculptBrush({ strength: Number(e.target.value) / 100 })} />
+            </label>
+            <button className={`tool-btn text${brush.invert ? ' active' : ''}`} aria-pressed={brush.invert} title="Invert: dig in instead of building up" data-testid="brush-invert" onClick={() => ctx.store.setSculptBrush({ invert: !brush.invert })}>− Invert</button>
+            <button className={`tool-btn text${brush.symmetry ? ' active' : ''}`} aria-pressed={brush.symmetry} title="Mirror strokes across X" data-testid="brush-sym" onClick={() => ctx.store.setSculptBrush({ symmetry: !brush.symmetry })}>X sym</button>
+            <button className="tool-btn text" title="Subdivide for finer detail" data-testid="sculpt-detail" onClick={() => run('sculpt.detail')}>＋ Add detail</button>
+            <button className="tool-btn text active" title="Back to Object Mode" data-testid="sculpt-done" onClick={() => run('mode.sculpt')}>Done</button>
+        </div>
+      )}
 
       {boxMode && edit && (
         <div

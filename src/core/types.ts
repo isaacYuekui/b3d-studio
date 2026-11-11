@@ -55,6 +55,21 @@ export interface Material {
   texture: string | null;
   /** How many times the texture repeats across each face. */
   textureScale: number;
+  /** Principled extras (Blender names), all 0..1 unless noted; absent = off. */
+  clearcoat?: number;
+  clearcoatRoughness?: number;
+  sheen?: number;
+  sheenColor?: string;
+  /** Glass-like see-through with refraction; ior 1..3 (glass 1.5, water 1.33). */
+  transmission?: number;
+  ior?: number;
+  /** Light scattering under the surface (skin, wax, leaves); tinted by subsurfaceColor. */
+  subsurface?: number;
+  subsurfaceColor?: string;
+  /** Stretched highlights (brushed metal). */
+  anisotropy?: number;
+  /** Procedural pattern (used when no library texture is set). */
+  pattern?: import('./patterns').Pattern | null;
 }
 
 export interface LightData {
@@ -67,7 +82,7 @@ export interface LightData {
   shadows: boolean;
 }
 
-/** Non-destructive modifiers on a mesh object (evaluated Mirror → Subdivision, like Blender's stack). */
+/** Non-destructive modifiers on a mesh object, evaluated Mirror → Array → Solidify → Bevel → Subdivision → Displace. */
 export interface Modifiers {
   mirror?: {
     x: boolean;
@@ -78,10 +93,25 @@ export interface Modifiers {
     /** Weld distance on the mirror plane, metres. */
     merge?: number;
   };
+  /**
+   * Array: `count` copies, each shifted by `relative` × the mesh's size plus `constant` metres
+   * (Blender's Relative / Constant Offset). `merge` welds copies that touch (default on).
+   */
+  array?: { count: number; relative: Vec3; constant?: Vec3; merge?: boolean };
+  /**
+   * Solidify: give a surface thickness (metres). `offset` −1 grows inwards (Blender's default),
+   * 1 outwards, 0 both ways. `rim` closes open edges (default on).
+   */
+  solidify?: { thickness: number; offset?: number; rim?: boolean };
   /** Bevel every edge sharper than `angle` degrees (Blender's Bevel modifier, Limit Method: Angle). */
   bevel?: { width: number; segments: number; angle: number };
   /** Catmull–Clark subdivision surface; edges sharper than `sharpAngle` degrees stay crisp (creased). */
   subdivision?: { levels: number; sharpAngle?: number };
+  /**
+   * Displace: push the surface along its normals by 3D noise — `strength` metres, `scale` = size
+   * of the bumps in metres, `seed` picks another pattern. Runs last, so subdivide first for detail.
+   */
+  displace?: { strength: number; scale: number; seed?: number };
 }
 
 /** One bone of an armature, in the armature's local space (metres, Z up), like Blender's edit bones. */

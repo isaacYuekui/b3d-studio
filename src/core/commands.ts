@@ -16,6 +16,8 @@ import type { ArmatureData, Bone, BonePose, Background, LightData, LightType, Ma
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
 import { compact } from './mesh/topology';
+import { PATTERNS } from './patterns';
+import type { PatternType } from './patterns';
 import { apply as applyM4, invert as invertM4, mul as mulM4, worldMatrix } from './rig';
 import { EDIT_OPS, runEditSteps } from './mesh/script';
 import { DEFAULT_OUTFIT, HUMAN_PRESETS, humanPreset } from './humans';
@@ -74,7 +76,7 @@ export type Command =
   /** Turn a primitive into an editable polygon mesh (Blender topology). */
   | { type: 'convertToMesh'; id: string }
   /** Set modifiers (merged per modifier; null removes one). Mesh objects only; primitives are converted. */
-  | { type: 'setModifiers'; id: string; modifiers: { mirror?: Modifiers['mirror'] | null; bevel?: Modifiers['bevel'] | null; subdivision?: Modifiers['subdivision'] | null } }
+  | { type: 'setModifiers'; id: string; modifiers: ModifierPatch }
   /** Bake the modifiers into the mesh. */
   | { type: 'applyModifiers'; id: string }
   /** Replace an armature's bones. */
@@ -388,10 +390,10 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
     case 'setModifiers': {
       const o = asMesh(requireObj(doc, cmd.id));
       const mods: Modifiers = { ...o.modifiers };
-      for (const k of ['mirror', 'bevel', 'subdivision'] as const) {
+      for (const k of MODIFIER_KEYS) {
         const v = cmd.modifiers[k];
         if (v === null) delete mods[k];
-        else if (v !== undefined) (mods as Record<string, unknown>)[k] = { ...(mods[k] ?? {}), ...v };
+        else if (v !== undefined) (mods as Record<string, unknown>)[k] = withModifierDefaults(k, { ...(mods[k] ?? {}), ...v });
       }
       const next: SceneObject = { ...o, modifiers: mods };
       if (!Object.keys(mods).length) delete next.modifiers;
@@ -867,6 +869,25 @@ function validateMaterial(v: unknown, partial: boolean): Partial<Material> {
   if (v.alpha !== undefined) m.alpha = inRange(v.alpha, 0, 1) ? v.alpha : fail('material.alpha must be 0..1');
   if (v.emissionStrength !== undefined)
     m.emissionStrength = inRange(v.emissionStrength, 0, 1000) ? v.emissionStrength : fail('material.emissionStrength must be 0..1000');
+  for (const k of ['clearcoat', 'clearcoatRoughness', 'sheen', 'transmission', 'subsurface', 'anisotropy'] as const)
+    if (v[k] !== undefined) m[k] = inRange(v[k], 0, 1) ? (v[k] as number) : fail(`material.${k} must be 0..1`);
+  for (const k of ['sheenColor', 'subsurfaceColor'] as const) if (v[k] !== undefined) m[k] = isColor(v[k]) ? (v[k] as string) : fail(`material.${k} must be #rrggbb`);
+  if (v.ior !== undefined) m.ior = inRange(v.ior, 1, 3) ? (v.ior as number) : fail('material.ior must be 1..3');
+  if (v.pattern !== undefined) {
+    const p = v.pattern;
+    if (p === null) m.pattern = null;
+    else {
+      if (!isRecord(p) || !(PATTERNS as readonly unknown[]).includes(p.type)) fail(`material.pattern.type must be one of ${PATTERNS.join(', ')}`);
+      const q = p as Record<string, unknown>;
+      m.pattern = {
+        type: q.type as PatternType,
+        colorA: q.colorA === undefined ? '#2b2b2b' : isColor(q.colorA) ? q.colorA : fail('material.pattern.colorA must be #rrggbb'),
+        colorB: q.colorB === undefined ? '#d8d8d8' : isColor(q.colorB) ? q.colorB : fail('material.pattern.colorB must be #rrggbb'),
+        scale: q.scale === undefined ? 1 : inRange(q.scale, 0.01, 100) ? (q.scale as number) : fail('material.pattern.scale must be 0.01..100 (repeats per metre)'),
+        bump: q.bump === undefined ? 0.3 : inRange(q.bump, 0, 1) ? (q.bump as number) : fail('material.pattern.bump must be 0..1'),
+      };
+    }
+  }
   return m;
 }
 
@@ -1025,31 +1046,90 @@ function validateEditStep(raw: unknown, i: number): EditStep {
   return step;
 }
 
-export function validateModifiers(v: unknown): Modifiers {
-  if (!isRecord(v)) fail('modifiers must be an object');
-  const out: Modifiers = {};
-  if (v.mirror !== undefined) {
-    const m = v.mirror;
-    if (!isRecord(m)) fail('modifiers.mirror must be an object');
-    const b = (k: string) => (m[k] === undefined ? false : typeof m[k] === 'boolean' ? (m[k] as boolean) : fail(`modifiers.mirror.${k} must be true/false`));
-    out.mirror = { x: b('x'), y: b('y'), z: b('z') };
-    if (m.clip !== undefined) out.mirror.clip = b('clip');
-    if (m.merge !== undefined) out.mirror.merge = inRange(m.merge, 0, 1) ? (m.merge as number) : fail('modifiers.mirror.merge must be 0..1');
-  }
-  if (v.subdivision !== undefined) {
-    const s = v.subdivision;
-    if (!isRecord(s) || !(Number.isInteger(s.levels) && inRange(s.levels, 0, 4))) fail('modifiers.subdivision.levels must be 0..4');
-    out.subdivision = { levels: s.levels as number };
-    if (s.sharpAngle !== undefined) out.subdivision.sharpAngle = inRange(s.sharpAngle, 0, 180) ? (s.sharpAngle as number) : fail('modifiers.subdivision.sharpAngle must be 0..180 degrees');
-  }
-  if (v.bevel !== undefined) {
-    const b = v.bevel;
-    if (!isRecord(b) || !inRange(b.width, 0, 10)) fail('modifiers.bevel.width must be 0..10 m');
-    const segments = b.segments === undefined ? 1 : Number.isInteger(b.segments) && inRange(b.segments, 1, 6) ? (b.segments as number) : fail('modifiers.bevel.segments must be 1..6');
-    const angle = b.angle === undefined ? 30 : inRange(b.angle, 0, 180) ? (b.angle as number) : fail('modifiers.bevel.angle must be 0..180 degrees');
-    out.bevel = { width: b.width as number, segments, angle };
+export const MODIFIER_KEYS = ['mirror', 'array', 'solidify', 'bevel', 'subdivision', 'displace'] as const;
+/** setModifiers: a value merges into that modifier, null removes it. */
+export type ModifierPatch = { [K in (typeof MODIFIER_KEYS)[number]]?: Partial<NonNullable<Modifiers[K]>> | null };
+
+const isVec3In = (v: unknown, lim: number): v is Vec3 => isVec3(v) && v.every((x) => inRange(x, -lim, lim));
+
+interface FieldSpec {
+  /** Used when the field is missing (a required field with `def` is filled in for new modifiers created by a patch). */
+  def?: unknown;
+  req?: boolean;
+  check: (x: unknown) => boolean;
+  msg: string;
+}
+const isBool = (x: unknown) => typeof x === 'boolean';
+const intIn = (lo: number, hi: number) => (x: unknown) => Number.isInteger(x) && inRange(x, lo, hi);
+const numIn = (lo: number, hi: number) => (x: unknown) => inRange(x, lo, hi);
+const MOD_SPEC: Record<(typeof MODIFIER_KEYS)[number], Record<string, FieldSpec>> = {
+  mirror: {
+    x: { def: false, check: isBool, msg: 'true/false' },
+    y: { def: false, check: isBool, msg: 'true/false' },
+    z: { def: false, check: isBool, msg: 'true/false' },
+    clip: { check: isBool, msg: 'true/false' },
+    merge: { check: numIn(0, 1), msg: '0..1' },
+  },
+  array: {
+    count: { req: true, def: 2, check: intIn(1, 100), msg: 'a whole number 1..100' },
+    relative: { def: [1, 0, 0], check: (x) => isVec3In(x, 100), msg: '[x, y, z], each -100..100' },
+    constant: { check: (x) => isVec3In(x, 1000), msg: '[x, y, z] metres, each -1000..1000' },
+    merge: { check: isBool, msg: 'true/false' },
+  },
+  solidify: {
+    thickness: { req: true, def: 0.02, check: numIn(-10, 10), msg: '-10..10 m' },
+    offset: { check: numIn(-1, 1), msg: '-1..1' },
+    rim: { check: isBool, msg: 'true/false' },
+  },
+  bevel: {
+    width: { req: true, def: 0.02, check: numIn(0, 10), msg: '0..10 m' },
+    segments: { def: 1, check: intIn(1, 6), msg: '1..6' },
+    angle: { def: 30, check: numIn(0, 180), msg: '0..180 degrees' },
+  },
+  subdivision: {
+    levels: { req: true, def: 1, check: intIn(0, 4), msg: '0..4' },
+    sharpAngle: { check: numIn(0, 180), msg: '0..180 degrees' },
+  },
+  displace: {
+    strength: { req: true, def: 0.1, check: numIn(-10, 10), msg: '-10..10 m' },
+    scale: { def: 1, check: numIn(0.01, 100), msg: '0.01..100 m' },
+    seed: { check: intIn(0, 99999), msg: 'a whole number 0..99999' },
+  },
+};
+
+/**
+ * Validate one modifier's settings. `partial` (setModifiers patches) checks only the fields given,
+ * so changing one setting keeps the others; otherwise missing fields get their defaults.
+ */
+function validateModifier(k: (typeof MODIFIER_KEYS)[number], m: unknown, partial: boolean): Record<string, unknown> {
+  if (!isRecord(m)) fail(`modifiers.${k} must be an object`);
+  const out: Record<string, unknown> = {};
+  for (const [f, spec] of Object.entries(MOD_SPEC[k])) {
+    const x = m[f];
+    if (x === undefined) {
+      if (partial) continue;
+      if (spec.req) fail(`modifiers.${k}.${f} must be ${spec.msg}`);
+      if (spec.def !== undefined) out[f] = Array.isArray(spec.def) ? [...spec.def] : spec.def;
+      continue;
+    }
+    if (!spec.check(x)) fail(`modifiers.${k}.${f} must be ${spec.msg}`);
+    out[f] = Array.isArray(x) ? [...x] : x;
   }
   return out;
+}
+
+/** Fill a merged modifier's missing settings with defaults (a patch may create it with only some). */
+function withModifierDefaults(k: (typeof MODIFIER_KEYS)[number], m: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...m };
+  for (const [f, spec] of Object.entries(MOD_SPEC[k])) if (out[f] === undefined && spec.def !== undefined) out[f] = Array.isArray(spec.def) ? [...spec.def] : spec.def;
+  return out;
+}
+
+export function validateModifiers(v: unknown, partial = false): Modifiers {
+  if (!isRecord(v)) fail('modifiers must be an object');
+  const out: Record<string, unknown> = {};
+  for (const k of MODIFIER_KEYS) if (v[k] !== undefined) out[k] = validateModifier(k, v[k], partial);
+  return out as Modifiers;
 }
 
 /** Upgrade a v1 object (single `color` field) to the current shape before validation. */
@@ -1269,13 +1349,12 @@ export function validateCommand(v: unknown, depth = 0): Command {
     case 'setModifiers': {
       if (!isId(v.id) || !isRecord(v.modifiers)) fail('setModifiers needs id and modifiers');
       const m = v.modifiers;
-      const out: { mirror?: Modifiers['mirror'] | null; bevel?: Modifiers['bevel'] | null; subdivision?: Modifiers['subdivision'] | null } = {};
-      if (m.mirror === null) out.mirror = null;
-      else if (m.mirror !== undefined) out.mirror = validateModifiers({ mirror: m.mirror }).mirror;
-      if (m.subdivision === null) out.subdivision = null;
-      else if (m.subdivision !== undefined) out.subdivision = validateModifiers({ subdivision: m.subdivision }).subdivision;
-      if (m.bevel === null) out.bevel = null;
-      else if (m.bevel !== undefined) out.bevel = validateModifiers({ bevel: m.bevel }).bevel;
+      const out: ModifierPatch = {};
+      for (const k of Object.keys(m)) if (!(MODIFIER_KEYS as readonly string[]).includes(k)) fail(`unknown modifier "${k}" (use ${MODIFIER_KEYS.join(', ')})`);
+      for (const k of MODIFIER_KEYS) {
+        if (m[k] === null) out[k] = null;
+        else if (m[k] !== undefined) (out as Record<string, unknown>)[k] = validateModifiers({ [k]: m[k] }, true)[k];
+      }
       return { type: 'setModifiers', id: v.id, modifiers: out };
     }
     case 'setArmature':

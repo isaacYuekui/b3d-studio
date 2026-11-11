@@ -949,6 +949,96 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Materials (v2.3): presets and procedural patterns from the Material panel.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'sphere', id: 'ball', name: 'Ball' }] });
+    s.select('ball');
+  });
+  await page.click('.mat-more summary');
+  await page.click('[data-mat-preset="Car paint"]');
+  const paint = await page.evaluate(() => { const m = window.__b3d.store.getState().doc.objects.ball.material; return { cc: m.clearcoat, metal: m.metallic }; });
+  const coat = await page.evaluate(() => window.__b3d.viewport().scene.meshes.find((m) => m.metadata?.id === 'ball' || m.parent?.metadata?.id === 'ball')?.material?.clearCoat?.isEnabled ?? null);
+  check('v2.3: Car paint preset turns on clearcoat (also in the renderer)', paint.cc === 1 && paint.metal === 0.6 && coat === true, JSON.stringify({ ...paint, coat }));
+  await page.selectOption('#mat-pattern', 'marble');
+  await page.waitForTimeout(500);
+  const pat = await page.evaluate(() => {
+    const m = window.__b3d.store.getState().doc.objects.ball.material.pattern;
+    const mesh = window.__b3d.viewport().scene.meshes.find((x) => x.metadata?.id === 'ball' || x.parent?.metadata?.id === 'ball');
+    return { type: m?.type, tex: mesh?.material?.albedoTexture?.name ?? null };
+  });
+  check('v2.3: Pattern → Marble makes a procedural texture', pat.type === 'marble' && String(pat.tex).startsWith('pattern-marble'), JSON.stringify(pat));
+  check('v2.3: no errors (materials)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// More modifiers (v2.5): Array, Solidify, Displace from the Shape panel.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'cube', id: 'step', name: 'Step', transform: { scale: [0.5, 0.5, 0.1] } }] });
+    s.select('step');
+    window.__b3d.viewport().frame(false);
+  });
+  const tris = () => page.evaluate(() => window.__b3d.viewport().entries.get('step').node.getTotalIndices() / 3);
+  const t0 = await tris();
+  await page.click('[data-array="5"]');
+  await page.click('[data-array-axis="z"]');
+  await page.waitForTimeout(400);
+  let mods = await page.evaluate(() => window.__b3d.store.getState().doc.objects.step.modifiers);
+  const t1 = await tris();
+  check('v2.5: Array ×5 along Z repeats the shape', mods?.array?.count === 5 && mods.array.relative[2] === 1 && t1 > t0 * 2, JSON.stringify({ mods, t0, t1 }));
+  await page.click('[data-solidify="0.05"]');
+  await page.click('[data-displace="0.03"]');
+  await page.click('[data-testid="displace-seed"]');
+  await page.waitForTimeout(400);
+  mods = await page.evaluate(() => window.__b3d.store.getState().doc.objects.step.modifiers);
+  check('v2.5: Solidify and Displace set from the Shape panel', mods?.solidify?.thickness === 0.05 && mods?.displace?.strength === 0.03 && mods.displace.seed === 1 && mods.array.count === 5, JSON.stringify(mods));
+  await page.screenshot({ path: `${shots}/modifiers-v25.png` });
+  await page.keyboard.press('Control+z');
+  mods = await page.evaluate(() => window.__b3d.store.getState().doc.objects.step.modifiers);
+  check('v2.5: undo steps back one modifier change', mods?.displace?.seed === undefined && mods?.displace?.strength === 0.03, JSON.stringify(mods));
+  check('v2.5: no errors (modifiers)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Sculpt Mode (v2.4): brushes on a subdivided sphere; one stroke = one undo; view stays put.
+{
+  const { ctx, page, errors } = await open({ width: 1180, height: 820 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'sphere', id: 'clay', name: 'Clay' }] });
+    s.select('clay');
+    window.__b3d.viewport().frame(false);
+  });
+  await page.waitForTimeout(800);
+  await page.click('[data-testid="sculpt-toggle"]');
+  await page.click('[data-testid="sculpt-detail"]');
+  const n = await page.evaluate(() => window.__b3d.store.getState().doc.objects.clay.mesh.vertices.length);
+  check('v2.4: Sculpt Mode + Add detail subdivides the model', n > 1500 && (await page.textContent('[data-testid="mode-toggle"]')) === 'Sculpt Mode', String(n));
+  const cv = await page.locator('[data-testid="viewport-canvas"]').boundingBox();
+  const cx = cv.x + cv.width / 2, cy = cv.y + cv.height / 2;
+  const before = await page.evaluate(() => JSON.stringify(window.__b3d.store.getState().doc.objects.clay.mesh.vertices));
+  const alpha0 = await page.evaluate(() => window.__b3d.viewport().camera.alpha);
+  await page.mouse.move(cx - 50, cy);
+  await page.mouse.down();
+  for (let i = 0; i <= 10; i++) { await page.mouse.move(cx - 50 + i * 10, cy + Math.sin(i) * 10); await page.waitForTimeout(40); }
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => JSON.stringify(window.__b3d.store.getState().doc.objects.clay.mesh.vertices));
+  const alpha1 = await page.evaluate(() => window.__b3d.viewport().camera.alpha);
+  check('v2.4: a stroke on the model sculpts it and does not turn the view', before !== after && Math.abs(alpha1 - alpha0) < 1e-6, JSON.stringify({ alpha0, alpha1 }));
+  await page.keyboard.press('Control+z');
+  const undone = await page.evaluate(() => JSON.stringify(window.__b3d.store.getState().doc.objects.clay.mesh.vertices));
+  check('v2.4: one undo removes the whole stroke', undone === before);
+  await page.click('[data-testid="sculpt-done"]');
+  check('v2.4: no errors (sculpt)', errors.length === 0 && (await page.textContent('[data-testid="mode-toggle"]')) === 'Object Mode', errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // iPad: edit mode by touch.
 {
   const { ctx, page, errors } = await open({ width: 820, height: 1180 }, { touch: true, dpr: 2 });

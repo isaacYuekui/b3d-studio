@@ -17,6 +17,19 @@ export interface EditState {
 export type ToolMode = 'select' | 'move' | 'rotate' | 'scale';
 export type Shading = 'solid' | 'rendered';
 
+export interface SculptState {
+  id: string;
+}
+export interface SculptSettings {
+  brush: import('./mesh/sculpt').SculptBrush;
+  /** Brush radius on screen, CSS pixels (like Nomad / Blender's default "View" radius). */
+  radius: number;
+  strength: number;
+  invert: boolean;
+  /** Mirror strokes across the object's X axis. */
+  symmetry: boolean;
+}
+
 export const QUALITIES = ['fast', 'balanced', 'best'] as const;
 export type Quality = (typeof QUALITIES)[number];
 const QUALITY_KEY = 'b3d.quality';
@@ -69,6 +82,10 @@ export interface AppState {
   edit: EditState | null;
   /** See-through display: select hidden vertices too. */
   xray: boolean;
+  /** Sculpt Mode on a mesh object, with the brush settings. */
+  sculpt: SculptState | null;
+  /** Brush settings kept between sculpt sessions (per device). */
+  sculptBrush: SculptSettings;
   /** Snap moves / rotations / scales to increments (0.25 m, 15°, 0.1). Saved per device. */
   snap: boolean;
   /** Edit mode: proportional editing, nearby vertices follow within `radius` metres. Saved per device. */
@@ -117,6 +134,8 @@ export class Store {
       edit: null,
       xray: false,
       snap: loadPref('b3d.snap', false),
+      sculpt: null,
+      sculptBrush: loadPref('b3d.sculpt', { brush: 'draw', radius: 60, strength: 0.5, invert: false, symmetry: true } as SculptSettings),
       proportional: loadPref('b3d.proportional', { on: false, radius: 1 }),
       addSelect: false,
       boxMode: false,
@@ -256,6 +275,7 @@ export class Store {
     if (id !== null && !this.state.doc.objects[id]) return;
     // Picking another object (Outliner) leaves edit mode, like Blender.
     if (this.state.edit && id !== this.state.edit.id) this.set({ edit: null, boxMode: false });
+    if (this.state.sculpt && id !== this.state.sculpt.id) this.set({ sculpt: null });
     if (this.state.pose && id !== this.state.pose.id) this.set({ pose: null });
     if (id !== this.state.selection) this.set({ selection: id });
   }
@@ -309,7 +329,19 @@ export class Store {
 
   /** Enter / leave edit mode, or change the edit selection / select mode. */
   setEdit(edit: EditState | null) {
-    this.set({ edit });
+    this.set({ edit, ...(edit ? { sculpt: null } : {}) });
+  }
+
+  setSculpt(id: string | null) {
+    this.set({ sculpt: id ? { id } : null, ...(id ? { edit: null, pose: null, selection: id } : {}) });
+  }
+
+  setSculptBrush(patch: Partial<SculptSettings>) {
+    const v = { ...this.state.sculptBrush, ...patch };
+    v.radius = Math.min(400, Math.max(5, v.radius));
+    v.strength = Math.min(1, Math.max(0.01, v.strength));
+    savePref('b3d.sculpt', v);
+    this.set({ sculptBrush: v });
   }
 
   setXray(xray: boolean) {

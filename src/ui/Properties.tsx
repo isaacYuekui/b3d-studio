@@ -4,8 +4,8 @@ import { useApp, useCtx } from './context';
 import { NumberField } from './NumberField';
 import { Icon } from './icons';
 import { subtree } from '../core/commands';
-import type { Command } from '../core/commands';
-import type { LightType, Vec3 } from '../core/types';
+import type { Command, ModifierPatch } from '../core/commands';
+import type { LightType, Material as SceneMaterial, Vec3 } from '../core/types';
 import { isRenderable } from '../core/types';
 import { runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
@@ -13,6 +13,8 @@ import { guessUnitScale, isUserAsset } from '../engine/userModels';
 import { TIMES } from '../core/sky';
 import { prepareBooleans } from './prepare';
 import type { Quality } from '../core/store';
+import { PATTERNS } from '../core/patterns';
+import type { Pattern, PatternType } from '../core/patterns';
 import type { TimeOfDay } from '../core/sky';
 import { worldOf } from '../core/types';
 import { EASINGS, isAnimated, transformAt, transformEdit } from '../core/animation';
@@ -24,6 +26,27 @@ import { transformVerts } from '../core/mesh/ops';
 import { centroid } from '../core/mesh/topology';
 
 const AXES = ['x', 'y', 'z'] as const;
+
+const PATTERN_LABEL: Record<PatternType, string> = { noise: 'Noise', voronoi: 'Voronoi (cells)', checker: 'Checker', bricks: 'Bricks', wood: 'Wood', marble: 'Marble', gradient: 'Gradient' };
+const PATTERN_DEFAULTS: Record<PatternType, Pattern> = {
+  noise: { type: 'noise', colorA: '#3b3f44', colorB: '#a9adb2', scale: 1, bump: 0.25 },
+  voronoi: { type: 'voronoi', colorA: '#20252b', colorB: '#8a939c', scale: 1, bump: 0.4 },
+  checker: { type: 'checker', colorA: '#1d1d1d', colorB: '#e8e8e8', scale: 1, bump: 0 },
+  bricks: { type: 'bricks', colorA: '#c9c2b4', colorB: '#8e3b2a', scale: 0.8, bump: 0.6 },
+  wood: { type: 'wood', colorA: '#5a3418', colorB: '#b07a45', scale: 0.6, bump: 0.15 },
+  marble: { type: 'marble', colorA: '#ebe8e2', colorB: '#4d4f55', scale: 0.4, bump: 0 },
+  gradient: { type: 'gradient', colorA: '#1b2a49', colorB: '#f2a65a', scale: 1, bump: 0 },
+};
+const EXTRA_LABEL = { clearcoat: 'Clearcoat', clearcoatRoughness: 'Coat roughness', transmission: 'Transmission (glass)', sheen: 'Sheen (fabric)', subsurface: 'Subsurface (skin)', anisotropy: 'Anisotropy (brushed)' } as const;
+/** One-tap looks, Blender-style Principled settings. */
+const MATERIAL_PRESETS: { name: string; material: Partial<SceneMaterial> }[] = [
+  { name: 'Car paint', material: { baseColor: '#9c1414', metallic: 0.6, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.03, transmission: 0, sheen: 0, subsurface: 0, anisotropy: 0, alpha: 1 } },
+  { name: 'Glass', material: { baseColor: '#e6f2f2', metallic: 0, roughness: 0.02, transmission: 1, ior: 1.5, clearcoat: 0, sheen: 0, subsurface: 0, anisotropy: 0, alpha: 1 } },
+  { name: 'Brushed metal', material: { baseColor: '#c8ccd0', metallic: 1, roughness: 0.3, anisotropy: 0.8, clearcoat: 0, transmission: 0, sheen: 0, subsurface: 0, alpha: 1 } },
+  { name: 'Velvet', material: { baseColor: '#4b1640', metallic: 0, roughness: 0.8, sheen: 1, sheenColor: '#ff9be8', clearcoat: 0, transmission: 0, subsurface: 0, anisotropy: 0, alpha: 1 } },
+  { name: 'Skin', material: { baseColor: '#d8a08a', metallic: 0, roughness: 0.5, subsurface: 0.6, subsurfaceColor: '#ff5a3c', clearcoat: 0, transmission: 0, sheen: 0, anisotropy: 0, alpha: 1 } },
+  { name: 'Plain', material: { clearcoat: 0, sheen: 0, transmission: 0, subsurface: 0, anisotropy: 0 } },
+];
 
 function Section({ title, children, defaultOpen = true }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -190,6 +213,42 @@ export function Properties() {
             </select>
           </label>
           {o.material.texture && scalar('Repeat', o.material.textureScale, 0.01, 1000, (v) => ({ type: 'setMaterial', id: o.id, material: { textureScale: v } }), 0.1)}
+          {!o.material.texture && (
+            <label className="prop-row">
+              <span>Pattern</span>
+              <select
+                id="mat-pattern"
+                aria-label="Procedural pattern"
+                value={o.material.pattern?.type ?? ''}
+                onChange={(e) => {
+                  const t = e.target.value as PatternType | '';
+                  store.dispatch({ type: 'setMaterial', id: o.id, material: { pattern: t ? { ...PATTERN_DEFAULTS[t], ...(o.material.pattern ? { colorA: o.material.pattern.colorA, colorB: o.material.pattern.colorB } : {}), type: t } : null } }, { select: false });
+                }}
+              >
+                <option value="">None</option>
+                {PATTERNS.map((t) => (
+                  <option key={t} value={t}>{PATTERN_LABEL[t]}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {!o.material.texture && o.material.pattern && (() => {
+            const p = o.material.pattern;
+            const setP = (patch: Partial<Pattern>): Command => ({ type: 'setMaterial', id: o.id, material: { pattern: { ...p, ...patch } } });
+            return (
+              <>
+                <label className="prop-row">
+                  <span>Colours</span>
+                  <span className="pair">
+                    <input type="color" aria-label="Pattern colour A" value={p.colorA} onChange={(e) => store.preview(setP({ colorA: e.target.value }))} onBlur={() => store.commitPreview()} />
+                    <input type="color" aria-label="Pattern colour B" value={p.colorB} onChange={(e) => store.preview(setP({ colorB: e.target.value }))} onBlur={() => store.commitPreview()} />
+                  </span>
+                </label>
+                {scalar('Scale', p.scale, 0.01, 100, (v) => setP({ scale: v }), 0.1)}
+                {scalar('Bump', p.bump, 0, 1, (v) => setP({ bump: v }))}
+              </>
+            );
+          })()}
           <label className="prop-row">
             <span>Base Color</span>
             <input
@@ -216,6 +275,30 @@ export function Properties() {
             />
           </label>
           {scalar('Strength', o.material.emissionStrength, 0, 100, (v) => ({ type: 'setMaterial', id: o.id, material: { emissionStrength: v } }), 0.1)}
+          <details className="mat-more" open={!!(o.material.clearcoat || o.material.sheen || o.material.transmission || o.material.subsurface || o.material.anisotropy)}>
+            <summary>More: clearcoat, glass, sheen, skin…</summary>
+            {(['clearcoat', 'clearcoatRoughness', 'transmission', 'sheen', 'subsurface', 'anisotropy'] as const).map((k) =>
+              scalar(EXTRA_LABEL[k], o.material[k] ?? (k === 'clearcoatRoughness' ? 0.03 : 0), 0, 1, (v) => ({ type: 'setMaterial', id: o.id, material: { [k]: v } })),
+            )}
+            {(o.material.transmission ?? 0) > 0 && scalar('IOR', o.material.ior ?? 1.5, 1, 3, (v) => ({ type: 'setMaterial', id: o.id, material: { ior: v } }))}
+            {(o.material.sheen ?? 0) > 0 && (
+              <label className="prop-row">
+                <span>Sheen colour</span>
+                <input type="color" aria-label="Sheen colour" value={o.material.sheenColor ?? '#ffffff'} onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, material: { sheenColor: e.target.value } })} onBlur={() => store.commitPreview()} />
+              </label>
+            )}
+            {(o.material.subsurface ?? 0) > 0 && (
+              <label className="prop-row">
+                <span>Subsurface colour</span>
+                <input type="color" aria-label="Subsurface colour" value={o.material.subsurfaceColor ?? '#ff6040'} onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, material: { subsurfaceColor: e.target.value } })} onBlur={() => store.commitPreview()} />
+              </label>
+            )}
+            <div className="mat-presets">
+              {MATERIAL_PRESETS.map((pr) => (
+                <button key={pr.name} className="btn" data-mat-preset={pr.name} onClick={() => store.dispatch({ type: 'setMaterial', id: o.id, material: pr.material }, { select: false })}>{pr.name}</button>
+              ))}
+            </div>
+          </details>
         </Section>
       )}
 
@@ -598,6 +681,9 @@ function ModifiersSection({ id }: { id: string }) {
           ))}
         </div>
       </div>
+      <ArrayRows id={id} />
+      <SolidifyRows id={id} />
+      <DisplaceRows id={id} />
       {o.modifiers && (
         <div className="prop-actions">
           <button className="btn" onClick={() => store.dispatch({ type: 'applyModifiers', id }, { select: false })}>Apply modifiers</button>
@@ -605,8 +691,142 @@ function ModifiersSection({ id }: { id: string }) {
       )}
       <BooleanRow id={id} />
       <JoinRow id={id} />
-      <p className="prop-hint">Subdivision rounds the shape off; Keep sharp edges makes hard-surface parts (armour, cars) curved but crisp. Bevel rounds every edge sharper than 30° so it catches the light. Mirror X: model one half, the other follows.</p>
+      <p className="prop-hint">
+        Subdivision rounds the shape off; Keep sharp edges makes hard-surface parts (armour, cars) curved but crisp. Bevel rounds every edge sharper than 30° so it catches the light. Mirror X: model one half, the
+        other follows. Array repeats it (fences, stairs, chains); Solidify gives a flat surface thickness (walls, shells); Displace adds bumps (rocks, terrain) — subdivide first for finer bumps.
+      </p>
     </Section>
+  );
+}
+
+function useSetModifiers(id: string) {
+  const { store } = useCtx();
+  return {
+    set: (patch: ModifierPatch) => store.dispatch({ type: 'setModifiers', id, modifiers: patch }, { select: false }),
+    preview: (patch: ModifierPatch) => store.preview({ type: 'setModifiers', id, modifiers: patch }),
+    commit: (patch: ModifierPatch) => {
+      store.preview({ type: 'setModifiers', id, modifiers: patch });
+      store.commitPreview();
+    },
+    cancel: () => store.cancelPreview(),
+  };
+}
+
+/** Array modifier: copies, direction and the gap between copies. */
+function ArrayRows({ id }: { id: string }) {
+  const arr = useApp((s) => s.doc.objects[id].modifiers?.array);
+  const m = useSetModifiers(id);
+  const rel = arr?.relative ?? [1, 0, 0];
+  const axis = [0, 1, 2].reduce((best, k) => (Math.abs(rel[k]) > Math.abs(rel[best]) ? k : best), 0);
+  const gap = arr?.constant?.[axis] ?? 0;
+  const along = (k: number, g: number): ModifierPatch => {
+    const relative = [0, 0, 0] as Vec3;
+    const constant = [0, 0, 0] as Vec3;
+    relative[k] = 1;
+    constant[k] = g;
+    return { array: { relative, constant } };
+  };
+  return (
+    <>
+      <div className="prop-row">
+        <span>Array</span>
+        <div className="seg-text" role="radiogroup" aria-label="Array copies">
+          {[1, 2, 3, 5, 10].map((n) => {
+            const on = (arr?.count ?? 1) === n || (n === 1 && !arr);
+            return (
+              <button key={n} role="radio" aria-checked={on} className={on ? 'active' : ''} data-array={n} onClick={() => m.set({ array: n === 1 ? null : { ...(arr ? {} : along(0, 0).array), count: n } })}>
+                {n === 1 ? 'Off' : `×${n}`}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {arr && (
+        <>
+          <div className="prop-row">
+            <span>Direction</span>
+            <div className="seg-text" role="radiogroup" aria-label="Array direction">
+              {AXES.map((ax, k) => (
+                <button key={ax} role="radio" aria-checked={axis === k} className={axis === k ? 'active' : ''} data-array-axis={ax} onClick={() => m.set(along(k, gap))}>
+                  {ax.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+          <NumberField label="Gap" value={gap} step={0.1} dragRate={0.01} suffix=" m" onPreview={(v) => m.preview(along(axis, v))} onCommit={(v) => m.commit(along(axis, v))} onCancel={m.cancel} />
+          <NumberField
+            label="Count"
+            value={arr.count}
+            step={1}
+            dragRate={0.1}
+            onPreview={(v) => m.preview({ array: { count: Math.max(1, Math.min(100, Math.round(v))) } })}
+            onCommit={(v) => m.commit({ array: { count: Math.max(1, Math.min(100, Math.round(v))) } })}
+            onCancel={m.cancel}
+          />
+        </>
+      )}
+    </>
+  );
+}
+
+/** Solidify modifier: thickness for flat surfaces. */
+function SolidifyRows({ id }: { id: string }) {
+  const so = useApp((s) => s.doc.objects[id].modifiers?.solidify);
+  const m = useSetModifiers(id);
+  const t = so?.thickness ?? 0;
+  const clampT = (v: number) => Math.max(-10, Math.min(10, v));
+  return (
+    <>
+      <div className="prop-row">
+        <span>Solidify</span>
+        <div className="seg-text" role="radiogroup" aria-label="Solidify thickness">
+          {[0, 0.01, 0.05, 0.2].map((w) => {
+            const on = t === w;
+            return (
+              <button key={w} role="radio" aria-checked={on} className={on ? 'active' : ''} data-solidify={w} onClick={() => m.set({ solidify: w ? { thickness: w } : null })}>
+                {w === 0 ? 'Off' : `${Math.round(w * 100)} cm`}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {so && <NumberField label="Thickness" value={t} step={0.01} dragRate={0.002} suffix=" m" onPreview={(v) => m.preview({ solidify: { thickness: clampT(v) } })} onCommit={(v) => m.commit({ solidify: { thickness: clampT(v) } })} onCancel={m.cancel} />}
+    </>
+  );
+}
+
+/** Displace modifier: noise bumps along the surface. */
+function DisplaceRows({ id }: { id: string }) {
+  const d = useApp((s) => s.doc.objects[id].modifiers?.displace);
+  const m = useSetModifiers(id);
+  const levels: [string, number][] = [['Off', 0], ['Low', 0.03], ['Medium', 0.1], ['High', 0.3]];
+  const clampS = (v: number) => Math.max(0.01, Math.min(100, v));
+  return (
+    <>
+      <div className="prop-row">
+        <span>Displace</span>
+        <div className="seg-text" role="radiogroup" aria-label="Displace strength">
+          {levels.map(([label, v]) => {
+            const on = (d?.strength ?? 0) === v;
+            return (
+              <button key={label} role="radio" aria-checked={on} className={on ? 'active' : ''} data-displace={v} onClick={() => m.set({ displace: v ? { strength: v, ...(d ? {} : { scale: 0.5 }) } : null })}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {d && (
+        <>
+          <NumberField label="Bump size" value={d.scale} step={0.1} dragRate={0.01} suffix=" m" onPreview={(v) => m.preview({ displace: { scale: clampS(v) } })} onCommit={(v) => m.commit({ displace: { scale: clampS(v) } })} onCancel={m.cancel} />
+          <div className="prop-actions">
+            <button className="btn" data-testid="displace-seed" onClick={() => m.set({ displace: { seed: ((d.seed ?? 0) + 1) % 100000 } })}>
+              New pattern
+            </button>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 

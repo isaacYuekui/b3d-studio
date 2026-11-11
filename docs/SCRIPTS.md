@@ -216,6 +216,24 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   the cutter is hidden unless `"keepCutter": true`. Use it for panel lines, vents, windows, holes.
   In the app: select an object → Shape → Boolean → pick the other object → Apply boolean.
 
+## More modifiers (v2.5)
+
+```json
+{"type":"setModifiers","id":"fence","modifiers":{"array":{"count":8,"relative":[1,0,0],"constant":[0.4,0,0]}}}
+{"type":"setModifiers","id":"wall","modifiers":{"solidify":{"thickness":0.2}}}
+{"type":"setModifiers","id":"rock","modifiers":{"subdivision":{"levels":3},"displace":{"strength":0.15,"scale":0.4,"seed":3}}}
+```
+
+- **Array** — `count` (1–100), `relative` (offset per copy as a multiple of the object's size,
+  default `[1,0,0]`), `constant` (extra metres per copy), `merge` (default true: copies that touch
+  are welded into one solid, with the faces between them removed).
+- **Solidify** — `thickness` (m), `offset` (−1 inwards, Blender's default; 1 outwards; 0 both),
+  `rim` (default true: closes open edges). Turns a plane into a slab, a cylinder without caps into a pipe.
+- **Displace** — `strength` (m), `scale` (bump size in m, default 1), `seed`. Moves the surface along
+  its normals with smooth 3D noise. It runs after Subdivision, so subdivide for finer bumps.
+- Order in the stack: Mirror → Array → Solidify → Bevel → Subdivision → Displace (fixed; Blender
+  lets you reorder). A patch changes only the settings you give, e.g. `{"array":{"count":12}}`.
+
 ## Editing keyframes (v2.1)
 
 ```json
@@ -245,3 +263,18 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   piece stays.
 - `join` copies the other objects' shapes into `id`, with their modifiers applied and placed
   exactly where they were, then deletes them. Objects that have children can't be joined.
+
+## Materials (v2.3)
+
+```json
+{"type":"setMaterial","id":"car","material":{"baseColor":"#9c1414","metallic":0.6,"roughness":0.35,"clearcoat":1,"clearcoatRoughness":0.03}}
+{"type":"setMaterial","id":"vase","material":{"baseColor":"#e6f2f2","roughness":0.02,"transmission":1,"ior":1.5}}
+{"type":"setMaterial","id":"wall","material":{"pattern":{"type":"bricks","colorA":"#c9c2b4","colorB":"#8e3b2a","scale":0.8,"bump":0.6}}}
+```
+
+- Principled extras (0–1 unless noted): `clearcoat`, `clearcoatRoughness`, `sheen` + `sheenColor`,
+  `transmission` + `ior` (1–3), `subsurface` + `subsurfaceColor`, `anisotropy`.
+- `pattern`: `{type, colorA, colorB, scale, bump}`.
+  - `type` is one of `noise`, `voronoi`, `checker`, `bricks`, `wood`, `marble`, `gradient`.
+  - `scale` is repeats per metre (0.01–100). `bump` is 0–1.
+  - Patterns apply when `texture` is null. `"pattern": null` removes one.
