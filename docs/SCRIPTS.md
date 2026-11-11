@@ -199,3 +199,19 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
 - `distance` (default 4 m for follow, 5 m for track) and `height` (default 1.6 m).
 - The camera eases towards where it should be each frame, so turns feel natural. `on` is
   required. Obstacle clearance doesn't apply, because these are ground-level shots.
+
+## Hard-surface modelling (v2.0)
+
+```json
+{"type":"setModifiers","id":"plate","modifiers":{"bevel":{"width":0.03,"segments":2,"angle":30},"subdivision":{"levels":2,"sharpAngle":30}}}
+{"type":"boolean","id":"plate","cutter":"slot","op":"difference"}
+```
+
+- **Bevel modifier** — `width` (m), `segments` (1–6), `angle` (°; only edges sharper than this are
+  bevelled, like Blender's *Limit Method: Angle*). Order in the stack: Mirror → Bevel → Subdivision.
+- **Subdivision `sharpAngle`** — edges sharper than this stay crisp (creased) while the rest rounds
+  off: curved armour, car panels, product shapes. Without it, subdivision rounds everything.
+- **`boolean`** — `op`: `difference` (cut), `union` (join), `intersect` (keep the overlap). Works on
+  closed solids (shapes, meshes). The result is applied to `id` (its modifiers are baked first);
+  the cutter is hidden unless `"keepCutter": true`. Use it for panel lines, vents, windows, holes.
+  In the app: select an object → Shape → Boolean → pick the other object → Apply boolean.

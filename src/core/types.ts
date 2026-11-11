@@ -78,8 +78,10 @@ export interface Modifiers {
     /** Weld distance on the mirror plane, metres. */
     merge?: number;
   };
-  /** Catmull–Clark subdivision surface. */
-  subdivision?: { levels: number };
+  /** Bevel every edge sharper than `angle` degrees (Blender's Bevel modifier, Limit Method: Angle). */
+  bevel?: { width: number; segments: number; angle: number };
+  /** Catmull–Clark subdivision surface; edges sharper than `sharpAngle` degrees stay crisp (creased). */
+  subdivision?: { levels: number; sharpAngle?: number };
 }
 
 /** One bone of an armature, in the armature's local space (metres, Z up), like Blender's edit bones. */

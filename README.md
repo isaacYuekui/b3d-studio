@@ -5,6 +5,12 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Hard-surface modelling (v2.0)
+
+- **Bevel modifier**: rounds every edge sharper than 30° so parts catch the light (1, 3 or 8 cm, 1–3 segments)
+- **Subdivision → Keep sharp edges**: curved but crisp shapes (armour, cars) instead of blobs
+- **Boolean** (Cut / Join / Keep overlap) with any other solid, for panel lines, vents, windows and holes. Uses manifold-3d (Apache-2.0), loaded only when you first use it
+
 ## Scout mech example (v1.9)
 
 - Script → **Scout mech (modelled)**: an original 4 m hard-surface mech ("Kestrel") built from about 110 bevelled armour parts on a jointed hierarchy (hips, knees, ankles, shoulders, elbows, wrists, waist, neck, head), so you can pose it by rotating the joint empties. Studio lights and a 10-second turntable orbit. Generator: `examples/generators/scout_mech.py`

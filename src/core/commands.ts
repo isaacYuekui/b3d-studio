@@ -13,10 +13,13 @@ import type { Animation, Easing, PoseKey } from './animation';
 import type { ArmatureData, Bone, BonePose, Background, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
+import { apply as applyM4, invert as invertM4, mul as mulM4, worldMatrix } from './rig';
 import { EDIT_OPS, runEditSteps } from './mesh/script';
 import { DEFAULT_OUTFIT, HUMAN_PRESETS, humanPreset } from './humans';
 import { generateTerrain, scatterOn, terrainSample } from './terrain';
 import { PLANT_KINDS, makePlant } from './plants';
+import { BOOLEAN_OPS, meshBoolean } from './mesh/boolean';
+import type { BooleanOp } from './mesh/boolean';
 import { CAMERA_MOVES, liftOverObstacles, sampleCameraMove, sampleFollow, sceneObstacles } from './cameraMoves';
 import type { CameraMoveKind } from './cameraMoves';
 import { TIME_PRESETS, TIMES, rotationFor, skyAzimuth, sunRotation } from './sky';
@@ -68,7 +71,7 @@ export type Command =
   /** Turn a primitive into an editable polygon mesh (Blender topology). */
   | { type: 'convertToMesh'; id: string }
   /** Set modifiers (merged per modifier; null removes one). Mesh objects only; primitives are converted. */
-  | { type: 'setModifiers'; id: string; modifiers: { mirror?: Modifiers['mirror'] | null; subdivision?: Modifiers['subdivision'] | null } }
+  | { type: 'setModifiers'; id: string; modifiers: { mirror?: Modifiers['mirror'] | null; bevel?: Modifiers['bevel'] | null; subdivision?: Modifiers['subdivision'] | null } }
   /** Bake the modifiers into the mesh. */
   | { type: 'applyModifiers'; id: string }
   /** Replace an armature's bones. */
@@ -101,6 +104,8 @@ export type Command =
   | { type: 'setWorld'; world: Partial<World> }
   /** Ready-made camera move (orbit, dolly, flyover, crane, pan) as camera keys between start and end. */
   | { type: 'cameraMove'; move: CameraMoveKind; target?: Vec3; on?: string; start?: number; end?: number; distance?: number; height?: number; heading?: number; degrees?: number; smooth?: boolean; clearance?: boolean }
+  /** Boolean (applied): cut / join / intersect `cutter` into `id`. The cutter is hidden unless keepCutter. */
+  | { type: 'boolean'; id: string; cutter: string; op: BooleanOp; keepCutter?: boolean }
   /** Lake / sea / river surface: a flat plane at z = level with animated ripples. */
   | { type: 'addWater'; id: string; name?: string; size: [number, number]; level: number; position?: [number, number]; color?: string; clarity?: number; waves?: number; speed?: number }
   /** Sky, sun light, exposure and haze for a time of day; heading turns the sky so the sun shines from that azimuth (degrees). */
@@ -374,7 +379,7 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
     case 'setModifiers': {
       const o = asMesh(requireObj(doc, cmd.id));
       const mods: Modifiers = { ...o.modifiers };
-      for (const k of ['mirror', 'subdivision'] as const) {
+      for (const k of ['mirror', 'bevel', 'subdivision'] as const) {
         const v = cmd.modifiers[k];
         if (v === null) delete mods[k];
         else if (v !== undefined) (mods as Record<string, unknown>)[k] = { ...(mods[k] ?? {}), ...v };
@@ -595,6 +600,28 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       // Picking another sky by hand leaves the time-of-day preset.
       if (cmd.world.hdri !== undefined && cmd.world.time === undefined) delete world.time;
       return { doc: { ...doc, world }, created: [] };
+    }
+
+    case 'boolean': {
+      const t = asMesh(requireObj(doc, cmd.id));
+      const c = asMesh(requireObj(doc, cmd.cutter));
+      if (t.id === c.id) throw new CommandError('Pick a different object as the cutter');
+      // The cutter, with its modifiers, in the target's local space.
+      const M = mulM4(invertM4(worldMatrix(doc, t.id, 1)), worldMatrix(doc, c.id, 1));
+      const cm = applyModifiers(c.mesh!, c.modifiers);
+      const cutter: MeshData = { ...cm, vertices: cm.vertices.map((v) => applyM4(M, v)) };
+      let mesh: MeshData;
+      try {
+        mesh = meshBoolean(applyModifiers(t.mesh!, t.modifiers), cutter, cmd.op, [t.name, c.name]);
+      } catch (e) {
+        throw new CommandError(e instanceof Error ? e.message : String(e));
+      }
+      if (mesh.vertices.length > LIMITS.vertices || mesh.faces.length > LIMITS.faces) throw new CommandError(`${t.name}: boolean result too large`);
+      const next: SceneObject = { ...t, mesh };
+      delete next.modifiers;
+      let out = withObject(doc, next);
+      if (!cmd.keepCutter) out = withObject(out, { ...out.objects[c.id], visible: false });
+      return { doc: out, created: [] };
     }
 
     case 'cameraMove': {
@@ -945,6 +972,14 @@ export function validateModifiers(v: unknown): Modifiers {
     const s = v.subdivision;
     if (!isRecord(s) || !(Number.isInteger(s.levels) && inRange(s.levels, 0, 4))) fail('modifiers.subdivision.levels must be 0..4');
     out.subdivision = { levels: s.levels as number };
+    if (s.sharpAngle !== undefined) out.subdivision.sharpAngle = inRange(s.sharpAngle, 0, 180) ? (s.sharpAngle as number) : fail('modifiers.subdivision.sharpAngle must be 0..180 degrees');
+  }
+  if (v.bevel !== undefined) {
+    const b = v.bevel;
+    if (!isRecord(b) || !inRange(b.width, 0, 10)) fail('modifiers.bevel.width must be 0..10 m');
+    const segments = b.segments === undefined ? 1 : Number.isInteger(b.segments) && inRange(b.segments, 1, 6) ? (b.segments as number) : fail('modifiers.bevel.segments must be 1..6');
+    const angle = b.angle === undefined ? 30 : inRange(b.angle, 0, 180) ? (b.angle as number) : fail('modifiers.bevel.angle must be 0..180 degrees');
+    out.bevel = { width: b.width as number, segments, angle };
   }
   return out;
 }
@@ -1166,11 +1201,13 @@ export function validateCommand(v: unknown, depth = 0): Command {
     case 'setModifiers': {
       if (!isId(v.id) || !isRecord(v.modifiers)) fail('setModifiers needs id and modifiers');
       const m = v.modifiers;
-      const out: { mirror?: Modifiers['mirror'] | null; subdivision?: Modifiers['subdivision'] | null } = {};
+      const out: { mirror?: Modifiers['mirror'] | null; bevel?: Modifiers['bevel'] | null; subdivision?: Modifiers['subdivision'] | null } = {};
       if (m.mirror === null) out.mirror = null;
       else if (m.mirror !== undefined) out.mirror = validateModifiers({ mirror: m.mirror }).mirror;
       if (m.subdivision === null) out.subdivision = null;
       else if (m.subdivision !== undefined) out.subdivision = validateModifiers({ subdivision: m.subdivision }).subdivision;
+      if (m.bevel === null) out.bevel = null;
+      else if (m.bevel !== undefined) out.bevel = validateModifiers({ bevel: m.bevel }).bevel;
       return { type: 'setModifiers', id: v.id, modifiers: out };
     }
     case 'setArmature':
@@ -1347,6 +1384,13 @@ export function validateCommand(v: unknown, depth = 0): Command {
       return { type: 'applyModifiers', id: v.id };
     case 'setWorld':
       return { type: 'setWorld', world: validateWorld(v.world) };
+    case 'boolean': {
+      if (!isId(v.id) || !isId(v.cutter)) fail('boolean needs id (the object) and cutter (the other object)');
+      if (!(BOOLEAN_OPS as readonly unknown[]).includes(v.op ?? 'difference')) fail(`boolean op must be one of ${BOOLEAN_OPS.join(', ')}`);
+      const cmd: Extract<Command, { type: 'boolean' }> = { type: 'boolean', id: v.id, cutter: v.cutter, op: (v.op ?? 'difference') as BooleanOp };
+      if (v.keepCutter !== undefined) cmd.keepCutter = typeof v.keepCutter === 'boolean' ? v.keepCutter : fail('boolean keepCutter must be true/false');
+      return cmd;
+    }
     case 'cameraMove': {
       if (!(CAMERA_MOVES as readonly unknown[]).includes(v.move)) fail(`cameraMove move must be one of ${CAMERA_MOVES.join(', ')}`);
       const cmd: Extract<Command, { type: 'cameraMove' }> = { type: 'cameraMove', move: v.move as CameraMoveKind };
