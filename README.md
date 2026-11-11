@@ -5,6 +5,11 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## More modifiers (v2.5)
+
+- Shape panel: **Array** (×2 to ×10, direction, gap, count), **Solidify** (thickness for flat surfaces), **Displace** (noise bumps; Low / Medium / High, bump size, New pattern)
+- Stack order: Mirror → Array → Solidify → Bevel → Subdivision → Displace. **Apply modifiers** bakes them in
+
 ## Sculpt Mode (v2.4)
 
 - Select a model → **Sculpt** (top bar). Brushes: **Draw** (build up; **Invert** digs in), **Smooth**, **Inflate**, **Grab**, **Flatten**, with Size, Strength and **X symmetry**

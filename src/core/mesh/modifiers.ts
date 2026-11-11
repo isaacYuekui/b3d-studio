@@ -1,16 +1,25 @@
-// Non-destructive modifiers, evaluated in order: Mirror, Bevel, then Subdivision Surface
-// (Catmull–Clark, with creases on sharp edges), like Blender's stack. The editable mesh (the
-// "cage") stays as it is.
+// Non-destructive modifiers, evaluated in a fixed order like a typical Blender stack:
+// Mirror → Array → Solidify → Bevel → Subdivision Surface (Catmull–Clark, with creases on sharp
+// edges) → Displace. The editable mesh (the "cage") stays as it is.
 
 import type { MeshData, Modifiers } from '../types';
 import type { V } from './topology';
 import { add, compact, ek, edgeMap, newell, scale } from './topology';
 import { bevel as bevelOp } from './ops';
+import { vertexNormals } from './sculpt';
 
 export const MAX_SUBDIV_FACES = 400_000;
 
 export function hasModifiers(m?: Modifiers): boolean {
-  return !!m && (!!(m.mirror && (m.mirror.x || m.mirror.y || m.mirror.z)) || (m.subdivision?.levels ?? 0) > 0 || (m.bevel?.width ?? 0) > 0);
+  return (
+    !!m &&
+    (!!(m.mirror && (m.mirror.x || m.mirror.y || m.mirror.z)) ||
+      (m.subdivision?.levels ?? 0) > 0 ||
+      (m.bevel?.width ?? 0) > 0 ||
+      (m.array?.count ?? 1) > 1 ||
+      !!m.solidify?.thickness ||
+      !!m.displace?.strength)
+  );
 }
 
 export function applyModifiers(mesh: MeshData, mods?: Modifiers): MeshData {
@@ -21,6 +30,14 @@ export function applyModifiers(mesh: MeshData, mods?: Modifiers): MeshData {
     ([x, y, z] as (boolean | undefined)[]).forEach((on, axis) => {
       if (on) out = mirror(out, axis as 0 | 1 | 2, merge);
     });
+  }
+  if (mods!.array && mods!.array.count > 1) {
+    const a = mods!.array;
+    out = arrayModifier(out, a.count, a.relative, a.constant, a.merge !== false);
+  }
+  if (mods!.solidify?.thickness) {
+    const so = mods!.solidify;
+    out = solidify(out, so.thickness, so.offset ?? -1, so.rim !== false);
   }
   if (mods!.bevel && mods!.bevel.width > 0) {
     const edges = sharpEdges(out, mods!.bevel.angle);
@@ -41,7 +58,158 @@ export function applyModifiers(mesh: MeshData, mods?: Modifiers): MeshData {
     creases = r.creases;
     levels--;
   }
+  if (mods!.displace?.strength) {
+    const d = mods!.displace;
+    out = displace(out, d.strength, d.scale, d.seed ?? 0);
+  }
   return out;
+}
+
+const bounds = (vs: V[]) => {
+  const lo: V = [Infinity, Infinity, Infinity], hi: V = [-Infinity, -Infinity, -Infinity];
+  for (const v of vs)
+    for (let k = 0; k < 3; k++) {
+      if (v[k] < lo[k]) lo[k] = v[k];
+      if (v[k] > hi[k]) hi[k] = v[k];
+    }
+  return { lo, hi, size: [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]] as V };
+};
+
+/**
+ * Array modifier: `count` copies, each shifted by relative × size + constant. With `merge`, a
+ * vertex that lands on the previous copy's vertex is welded to it and the faces the two copies
+ * share (back to back) are removed, so touching copies become one clean solid.
+ */
+export function arrayModifier(mesh: MeshData, count: number, relative: V, constant: V = [0, 0, 0], merge = true, distance = 0.001): MeshData {
+  const corners = Math.max(1, estimateFaces(mesh));
+  const n = Math.max(1, Math.min(Math.round(count), 1000, Math.floor(MAX_SUBDIV_FACES / corners)));
+  if (n <= 1 || !mesh.vertices.length) return mesh;
+  const { size } = bounds(mesh.vertices);
+  const off: V = [0, 1, 2].map((k) => relative[k] * size[k] + constant[k]) as V;
+  const nv = mesh.vertices.length;
+  // match[i] = j when vertex i of a copy sits on vertex j of the copy before it.
+  const match = new Array<number>(nv).fill(-1);
+  if (merge) {
+    const cell = Math.max(distance, 1e-9) * 2;
+    const key = (p: V) => `${Math.floor(p[0] / cell)},${Math.floor(p[1] / cell)},${Math.floor(p[2] / cell)}`;
+    const grid = new Map<string, number[]>();
+    mesh.vertices.forEach((p, j) => {
+      const k = key(p);
+      const list = grid.get(k);
+      if (list) list.push(j);
+      else grid.set(k, [j]);
+    });
+    mesh.vertices.forEach((p, i) => {
+      const q: V = [p[0] + off[0], p[1] + off[1], p[2] + off[2]];
+      const c = [0, 1, 2].map((k) => Math.floor(q[k] / cell));
+      for (let dx = -1; dx <= 1 && match[i] < 0; dx++)
+        for (let dy = -1; dy <= 1 && match[i] < 0; dy++)
+          for (let dz = -1; dz <= 1 && match[i] < 0; dz++)
+            for (const j of grid.get(`${c[0] + dx},${c[1] + dy},${c[2] + dz}`) ?? [])
+              if (Math.hypot(mesh.vertices[j][0] - q[0], mesh.vertices[j][1] - q[1], mesh.vertices[j][2] - q[2]) <= distance) {
+                match[i] = j;
+                break;
+              }
+    });
+  }
+  const vertices: V[] = [];
+  const target: number[] = [];
+  for (let c = 0; c < n; c++)
+    mesh.vertices.forEach((v, i) => {
+      vertices.push([v[0] + off[0] * c, v[1] + off[1] * c, v[2] + off[2] * c]);
+      target.push(c > 0 && match[i] >= 0 ? target[(c - 1) * nv + match[i]] : c * nv + i);
+    });
+  let faces: number[][] = [];
+  for (let c = 0; c < n; c++) for (const f of mesh.faces) faces.push(f.map((v) => target[c * nv + v]));
+  if (merge) {
+    // Faces where two copies touch now use the same corners: drop both.
+    const seen = new Map<string, number>();
+    const keyOf = (f: number[]) => [...f].sort((a, b) => a - b).join(',');
+    for (const f of faces) {
+      const k = keyOf(f);
+      seen.set(k, (seen.get(k) ?? 0) + 1);
+    }
+    faces = faces.filter((f) => seen.get(keyOf(f)) === 1);
+  }
+  return compact({ vertices, faces, smooth: mesh.smooth }).mesh;
+}
+
+/**
+ * Solidify modifier: a second, inward-facing copy of the surface `thickness` metres away along
+ * the vertex normals, joined to the first along open edges (the rim).
+ */
+export function solidify(mesh: MeshData, thickness: number, offset = -1, rim = true): MeshData {
+  if (!thickness || !mesh.faces.length) return mesh;
+  const normals = vertexNormals(mesh.vertices, mesh.faces);
+  const a = (thickness * (offset + 1)) / 2;
+  const b = (thickness * (offset - 1)) / 2;
+  const nv = mesh.vertices.length;
+  const vertices: V[] = [
+    ...mesh.vertices.map((v, i) => [v[0] + normals[i][0] * a, v[1] + normals[i][1] * a, v[2] + normals[i][2] * a] as V),
+    ...mesh.vertices.map((v, i) => [v[0] + normals[i][0] * b, v[1] + normals[i][1] * b, v[2] + normals[i][2] * b] as V),
+  ];
+  // A negative thickness puts the copy outside: flip both shells so normals still face out.
+  const flip = thickness < 0;
+  const outer = mesh.faces.map((f) => (flip ? [...f].reverse() : [...f]));
+  const inner = mesh.faces.map((f) => (flip ? f.map((v) => v + nv) : [...f].reverse().map((v) => v + nv)));
+  const faces = [...outer, ...inner];
+  if (rim)
+    for (const e of edgeMap(mesh).values()) {
+      if (e.faces.length !== 1) continue;
+      // The edge's direction in its face, so the rim quad runs the other way (consistent winding).
+      const f = mesh.faces[e.faces[0]];
+      const i = f.indexOf(e.a);
+      const [p, q] = f[(i + 1) % f.length] === e.b ? [e.a, e.b] : [e.b, e.a];
+      const quad = [q, p, p + nv, q + nv];
+      faces.push(flip ? quad.reverse() : quad);
+    }
+  return { vertices, faces, smooth: mesh.smooth };
+}
+
+// Value noise on a lattice, hashed from integer coordinates (deterministic, no tables).
+const hash3 = (x: number, y: number, z: number, seed: number) => {
+  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(z, 2147483647) + Math.imul(seed, 1442695041)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return ((h >>> 0) / 4294967295) * 2 - 1;
+};
+const fade = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+/** Smooth 3D value noise, about −1..1. */
+export function noise3(x: number, y: number, z: number, seed = 0): number {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+  const u = fade(x - xi), v = fade(y - yi), w = fade(z - zi);
+  const c = (dx: number, dy: number, dz: number) => hash3(xi + dx, yi + dy, zi + dz, seed);
+  return lerp(
+    lerp(lerp(c(0, 0, 0), c(1, 0, 0), u), lerp(c(0, 1, 0), c(1, 1, 0), u), v),
+    lerp(lerp(c(0, 0, 1), c(1, 0, 1), u), lerp(c(0, 1, 1), c(1, 1, 1), u), v),
+    w,
+  );
+}
+
+/** Fractal noise (4 octaves), about −1..1. */
+export function fbm3(x: number, y: number, z: number, seed = 0): number {
+  let sum = 0, amp = 0.5, f = 1, norm = 0;
+  for (let o = 0; o < 4; o++) {
+    sum += noise3(x * f, y * f, z * f, seed + o * 101) * amp;
+    norm += amp;
+    amp *= 0.5;
+    f *= 2.03;
+  }
+  return sum / norm;
+}
+
+/** Displace modifier: move every vertex along its normal by strength × noise(position / scale). */
+export function displace(mesh: MeshData, strength: number, scale: number, seed = 0): MeshData {
+  if (!strength) return mesh;
+  const normals = vertexNormals(mesh.vertices, mesh.faces);
+  const s = 1 / Math.max(scale, 1e-3);
+  const vertices = mesh.vertices.map((v, i) => {
+    const d = fbm3(v[0] * s, v[1] * s, v[2] * s, seed) * strength;
+    return [v[0] + normals[i][0] * d, v[1] + normals[i][1] * d, v[2] + normals[i][2] * d] as V;
+  });
+  return { vertices, faces: mesh.faces, smooth: mesh.smooth };
 }
 
 /** Edges whose two faces meet at more than `angle` degrees (0 = every edge between two faces). */

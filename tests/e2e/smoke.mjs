@@ -974,6 +974,37 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// More modifiers (v2.5): Array, Solidify, Displace from the Shape panel.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'cube', id: 'step', name: 'Step', transform: { scale: [0.5, 0.5, 0.1] } }] });
+    s.select('step');
+    window.__b3d.viewport().frame(false);
+  });
+  const tris = () => page.evaluate(() => window.__b3d.viewport().entries.get('step').node.getTotalIndices() / 3);
+  const t0 = await tris();
+  await page.click('[data-array="5"]');
+  await page.click('[data-array-axis="z"]');
+  await page.waitForTimeout(400);
+  let mods = await page.evaluate(() => window.__b3d.store.getState().doc.objects.step.modifiers);
+  const t1 = await tris();
+  check('v2.5: Array ×5 along Z repeats the shape', mods?.array?.count === 5 && mods.array.relative[2] === 1 && t1 > t0 * 2, JSON.stringify({ mods, t0, t1 }));
+  await page.click('[data-solidify="0.05"]');
+  await page.click('[data-displace="0.03"]');
+  await page.click('[data-testid="displace-seed"]');
+  await page.waitForTimeout(400);
+  mods = await page.evaluate(() => window.__b3d.store.getState().doc.objects.step.modifiers);
+  check('v2.5: Solidify and Displace set from the Shape panel', mods?.solidify?.thickness === 0.05 && mods?.displace?.strength === 0.03 && mods.displace.seed === 1 && mods.array.count === 5, JSON.stringify(mods));
+  await page.screenshot({ path: `${shots}/modifiers-v25.png` });
+  await page.keyboard.press('Control+z');
+  mods = await page.evaluate(() => window.__b3d.store.getState().doc.objects.step.modifiers);
+  check('v2.5: undo steps back one modifier change', mods?.displace?.seed === undefined && mods?.displace?.strength === 0.03, JSON.stringify(mods));
+  check('v2.5: no errors (modifiers)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Sculpt Mode (v2.4): brushes on a subdivided sphere; one stroke = one undo; view stays put.
 {
   const { ctx, page, errors } = await open({ width: 1180, height: 820 });

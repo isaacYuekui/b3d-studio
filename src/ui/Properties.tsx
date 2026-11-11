@@ -4,7 +4,7 @@ import { useApp, useCtx } from './context';
 import { NumberField } from './NumberField';
 import { Icon } from './icons';
 import { subtree } from '../core/commands';
-import type { Command } from '../core/commands';
+import type { Command, ModifierPatch } from '../core/commands';
 import type { LightType, Material as SceneMaterial, Vec3 } from '../core/types';
 import { isRenderable } from '../core/types';
 import { runAction } from './actions';
@@ -681,6 +681,9 @@ function ModifiersSection({ id }: { id: string }) {
           ))}
         </div>
       </div>
+      <ArrayRows id={id} />
+      <SolidifyRows id={id} />
+      <DisplaceRows id={id} />
       {o.modifiers && (
         <div className="prop-actions">
           <button className="btn" onClick={() => store.dispatch({ type: 'applyModifiers', id }, { select: false })}>Apply modifiers</button>
@@ -688,8 +691,142 @@ function ModifiersSection({ id }: { id: string }) {
       )}
       <BooleanRow id={id} />
       <JoinRow id={id} />
-      <p className="prop-hint">Subdivision rounds the shape off; Keep sharp edges makes hard-surface parts (armour, cars) curved but crisp. Bevel rounds every edge sharper than 30° so it catches the light. Mirror X: model one half, the other follows.</p>
+      <p className="prop-hint">
+        Subdivision rounds the shape off; Keep sharp edges makes hard-surface parts (armour, cars) curved but crisp. Bevel rounds every edge sharper than 30° so it catches the light. Mirror X: model one half, the
+        other follows. Array repeats it (fences, stairs, chains); Solidify gives a flat surface thickness (walls, shells); Displace adds bumps (rocks, terrain) — subdivide first for finer bumps.
+      </p>
     </Section>
+  );
+}
+
+function useSetModifiers(id: string) {
+  const { store } = useCtx();
+  return {
+    set: (patch: ModifierPatch) => store.dispatch({ type: 'setModifiers', id, modifiers: patch }, { select: false }),
+    preview: (patch: ModifierPatch) => store.preview({ type: 'setModifiers', id, modifiers: patch }),
+    commit: (patch: ModifierPatch) => {
+      store.preview({ type: 'setModifiers', id, modifiers: patch });
+      store.commitPreview();
+    },
+    cancel: () => store.cancelPreview(),
+  };
+}
+
+/** Array modifier: copies, direction and the gap between copies. */
+function ArrayRows({ id }: { id: string }) {
+  const arr = useApp((s) => s.doc.objects[id].modifiers?.array);
+  const m = useSetModifiers(id);
+  const rel = arr?.relative ?? [1, 0, 0];
+  const axis = [0, 1, 2].reduce((best, k) => (Math.abs(rel[k]) > Math.abs(rel[best]) ? k : best), 0);
+  const gap = arr?.constant?.[axis] ?? 0;
+  const along = (k: number, g: number): ModifierPatch => {
+    const relative = [0, 0, 0] as Vec3;
+    const constant = [0, 0, 0] as Vec3;
+    relative[k] = 1;
+    constant[k] = g;
+    return { array: { relative, constant } };
+  };
+  return (
+    <>
+      <div className="prop-row">
+        <span>Array</span>
+        <div className="seg-text" role="radiogroup" aria-label="Array copies">
+          {[1, 2, 3, 5, 10].map((n) => {
+            const on = (arr?.count ?? 1) === n || (n === 1 && !arr);
+            return (
+              <button key={n} role="radio" aria-checked={on} className={on ? 'active' : ''} data-array={n} onClick={() => m.set({ array: n === 1 ? null : { ...(arr ? {} : along(0, 0).array), count: n } })}>
+                {n === 1 ? 'Off' : `×${n}`}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {arr && (
+        <>
+          <div className="prop-row">
+            <span>Direction</span>
+            <div className="seg-text" role="radiogroup" aria-label="Array direction">
+              {AXES.map((ax, k) => (
+                <button key={ax} role="radio" aria-checked={axis === k} className={axis === k ? 'active' : ''} data-array-axis={ax} onClick={() => m.set(along(k, gap))}>
+                  {ax.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+          <NumberField label="Gap" value={gap} step={0.1} dragRate={0.01} suffix=" m" onPreview={(v) => m.preview(along(axis, v))} onCommit={(v) => m.commit(along(axis, v))} onCancel={m.cancel} />
+          <NumberField
+            label="Count"
+            value={arr.count}
+            step={1}
+            dragRate={0.1}
+            onPreview={(v) => m.preview({ array: { count: Math.max(1, Math.min(100, Math.round(v))) } })}
+            onCommit={(v) => m.commit({ array: { count: Math.max(1, Math.min(100, Math.round(v))) } })}
+            onCancel={m.cancel}
+          />
+        </>
+      )}
+    </>
+  );
+}
+
+/** Solidify modifier: thickness for flat surfaces. */
+function SolidifyRows({ id }: { id: string }) {
+  const so = useApp((s) => s.doc.objects[id].modifiers?.solidify);
+  const m = useSetModifiers(id);
+  const t = so?.thickness ?? 0;
+  const clampT = (v: number) => Math.max(-10, Math.min(10, v));
+  return (
+    <>
+      <div className="prop-row">
+        <span>Solidify</span>
+        <div className="seg-text" role="radiogroup" aria-label="Solidify thickness">
+          {[0, 0.01, 0.05, 0.2].map((w) => {
+            const on = t === w;
+            return (
+              <button key={w} role="radio" aria-checked={on} className={on ? 'active' : ''} data-solidify={w} onClick={() => m.set({ solidify: w ? { thickness: w } : null })}>
+                {w === 0 ? 'Off' : `${Math.round(w * 100)} cm`}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {so && <NumberField label="Thickness" value={t} step={0.01} dragRate={0.002} suffix=" m" onPreview={(v) => m.preview({ solidify: { thickness: clampT(v) } })} onCommit={(v) => m.commit({ solidify: { thickness: clampT(v) } })} onCancel={m.cancel} />}
+    </>
+  );
+}
+
+/** Displace modifier: noise bumps along the surface. */
+function DisplaceRows({ id }: { id: string }) {
+  const d = useApp((s) => s.doc.objects[id].modifiers?.displace);
+  const m = useSetModifiers(id);
+  const levels: [string, number][] = [['Off', 0], ['Low', 0.03], ['Medium', 0.1], ['High', 0.3]];
+  const clampS = (v: number) => Math.max(0.01, Math.min(100, v));
+  return (
+    <>
+      <div className="prop-row">
+        <span>Displace</span>
+        <div className="seg-text" role="radiogroup" aria-label="Displace strength">
+          {levels.map(([label, v]) => {
+            const on = (d?.strength ?? 0) === v;
+            return (
+              <button key={label} role="radio" aria-checked={on} className={on ? 'active' : ''} data-displace={v} onClick={() => m.set({ displace: v ? { strength: v, ...(d ? {} : { scale: 0.5 }) } : null })}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {d && (
+        <>
+          <NumberField label="Bump size" value={d.scale} step={0.1} dragRate={0.01} suffix=" m" onPreview={(v) => m.preview({ displace: { scale: clampS(v) } })} onCommit={(v) => m.commit({ displace: { scale: clampS(v) } })} onCancel={m.cancel} />
+          <div className="prop-actions">
+            <button className="btn" data-testid="displace-seed" onClick={() => m.set({ displace: { seed: ((d.seed ?? 0) + 1) % 100000 } })}>
+              New pattern
+            </button>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
