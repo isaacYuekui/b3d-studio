@@ -209,6 +209,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   // material edit through Properties
   await page.click('[data-outliner-id] >> text=Vase');
   check('v0.2: custom mesh shows geometry stats', /verts/.test(await page.textContent('[data-testid="properties"]')));
+  await page.click('[data-prop-tab="material"]');
   const metal = page.locator('[aria-label="Metallic"]');
   await metal.click();
   await page.keyboard.press('Control+a');
@@ -218,6 +219,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
 
   // light properties
   await page.click('[data-outliner-id] >> text=Key Sun');
+  await page.click('[data-prop-tab="data"]');
   check('v0.2: light shows Light properties', await page.isVisible('#light-type'));
 
   // one undo reverts the edit, the second reverts the whole script
@@ -267,6 +269,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await page.click('[data-asset="ceramic_vase_01"]');
   await page.waitForTimeout(2500);
   check('v0.3: adding a library model selects it', (await selectedName(page)) === 'Ceramic Vase');
+  await page.click('[data-prop-tab="data"]');
   check('v0.3: model shows its source in Properties', /Ceramic Vase/.test(await page.textContent('[data-testid="properties"]')));
 
   // Apply a photo material to a cube
@@ -274,6 +277,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await page.click('[data-testid="library-btn"]');
   await page.click('[data-lib-tab="textures"]');
   await page.click('[data-asset="brown_planks_05"]');
+  await page.click('[data-prop-tab="material"]');
   check('v0.3: material from library applies to selected cube', (await page.inputValue('#mat-texture')) === 'brown_planks_05');
 
   // Sky
@@ -283,6 +287,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   await page.waitForTimeout(3000);
   check('v0.3: sky applies and switches to Rendered view', (await page.getAttribute('[data-shading="rendered"]', 'aria-pressed')) === 'true');
   await page.keyboard.press('Escape');
+  await page.click('[data-prop-tab="scene"]');
   check('v0.3: World panel shows the chosen sky', (await page.inputValue('#world-hdri')) === 'venice_sunset');
 
   // Realistic scene script
@@ -628,6 +633,7 @@ const setNumber = async (page, scope, label, value) => {
   await page.keyboard.press('Tab');
   await page.waitForTimeout(200);
   check('v0.7: Tab returns to Object Mode', !(await meshInfo(page)).edit);
+  await page.click('[data-prop-tab="modifiers"]');
   await page.click('[data-subdiv="2"]');
   await page.click('[data-mirror="x"]');
   await page.waitForTimeout(400);
@@ -850,6 +856,7 @@ const setNumber = async (page, scope, label, value) => {
     ] });
     s.select('block');
   });
+  await page.click('[data-prop-tab="modifiers"]');
   await page.click('[data-bevel="0.03"]');
   await page.click('[data-subdiv="2"]');
   await page.click('[data-testid="subdiv-sharp"]');
@@ -929,6 +936,7 @@ const setNumber = async (page, scope, label, value) => {
   check('v2.2: Snap button turns on 0.25 m gizmo steps', snap.on === true && snap.step === 0.25, JSON.stringify(snap));
   await page.click('[data-testid="snap"]');
   // Join Beta into Alpha from the Shape panel, then split again by loose parts.
+  await page.click('[data-prop-tab="modifiers"]');
   await page.selectOption('#join-other', 'b');
   await page.click('[data-testid="join-apply"]');
   const joined = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; return { beta: !!d.objects.b, faces: d.objects.a.mesh?.faces.length }; });
@@ -957,6 +965,7 @@ const setNumber = async (page, scope, label, value) => {
     s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'sphere', id: 'ball', name: 'Ball' }] });
     s.select('ball');
   });
+  await page.click('[data-prop-tab="material"]');
   await page.click('.mat-more summary');
   await page.click('[data-mat-preset="Car paint"]');
   const paint = await page.evaluate(() => { const m = window.__b3d.store.getState().doc.objects.ball.material; return { cc: m.clearcoat, metal: m.metallic }; });
@@ -974,6 +983,33 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Properties tabs (v3.1): Blender-style tabs; only the ones the object has; remembered.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'c', name: 'Box' },
+      { type: 'add', primitive: 'light', id: 'l', name: 'Lamp', light: { type: 'point' } },
+    ] });
+    s.select('c');
+  });
+  const tabsOf = () => page.$$eval('[data-prop-tab]', (els) => els.map((e) => e.getAttribute('data-prop-tab') + (e.getAttribute('aria-selected') === 'true' ? '*' : '')).join(' '));
+  const cube = await tabsOf();
+  check('v3.1: a shape gets Scene, Object, Modifiers, Physics, Material tabs (Object first)', cube === 'scene object* modifiers physics material', cube);
+  await page.click('[data-prop-tab="material"]');
+  const mat = await page.isVisible('#mat-base');
+  await page.evaluate(() => window.__b3d.store.select('l'));
+  const lamp = await tabsOf();
+  check('v3.1: Material shows the material; a light has a Light tab and no Material tab', mat && lamp === 'scene object* data', lamp);
+  await page.evaluate(() => window.__b3d.store.select('c'));
+  const back = await tabsOf();
+  check('v3.1: the last tab is remembered when going back to the shape', back.includes('material*'), back);
+  check('v3.1: no errors (tabs)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Rigid body physics (v3.0): turn on Rigid body, bake, the box falls and lands.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });
@@ -988,6 +1024,7 @@ const setNumber = async (page, scope, label, value) => {
     ] });
     s.select('crate');
   });
+  await page.click('[data-prop-tab="physics"]');
   await page.click('.prop-section-head:has-text("Physics")');
   await page.click('[data-testid="rigid-toggle"]');
   const rigid = await page.evaluate(() => window.__b3d.store.getState().doc.objects.crate.rigid);
@@ -1025,6 +1062,7 @@ const setNumber = async (page, scope, label, value) => {
   await page.waitForFunction(() => Object.values(window.__b3d.store.getState().doc.objects).some((o) => o.text), null, { timeout: 30000 });
   const t0 = await page.evaluate(() => { const o = Object.values(window.__b3d.store.getState().doc.objects).find((x) => x.text); return { id: o.id, body: o.text.body, faces: o.mesh.faces.length, rot: o.transform.rotation }; });
   check('v2.9: Add → Text makes standing 3D letters', t0.body === 'Text' && t0.faces > 50 && t0.rot[0] === 90, JSON.stringify(t0));
+  await page.click('[data-prop-tab="data"]');
   await page.fill('[data-testid="text-body"]', 'Hello B3D');
   await page.click('.prop-section-head:has-text("Text")'); // blur the box (commits), closes the section
   await page.click('.prop-section-head:has-text("Text")');
@@ -1191,6 +1229,7 @@ const setNumber = async (page, scope, label, value) => {
   });
   const tris = () => page.evaluate(() => window.__b3d.viewport().entries.get('step').node.getTotalIndices() / 3);
   const t0 = await tris();
+  await page.click('[data-prop-tab="modifiers"]');
   await page.click('[data-array="5"]');
   await page.click('[data-array-axis="z"]');
   await page.waitForTimeout(400);

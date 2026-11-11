@@ -76,6 +76,21 @@ export function Properties() {
   const frame = useApp((s) => s.frame);
   const o = sel ? doc.objects[sel] : null;
   const catalog = useCatalog();
+  const [tab, setTabState] = useState<PropTab>(() => {
+    try {
+      return (localStorage.getItem('b3d.propTab') as PropTab | null) ?? 'object';
+    } catch {
+      return 'object';
+    }
+  });
+  const setTab = (t: PropTab) => {
+    setTabState(t);
+    try {
+      localStorage.setItem('b3d.propTab', t);
+    } catch {
+      /* per session only */
+    }
+  };
 
   // Every field edit goes through preview+commit so scrubs and typed values are one undo step each.
   const commit = (cmd: Command) => {
@@ -86,18 +101,8 @@ export function Properties() {
   if (!o) {
     return (
       <div className="properties">
-        <div className="prop-tabs">
-          <span className="prop-tab active">Scene</span>
-        </div>
-        <Section title="Scene">
-          <div className="prop-row"><span>Objects</span><b>{doc.order.length}</b></div>
-          <div className="prop-row"><span>Hidden</span><b>{doc.order.filter((id) => !doc.objects[id].visible).length}</b></div>
-          <div className="prop-row"><span>Units</span><b>Metres, Z up</b></div>
-          <p className="prop-hint">Select an object in the viewport or Outliner to edit its properties.</p>
-        </Section>
-        <CameraSection />
-        <ScenePhysicsSection />
-        <WorldSection />
+        <PropTabs tabs={[['scene', 'Scene']]} cur="scene" onPick={() => {}} />
+        <SceneTab />
       </div>
     );
   }
@@ -151,11 +156,19 @@ export function Properties() {
   const forbidden = new Set(subtree(doc, o.id));
   const parentOptions = doc.order.filter((id) => !forbidden.has(id));
 
+  // Tabs like Blender's Properties editor: only the ones this kind of object has.
+  const tabs: [PropTab, string][] = [['scene', 'Scene'], ['object', 'Object']];
+  if (canEdit(o)) tabs.push(['modifiers', 'Modifiers'], ['physics', 'Physics']);
+  const dataLabel = o.text ? 'Text' : o.light ? 'Light' : o.type === 'model' ? 'Model' : o.type === 'armature' ? 'Armature' : null;
+  if (dataLabel) tabs.push(['data', dataLabel]);
+  if (isRenderable(o.type) && o.type !== 'model') tabs.push(['material', 'Material']);
+  const cur: PropTab = tabs.some(([t]) => t === tab) ? tab : 'object';
+
   return (
     <div className="properties" data-testid="properties">
-      <div className="prop-tabs">
-        <span className="prop-tab active">Object</span>
-      </div>
+      <PropTabs tabs={tabs} cur={cur} onPick={setTab} />
+      {cur === 'scene' && <SceneTab />}
+      {cur !== 'scene' && (
       <div className="prop-name-row">
         <input
           key={o.id + o.name}
@@ -170,7 +183,10 @@ export function Properties() {
           onBlur={(e) => store.dispatch({ type: 'rename', id: o.id, name: e.target.value })}
         />
       </div>
+      )}
 
+      {cur === 'object' && (
+      <>
       <EditSection />
 
       {vecField('position', 'Location', { step: 0.1, rate: 0.01, suffix: ' m' })}
@@ -197,15 +213,33 @@ export function Properties() {
         </label>
       </Section>
 
-      {o.type === 'model' && <ModelSection id={o.id} />}
+      <Section title="Object">
+        <label className="prop-row">
+          <span>Visible</span>
+          <input type="checkbox" checked={o.visible} onChange={(e) => store.dispatch({ type: 'setVisible', id: o.id, visible: e.target.checked }, { select: false })} />
+        </label>
+        <div className="prop-row"><span>Type</span><b style={{ textTransform: 'capitalize' }}>{o.text ? 'Text' : o.type}</b></div>
+        {o.mesh && <div className="prop-row"><span>Geometry</span><b>{o.mesh.vertices.length} verts · {o.mesh.faces.length} faces</b></div>}
+      </Section>
 
-      {o.text && <TextSection id={o.id} />}
-      {canEdit(o) && <ModifiersSection id={o.id} />}
-      {canEdit(o) && <PhysicsSection id={o.id} />}
+      <div className="prop-actions">
+        <button className="btn" onClick={() => runAction(ctx, 'edit.duplicate')}>
+          <Icon.dup /> Duplicate
+        </button>
+        <button className="btn danger" onClick={() => runAction(ctx, 'edit.delete')}>
+          <Icon.trash /> Delete
+        </button>
+      </div>
+      </>
+      )}
 
-      {o.type === 'armature' && <PoseSection id={o.id} />}
+      {cur === 'data' && o.type === 'model' && <ModelSection id={o.id} />}
+      {cur === 'data' && o.text && <TextSection id={o.id} />}
+      {cur === 'modifiers' && <ModifiersSection id={o.id} />}
+      {cur === 'physics' && <PhysicsSection id={o.id} />}
+      {cur === 'data' && o.type === 'armature' && <PoseSection id={o.id} />}
 
-      {isRenderable(o.type) && o.type !== 'model' && (
+      {cur === 'material' && (
         <Section title="Material">
           <label className="prop-row">
             <span>Texture</span>
@@ -313,7 +347,7 @@ export function Properties() {
         </Section>
       )}
 
-      {o.light && (
+      {cur === 'data' && o.light && (
         <Section title="Light">
           <label className="prop-row">
             <span>Type</span>
@@ -346,24 +380,39 @@ export function Properties() {
         </Section>
       )}
 
-      <Section title="Object">
-        <label className="prop-row">
-          <span>Visible</span>
-          <input type="checkbox" checked={o.visible} onChange={(e) => store.dispatch({ type: 'setVisible', id: o.id, visible: e.target.checked }, { select: false })} />
-        </label>
-        <div className="prop-row"><span>Type</span><b style={{ textTransform: 'capitalize' }}>{o.type}</b></div>
-        {o.mesh && <div className="prop-row"><span>Geometry</span><b>{o.mesh.vertices.length} verts · {o.mesh.faces.length} faces</b></div>}
-      </Section>
-
-      <div className="prop-actions">
-        <button className="btn" onClick={() => runAction(ctx, 'edit.duplicate')}>
-          <Icon.dup /> Duplicate
-        </button>
-        <button className="btn danger" onClick={() => runAction(ctx, 'edit.delete')}>
-          <Icon.trash /> Delete
-        </button>
-      </div>
     </div>
+  );
+}
+
+type PropTab = 'scene' | 'object' | 'modifiers' | 'physics' | 'data' | 'material';
+
+function PropTabs({ tabs, cur, onPick }: { tabs: [PropTab, string][]; cur: PropTab; onPick: (t: PropTab) => void }) {
+  return (
+    <div className="prop-tabs" role="tablist" aria-label="Properties">
+      {tabs.map(([t, label]) => (
+        <button key={t} role="tab" aria-selected={cur === t} className={`prop-tab${cur === t ? ' active' : ''}`} data-prop-tab={t} onClick={() => onPick(t)}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Scene tab: scene facts, camera lens, physics world and the world (sky, light, look). */
+function SceneTab() {
+  const doc = useApp((s) => s.doc);
+  return (
+    <>
+      <Section title="Scene">
+        <div className="prop-row"><span>Objects</span><b>{doc.order.length}</b></div>
+        <div className="prop-row"><span>Hidden</span><b>{doc.order.filter((id) => !doc.objects[id].visible).length}</b></div>
+        <div className="prop-row"><span>Units</span><b>Metres, Z up</b></div>
+        <p className="prop-hint">Select an object in the viewport or Outliner to edit its properties.</p>
+      </Section>
+      <CameraSection />
+      <ScenePhysicsSection />
+      <WorldSection />
+    </>
   );
 }
 

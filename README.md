@@ -5,6 +5,10 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Properties tabs (v3.1)
+
+- Properties is split into tabs like Blender's Properties editor: **Scene** (camera lens, physics, world), **Object** (transform, animation, parent), **Modifiers**, **Physics**, **Text / Light / Model / Armature** (the object's own data) and **Material**. Only the tabs an object has are shown; the last one you used stays open as you select other objects
+
 ## Rigid body physics (v3.0)
 
 - Properties → **Physics → Rigid body** (like Blender's Physics tab): **Active** objects fall and collide, **Passive** ones (floors, walls, ramps) stay put. Shape (auto / box / sphere / cylinder), mass, friction, bounciness
