@@ -45,11 +45,11 @@ C.append({"type": "setModifiers", "id": "meteor", "modifiers": {"subdivision": {
 C.append({"type": "setKeyframe", "id": "meteor", "frame": 1, "easing": "linear", "transform": {"position": [-70, 90, 75], "rotation": [0, 0, 0], "scale": [1.4, 1.4, 1.4]}})
 C.append({"type": "setKeyframe", "id": "meteor", "frame": IMPACT, "easing": "constant", "transform": {"position": HIT, "rotation": [200, 90, 40], "scale": [1.4, 1.4, 1.4]}})
 C.append({"type": "setKeyframe", "id": "meteor", "frame": IMPACT + 1, "easing": "constant", "transform": {"position": [0, 6, -3], "rotation": [200, 90, 40], "scale": [0.01, 0.01, 0.01]}})
-C.append({"type": "setParticles", "id": "meteor", "particles": {"count": 2200, "start": 1, "end": IMPACT, "lifetime": 16, "speed": 0.3, "random": 0.6, "gravity": -0.05, "size": 1.3, "sizeRandom": 0.4, "shape": "fire", "color": "#ff7a1a", "glow": 1, "ground": "none"}})
+C.append({"type": "setParticles", "id": "meteor", "particles": {"count": 3200, "start": 1, "end": IMPACT, "lifetime": 22, "speed": 0.3, "random": 0.8, "gravity": -0.05, "size": 2.4, "sizeRandom": 0.4, "shape": "fire", "color": "#ff7a1a", "glow": 1, "ground": "none"}})
 
 # Hidden emitters at the impact: fireball and dust (they burst at the impact frame).
-add("fireball", "Fireball emitter", "sphere", {"baseColor": "#000000"}, HIT, scale=(1.5, 1.5, 1.5))
-C.append({"type": "setParticles", "id": "fireball", "particles": {"count": 1400, "start": IMPACT, "end": IMPACT + 3, "lifetime": 36, "speed": 9, "random": 7, "gravity": 0.25, "size": 1.6, "sizeRandom": 0.5, "shape": "fire", "color": "#ff8a2a", "glow": 1, "ground": "none", "hideEmitter": True}})
+add("fireball", "Fireball emitter", "sphere", {"baseColor": "#000000"}, [0, 6, 3], scale=(2.5, 2.5, 2.5))
+C.append({"type": "setParticles", "id": "fireball", "particles": {"count": 2400, "start": IMPACT, "end": IMPACT + 4, "lifetime": 40, "speed": 10, "random": 9, "gravity": 0.15, "size": 4.0, "sizeRandom": 0.5, "shape": "fire", "color": "#ff8a2a", "glow": 1, "ground": "none", "hideEmitter": True}})
 add("dust", "Dust emitter", "sphere", {"baseColor": "#000000"}, HIT, scale=(2, 2, 1))
 C.append({"type": "setParticles", "id": "dust", "particles": {"count": 700, "start": IMPACT, "end": IMPACT + 5, "lifetime": 140, "speed": 5, "random": 4, "gravity": -0.03, "size": 3.2, "sizeRandom": 0.5, "shape": "smoke", "color": "#7d7266", "glow": 0, "ground": "none", "wind": [0.6, 0, 0], "hideEmitter": True}})
 

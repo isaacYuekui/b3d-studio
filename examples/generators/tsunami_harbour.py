@@ -31,7 +31,7 @@ C.append({"type": "setAnimation", "fps": 24, "start": 1, "end": 192})
 # Sea: gentle swell, then the surge from far out (direction +Y, towards the shore). The water runs on
 # under the town, hidden below the shore until the wave lifts it over the quay: that's the flood.
 C.append({"type": "addWater", "id": "sea", "name": "Harbour sea", "size": [140, 150], "level": 0, "position": [0, -15], "color": "#1f4e5a", "clarity": 0.25, "waves": 1.6, "height": 0.35, "direction": 90})
-C.append({"type": "setWater", "id": "sea", "water": {"surge": {"height": 9, "start": 24, "speed": 14, "width": 24, "from": -60}}})
+C.append({"type": "setWater", "id": "sea", "water": {"surge": {"height": 8, "start": 24, "speed": 14, "width": 15, "from": -60}}})
 
 SAND = {"baseColor": "#b9a882", "roughness": 0.95}
 CONCRETE = {"baseColor": "#9a9a95", "roughness": 0.85}
@@ -64,8 +64,8 @@ for i, (x, y, yaw, hull, cab) in enumerate(BOATS):
 
 # Camera on the quay looking out to sea; it shakes as the wave arrives.
 C.append({"type": "setLens", "lens": {"focal": 28}})
-C.append({"type": "setCameraKey", "frame": 1, "position": [16, 36, 10], "target": [-2, -18, 3], "easing": "ease"})
-C.append({"type": "setCameraKey", "frame": 192, "position": [11, 34, 13], "target": [-2, -10, 5], "easing": "ease"})
+C.append({"type": "setCameraKey", "frame": 1, "position": [14, 24.5, 15], "target": [-3, -30, 1], "easing": "ease"})
+C.append({"type": "setCameraKey", "frame": 192, "position": [10, 24.5, 18], "target": [-3, -10, 3], "easing": "ease"})
 C.append({"type": "addCameraShake", "start": 128, "end": 192, "strength": 0.45, "frequency": 3.5})
 
 out = {"format": "b3d-studio-script", "version": 1, "title": "Tsunami harbour", "commands": C}
