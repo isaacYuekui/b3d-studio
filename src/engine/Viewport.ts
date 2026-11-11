@@ -9,6 +9,7 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { Camera } from '@babylonjs/core/Cameras/camera';
 import { DepthOfFieldEffectBlurLevel } from '@babylonjs/core/PostProcesses/depthOfFieldEffect';
 import { cameraFov, equivalentFocal } from '../core/lens';
+import { particlesAt } from '../core/particles';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { PointLight } from '@babylonjs/core/Lights/pointLight';
@@ -53,7 +54,7 @@ import { PRIMITIVES, isRenderable, worldOf } from '../core/types';
 import type { PrimitiveType } from '../core/types';
 import { primitiveMesh } from '../core/mesh/primitives';
 import { catalogNow, hdriUrl, loadCatalog, modelUrl, textureUrl } from './library';
-import { evaluateCamera, evaluateTransform, transformEdit } from '../core/animation';
+import { animationOf, evaluateCamera, evaluateTransform, transformEdit } from '../core/animation';
 import { guessUnitScale, isUserAsset, updateUserModelMeta, userModelMetaNow, userModelUrl } from './userModels';
 
 class MissingModel extends Error {}
@@ -382,6 +383,11 @@ export class Viewport {
       if (docChanged || state.shading !== this.lastWireShading || state.selection !== this.lastSel || state.edit?.id !== this.lastEdit?.id) this.syncWire(state);
       this.lastWireShading = state.shading;
     }
+    if (docChanged || state.frame !== this.lastParticleFrame || state.shading !== this.lastParticleShading) {
+      this.syncParticles(state);
+      this.lastParticleFrame = state.frame;
+      this.lastParticleShading = state.shading;
+    }
     const editKey = state.edit ? `${state.edit.id}|${state.edit.mode}|${state.xray}` : '';
     const editChanged = editKey !== this.lastEditKey || state.edit !== this.lastEdit || (state.edit && docChanged);
     if (editChanged) this.syncEdit(state, editKey !== this.lastEditKey);
@@ -401,6 +407,85 @@ export class Viewport {
 
   private lastEdit: AppState['edit'] = null;
   private lastPose: AppState['pose'] = null;
+
+  // ---------------------------------------------------------------- particles
+
+  private particleMeshes = new Map<string, { key: string; mesh: Mesh; mat: PBRMaterial }>();
+  private lastParticleFrame = -1;
+  private lastParticleShading: AppState['shading'] = 'solid';
+
+  /** Particle systems: one thin-instanced mesh per emitter, positions worked out for this frame. */
+  private syncParticles(state: AppState) {
+    const doc = state.doc;
+    const fps = animationOf(doc).fps;
+    const live = new Set<string>();
+    const rendered = state.shading === 'rendered';
+    for (const id of doc.order) {
+      const o = doc.objects[id];
+      const e = this.entries.get(id);
+      if (!o?.particles || !o.visible) continue;
+      live.add(id);
+      const s = o.particles;
+      const key = `${s.shape}|${s.color}|${s.glow}`;
+      let pm = this.particleMeshes.get(id);
+      if (!pm || pm.key !== key) {
+        pm?.mesh.dispose();
+        pm?.mat.dispose();
+        const sc = this.scene;
+        const mesh =
+          s.shape === 'cube'
+            ? MeshBuilder.CreateBox(`${id}-particles`, { size: 1 }, sc)
+            : s.shape === 'flake'
+              ? MeshBuilder.CreatePolyhedron(`${id}-particles`, { type: 1, size: 0.5 }, sc)
+              : MeshBuilder.CreateSphere(`${id}-particles`, { diameter: 1, segments: 4 }, sc);
+        const mat = new PBRMaterial(`${id}-particles-mat`, sc);
+        const c = Color3.FromHexString(s.color);
+        mat.albedoColor = c;
+        mat.metallic = 0;
+        mat.roughness = s.shape === 'drop' ? 0.15 : 0.55;
+        mat.emissiveColor = c.scale(s.glow * 3);
+        mesh.material = mat;
+        mesh.isPickable = false;
+        mesh.alwaysSelectAsActiveMesh = true;
+        mesh.metadata = { particles: id };
+        pm = { key, mesh, mat };
+        this.particleMeshes.set(id, pm);
+      }
+      const f = particlesAt(doc, id, state.frame, fps);
+      const n = f.positions.length;
+      const buf = new Float32Array(Math.max(1, n) * 16);
+      const m = new Matrix();
+      const q = new Quaternion();
+      const up = Vector3.Up();
+      for (let i = 0; i < n; i++) {
+        const [x, y, z] = toBabylonVec(f.positions[i]);
+        const sz = f.sizes[i];
+        if (s.shape === 'drop') {
+          // Raindrops and water: stretched along their direction of travel.
+          const d = toBabylonVec(f.dirs[i]);
+          Quaternion.FromUnitVectorsToRef(up, new Vector3(d[0], d[1], d[2]), q);
+          Matrix.ComposeToRef(new Vector3(sz * 0.6, sz * 2.4, sz * 0.6), q, new Vector3(x, y, z), m);
+        } else {
+          Quaternion.RotationYawPitchRollToRef((f.spins[i] * Math.PI) / 180, (f.spins[i] * Math.PI) / 360, 0, q);
+          Matrix.ComposeToRef(new Vector3(sz, sz, sz), q, new Vector3(x, y, z), m);
+        }
+        m.copyToArray(buf, i * 16);
+      }
+      pm.mesh.thinInstanceSetBuffer('matrix', buf, 16, false);
+      pm.mesh.thinInstanceCount = n;
+      pm.mesh.setEnabled(n > 0);
+      // "Show Emitter" off: the emitter disappears in Rendered shading and videos.
+      if (e && state.shading !== 'wireframe') for (const mm of e.meshes) mm.visibility = s.hideEmitter && rendered ? 0 : 1;
+    }
+    for (const [id, pm] of this.particleMeshes)
+      if (!live.has(id)) {
+        pm.mesh.dispose();
+        pm.mat.dispose();
+        this.particleMeshes.delete(id);
+        const e = this.entries.get(id);
+        if (e && state.shading !== 'wireframe') for (const mm of e.meshes) mm.visibility = 1;
+      }
+  }
 
   // ---------------------------------------------------------------- wireframe shading
 

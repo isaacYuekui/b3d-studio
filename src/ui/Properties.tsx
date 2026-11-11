@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useApp, useCtx } from './context';
 import { NumberField } from './NumberField';
@@ -16,6 +16,8 @@ import { ALIGNS, FONTS, FONT_LABEL, MAX_TEXT_LENGTH, isFontLoaded, missingChars 
 import type { FontId, TextData } from '../core/text';
 import { loadFont } from '../engine/fonts';
 import { RIGID_SHAPES, RIGID_TYPES } from '../core/physics';
+import { PARTICLE_PRESETS, PARTICLE_SHAPES } from '../core/particles';
+import type { ParticleSettings } from '../core/particles';
 import type { RigidBody } from '../core/physics';
 import { bakePhysics, freePhysics } from './physicsUi';
 import { prepareBooleans } from './prepare';
@@ -91,6 +93,15 @@ export function Properties() {
       /* per session only */
     }
   };
+  // Entering Pose Mode shows the bones (Armature tab); Edit Mode shows the mesh tools (Object tab).
+  const poseId = useApp((s) => s.pose?.id ?? null);
+  const editId = useApp((s) => s.edit?.id ?? null);
+  useEffect(() => {
+    if (poseId) setTabState('data');
+  }, [poseId]);
+  useEffect(() => {
+    if (editId) setTabState('object');
+  }, [editId]);
 
   // Every field edit goes through preview+commit so scrubs and typed values are one undo step each.
   const commit = (cmd: Command) => {
@@ -790,9 +801,96 @@ function PhysicsSection({ id }: { id: string }) {
       )}
     </Section>
     <FractureSection id={id} />
+    <ParticlesSection id={id} />
     </>
   );
 }
+
+/** Particle system (Blender's Particles tab, Emitter): settings and one-tap presets. */
+function ParticlesSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const p = useApp((s) => s.doc.objects[id].particles);
+  const set = (particles: Partial<ParticleSettings> | null) => store.dispatch({ type: 'setParticles', id, particles }, { select: false });
+  const num = (key: 'count' | 'start' | 'end' | 'lifetime' | 'speed' | 'random' | 'gravity' | 'size' | 'sizeRandom' | 'glow', label: string, lo: number, hi: number, step: number, suffix = '', int = false) => (
+    <NumberField
+      label={label}
+      value={p![key]}
+      step={step}
+      dragRate={step / 10}
+      suffix={suffix}
+      onPreview={(v) => store.preview({ type: 'setParticles', id, particles: { [key]: clampN(v, lo, hi, int) } })}
+      onCommit={(v) => {
+        store.preview({ type: 'setParticles', id, particles: { [key]: clampN(v, lo, hi, int) } });
+        store.commitPreview();
+      }}
+      onCancel={() => store.cancelPreview()}
+    />
+  );
+  return (
+    <Section title="Particles" defaultOpen={!!p}>
+      <label className="prop-row">
+        <span>Emit particles</span>
+        <input type="checkbox" data-testid="particles-toggle" checked={!!p} onChange={(e) => set(e.target.checked ? {} : null)} />
+      </label>
+      <div className="prop-row wrap">
+        <span>Presets</span>
+        <div className="seg-text" role="group" aria-label="Particle presets">
+          {PARTICLE_PRESETS.map((pr) => (
+            <button key={pr.id} data-particle-preset={pr.id} onClick={() => set(pr.settings)}>
+              {pr.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {p && (
+        <>
+          {num('count', 'Number', 1, 20000, 50, '', true)}
+          {num('start', 'Start frame', -100000, 100000, 1, '', true)}
+          {num('end', 'End frame', -100000, 100000, 1, '', true)}
+          {num('lifetime', 'Lifetime', 1, 10000, 1, ' fr')}
+          {num('speed', 'Speed (normal)', -1000, 1000, 0.5, ' m/s')}
+          {num('random', 'Random speed', 0, 1000, 0.5, ' m/s')}
+          {num('gravity', 'Gravity', -10, 10, 0.1, ' ×')}
+          {num('size', 'Size', 0.001, 100, 0.01, ' m')}
+          {num('sizeRandom', 'Size variation', 0, 1, 0.05)}
+          <label className="prop-row">
+            <span>Shape</span>
+            <select value={p.shape} onChange={(e) => set({ shape: e.target.value as ParticleSettings['shape'] })}>
+              {PARTICLE_SHAPES.map((sh) => (
+                <option key={sh} value={sh}>{sh === 'drop' ? 'Drop (stretched)' : sh[0].toUpperCase() + sh.slice(1)}</option>
+              ))}
+            </select>
+          </label>
+          <label className="prop-row">
+            <span>Colour</span>
+            <input type="color" value={p.color} onChange={(e) => set({ color: e.target.value })} />
+          </label>
+          {num('glow', 'Glow', 0, 1, 0.1)}
+          <label className="prop-row">
+            <span>At the ground</span>
+            <select value={p.ground} onChange={(e) => set({ ground: e.target.value as ParticleSettings['ground'] })}>
+              <option value="none">Pass through</option>
+              <option value="stop">Land and stay</option>
+            </select>
+          </label>
+          <label className="prop-row">
+            <span>Hide emitter in renders</span>
+            <input type="checkbox" checked={p.hideEmitter} onChange={(e) => set({ hideEmitter: e.target.checked })} />
+          </label>
+          <div className="prop-actions">
+            <button className="btn" onClick={() => set({ seed: (p.seed + 1) % 100000 })}>New pattern</button>
+          </div>
+        </>
+      )}
+      <p className="prop-hint">Particles fly off the object's surface, fall with gravity and vanish after their lifetime — sparks, fountains, rain, snow, debris. No baking: scrub and play. For rain or snow, use a big plane high up as the emitter.</p>
+    </Section>
+  );
+}
+
+const clampN = (v: number, lo: number, hi: number, int: boolean) => {
+  const c = Math.max(lo, Math.min(hi, v));
+  return int ? Math.round(c) : c;
+};
 
 /** Cell Fracture: break the object into rigid pieces (Blender's Cell Fracture add-on). */
 function FractureSection({ id }: { id: string }) {

@@ -467,6 +467,7 @@ const selectedName = (page) => page.$eval('[data-outliner-id][aria-selected="tru
   const n1 = await importFile('tests/fixtures/vase-cm.glb');
   check('v0.5: GLB import adds the model', /Imported “vase-cm”/.test(n1) && (await objCount(page)) === 2, n1);
   await page.waitForTimeout(2500);
+  await page.click('[data-prop-tab="data"]');
   const size = Number(await page.locator('[aria-label="Size (longest side, m)"]').getAttribute('aria-valuenow'));
   check('v0.5: centimetre file converted to real metres', size > 0.2 && size < 0.6, `longest side ${size} m`);
   const grounded = await page.evaluate(() => {
@@ -980,6 +981,35 @@ const setNumber = async (page, scope, label, value) => {
   });
   check('v2.3: Pattern → Marble makes a procedural texture', pat.type === 'marble' && String(pat.tex).startsWith('pattern-marble'), JSON.stringify(pat));
   check('v2.3: no errors (materials)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Particles (v3.4): a preset from the Physics tab; particles move with the frame, no bake.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'sphere', id: 'src', name: 'Source', transform: { position: [0, 0, 1], scale: [0.2, 0.2, 0.2] } },
+      { type: 'setAnimation', start: 1, end: 60 },
+    ] });
+    s.select('src');
+    window.__b3d.viewport().frame(false);
+  });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('.prop-section-head:has-text("Particles")');
+  await page.click('[data-particle-preset="sparks"]');
+  const ps = await page.evaluate(() => window.__b3d.store.getState().doc.objects.src.particles);
+  check('v3.4: the Sparks preset sets up a particle system', ps?.count === 600 && ps.glow === 1 && ps.ground === 'stop', JSON.stringify(ps));
+  const count = (f) => page.evaluate((fr) => { window.__b3d.store.setFrame(fr); const m = window.__b3d.viewport().scene.getMeshByName('src-particles'); return { n: m?.thinInstanceCount ?? -1, on: m?.isEnabled() }; }, f);
+  const at1 = await count(1), at20 = await count(20), at20b = await count(20);
+  check('v3.4: particles appear over time and the same frame shows the same count', at20.n > at1.n && at20.n > 50 && at20.on && at20.n === at20b.n, JSON.stringify({ at1, at20, at20b }));
+  await page.screenshot({ path: `${shots}/particles.png` });
+  await page.click('[data-testid="particles-toggle"]');
+  const gone = await page.evaluate(() => !window.__b3d.viewport().scene.getMeshByName('src-particles') && !window.__b3d.store.getState().doc.objects.src.particles);
+  check('v3.4: turning particles off removes them', gone);
+  check('v3.4: no errors (particles)', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }
 

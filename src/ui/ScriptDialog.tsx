@@ -11,6 +11,7 @@ const EXAMPLES: { id: string; label: string; load: () => Promise<{ default: stri
   { id: 'modifiers', label: 'Modifier garden', load: () => import('../../examples/modifier-garden.b3d-script.json?raw') },
   { id: 'physics', label: 'Physics playground (video)', load: () => import('../../examples/physics-playground.b3d-script.json?raw') },
   { id: 'wall', label: 'Wall breach (fracture + physics)', load: () => import('../../examples/wall-breach.b3d-script.json?raw') },
+  { id: 'particles', label: 'Particle night (fountain, sparks, snow)', load: () => import('../../examples/particle-night.b3d-script.json?raw') },
   { id: 'scout-mech', label: 'Scout mech (modelled)', load: () => import('../../examples/scout-mech.b3d-script.json?raw') },
   { id: 'village-walk', label: 'Village walk (video)', load: () => import('../../examples/village-walk.b3d-script.json?raw') },
   { id: 'village-valley', label: 'Village valley (Roblox-ready)', load: () => import('../../examples/village-valley.b3d-script.json?raw') },
