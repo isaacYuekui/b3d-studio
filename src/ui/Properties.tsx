@@ -5,7 +5,7 @@ import { NumberField } from './NumberField';
 import { Icon } from './icons';
 import { subtree } from '../core/commands';
 import type { Command } from '../core/commands';
-import type { LightType, Vec3 } from '../core/types';
+import type { LightType, Material as SceneMaterial, Vec3 } from '../core/types';
 import { isRenderable } from '../core/types';
 import { runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
@@ -13,6 +13,8 @@ import { guessUnitScale, isUserAsset } from '../engine/userModels';
 import { TIMES } from '../core/sky';
 import { prepareBooleans } from './prepare';
 import type { Quality } from '../core/store';
+import { PATTERNS } from '../core/patterns';
+import type { Pattern, PatternType } from '../core/patterns';
 import type { TimeOfDay } from '../core/sky';
 import { worldOf } from '../core/types';
 import { EASINGS, isAnimated, transformAt, transformEdit } from '../core/animation';
@@ -24,6 +26,27 @@ import { transformVerts } from '../core/mesh/ops';
 import { centroid } from '../core/mesh/topology';
 
 const AXES = ['x', 'y', 'z'] as const;
+
+const PATTERN_LABEL: Record<PatternType, string> = { noise: 'Noise', voronoi: 'Voronoi (cells)', checker: 'Checker', bricks: 'Bricks', wood: 'Wood', marble: 'Marble', gradient: 'Gradient' };
+const PATTERN_DEFAULTS: Record<PatternType, Pattern> = {
+  noise: { type: 'noise', colorA: '#3b3f44', colorB: '#a9adb2', scale: 1, bump: 0.25 },
+  voronoi: { type: 'voronoi', colorA: '#20252b', colorB: '#8a939c', scale: 1, bump: 0.4 },
+  checker: { type: 'checker', colorA: '#1d1d1d', colorB: '#e8e8e8', scale: 1, bump: 0 },
+  bricks: { type: 'bricks', colorA: '#c9c2b4', colorB: '#8e3b2a', scale: 0.8, bump: 0.6 },
+  wood: { type: 'wood', colorA: '#5a3418', colorB: '#b07a45', scale: 0.6, bump: 0.15 },
+  marble: { type: 'marble', colorA: '#ebe8e2', colorB: '#4d4f55', scale: 0.4, bump: 0 },
+  gradient: { type: 'gradient', colorA: '#1b2a49', colorB: '#f2a65a', scale: 1, bump: 0 },
+};
+const EXTRA_LABEL = { clearcoat: 'Clearcoat', clearcoatRoughness: 'Coat roughness', transmission: 'Transmission (glass)', sheen: 'Sheen (fabric)', subsurface: 'Subsurface (skin)', anisotropy: 'Anisotropy (brushed)' } as const;
+/** One-tap looks, Blender-style Principled settings. */
+const MATERIAL_PRESETS: { name: string; material: Partial<SceneMaterial> }[] = [
+  { name: 'Car paint', material: { baseColor: '#9c1414', metallic: 0.6, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.03, transmission: 0, sheen: 0, subsurface: 0, anisotropy: 0, alpha: 1 } },
+  { name: 'Glass', material: { baseColor: '#e6f2f2', metallic: 0, roughness: 0.02, transmission: 1, ior: 1.5, clearcoat: 0, sheen: 0, subsurface: 0, anisotropy: 0, alpha: 1 } },
+  { name: 'Brushed metal', material: { baseColor: '#c8ccd0', metallic: 1, roughness: 0.3, anisotropy: 0.8, clearcoat: 0, transmission: 0, sheen: 0, subsurface: 0, alpha: 1 } },
+  { name: 'Velvet', material: { baseColor: '#4b1640', metallic: 0, roughness: 0.8, sheen: 1, sheenColor: '#ff9be8', clearcoat: 0, transmission: 0, subsurface: 0, anisotropy: 0, alpha: 1 } },
+  { name: 'Skin', material: { baseColor: '#d8a08a', metallic: 0, roughness: 0.5, subsurface: 0.6, subsurfaceColor: '#ff5a3c', clearcoat: 0, transmission: 0, sheen: 0, anisotropy: 0, alpha: 1 } },
+  { name: 'Plain', material: { clearcoat: 0, sheen: 0, transmission: 0, subsurface: 0, anisotropy: 0 } },
+];
 
 function Section({ title, children, defaultOpen = true }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -190,6 +213,42 @@ export function Properties() {
             </select>
           </label>
           {o.material.texture && scalar('Repeat', o.material.textureScale, 0.01, 1000, (v) => ({ type: 'setMaterial', id: o.id, material: { textureScale: v } }), 0.1)}
+          {!o.material.texture && (
+            <label className="prop-row">
+              <span>Pattern</span>
+              <select
+                id="mat-pattern"
+                aria-label="Procedural pattern"
+                value={o.material.pattern?.type ?? ''}
+                onChange={(e) => {
+                  const t = e.target.value as PatternType | '';
+                  store.dispatch({ type: 'setMaterial', id: o.id, material: { pattern: t ? { ...PATTERN_DEFAULTS[t], ...(o.material.pattern ? { colorA: o.material.pattern.colorA, colorB: o.material.pattern.colorB } : {}), type: t } : null } }, { select: false });
+                }}
+              >
+                <option value="">None</option>
+                {PATTERNS.map((t) => (
+                  <option key={t} value={t}>{PATTERN_LABEL[t]}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {!o.material.texture && o.material.pattern && (() => {
+            const p = o.material.pattern;
+            const setP = (patch: Partial<Pattern>): Command => ({ type: 'setMaterial', id: o.id, material: { pattern: { ...p, ...patch } } });
+            return (
+              <>
+                <label className="prop-row">
+                  <span>Colours</span>
+                  <span className="pair">
+                    <input type="color" aria-label="Pattern colour A" value={p.colorA} onChange={(e) => store.preview(setP({ colorA: e.target.value }))} onBlur={() => store.commitPreview()} />
+                    <input type="color" aria-label="Pattern colour B" value={p.colorB} onChange={(e) => store.preview(setP({ colorB: e.target.value }))} onBlur={() => store.commitPreview()} />
+                  </span>
+                </label>
+                {scalar('Scale', p.scale, 0.01, 100, (v) => setP({ scale: v }), 0.1)}
+                {scalar('Bump', p.bump, 0, 1, (v) => setP({ bump: v }))}
+              </>
+            );
+          })()}
           <label className="prop-row">
             <span>Base Color</span>
             <input
@@ -216,6 +275,30 @@ export function Properties() {
             />
           </label>
           {scalar('Strength', o.material.emissionStrength, 0, 100, (v) => ({ type: 'setMaterial', id: o.id, material: { emissionStrength: v } }), 0.1)}
+          <details className="mat-more" open={!!(o.material.clearcoat || o.material.sheen || o.material.transmission || o.material.subsurface || o.material.anisotropy)}>
+            <summary>More: clearcoat, glass, sheen, skin…</summary>
+            {(['clearcoat', 'clearcoatRoughness', 'transmission', 'sheen', 'subsurface', 'anisotropy'] as const).map((k) =>
+              scalar(EXTRA_LABEL[k], o.material[k] ?? (k === 'clearcoatRoughness' ? 0.03 : 0), 0, 1, (v) => ({ type: 'setMaterial', id: o.id, material: { [k]: v } })),
+            )}
+            {(o.material.transmission ?? 0) > 0 && scalar('IOR', o.material.ior ?? 1.5, 1, 3, (v) => ({ type: 'setMaterial', id: o.id, material: { ior: v } }))}
+            {(o.material.sheen ?? 0) > 0 && (
+              <label className="prop-row">
+                <span>Sheen colour</span>
+                <input type="color" aria-label="Sheen colour" value={o.material.sheenColor ?? '#ffffff'} onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, material: { sheenColor: e.target.value } })} onBlur={() => store.commitPreview()} />
+              </label>
+            )}
+            {(o.material.subsurface ?? 0) > 0 && (
+              <label className="prop-row">
+                <span>Subsurface colour</span>
+                <input type="color" aria-label="Subsurface colour" value={o.material.subsurfaceColor ?? '#ff6040'} onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, material: { subsurfaceColor: e.target.value } })} onBlur={() => store.commitPreview()} />
+              </label>
+            )}
+            <div className="mat-presets">
+              {MATERIAL_PRESETS.map((pr) => (
+                <button key={pr.name} className="btn" data-mat-preset={pr.name} onClick={() => store.dispatch({ type: 'setMaterial', id: o.id, material: pr.material }, { select: false })}>{pr.name}</button>
+              ))}
+            </div>
+          </details>
         </Section>
       )}
 

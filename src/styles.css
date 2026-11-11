@@ -572,3 +572,7 @@ button.vp-mode.posing { background: #1f4f7a; border-color: #4fb0ff; color: #fff;
 .vp-radius input { width: 58px; height: calc(var(--tap) - 10px); background: var(--bg-btn); border: 0; border-radius: var(--radius); padding: 0 6px; }
 .join-pick { display: inline-flex; gap: 4px; align-items: center; min-width: 0; }
 .join-pick select { max-width: 130px; }
+.mat-more { margin-top: 4px; }
+.mat-more summary { cursor: pointer; font-size: 12px; color: var(--text-dim); padding: 6px 0; }
+.mat-presets { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 0; }
+.pair { display: inline-flex; gap: 6px; }

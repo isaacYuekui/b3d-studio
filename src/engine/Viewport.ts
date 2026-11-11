@@ -57,6 +57,7 @@ import { buildVertexData } from './geometry';
 import { subtree } from '../core/commands';
 import { EditOverlay } from './EditOverlay';
 import { rippleNormalTexture } from './water';
+import { isSharedTexture, patternColorTexture, patternNormalTexture } from './patternTexture';
 import { proportionalWeights } from '../core/mesh/proportional';
 import { TerrainPlugin } from './terrainMaterial';
 import { MeshoptSimplifier } from 'meshoptimizer';
@@ -1100,10 +1101,19 @@ export class Viewport {
 
   /** Photo-scanned PBR maps from the library (colour, normal, AO/roughness/metal). */
   private applyTexture(mat: PBRMaterial, m: SceneMaterial, prev?: SceneMaterial) {
-    if (prev && prev.texture === m.texture && prev.textureScale === m.textureScale) return;
-    for (const t of [mat.albedoTexture, mat.bumpTexture, mat.metallicTexture]) t?.dispose();
+    if (prev && prev.texture === m.texture && prev.textureScale === m.textureScale && prev.pattern === m.pattern) return;
+    for (const t of [mat.albedoTexture, mat.bumpTexture, mat.metallicTexture]) if (t && !isSharedTexture(t)) t.dispose();
     mat.albedoTexture = mat.bumpTexture = mat.metallicTexture = null;
     mat.useAmbientOcclusionFromMetallicTextureRed = mat.useRoughnessFromMetallicTextureGreen = mat.useMetallnessFromMetallicTextureBlue = false;
+    if (!m.texture && m.pattern) {
+      // Procedural pattern: colour map + bump from the same values (Blender: texture → colour and bump).
+      mat.albedoTexture = patternColorTexture(this.scene, m.pattern);
+      if (m.pattern.bump > 0) {
+        mat.bumpTexture = patternNormalTexture(this.scene, m.pattern.type, m.pattern.scale, m.pattern.bump);
+        mat.invertNormalMapX = mat.invertNormalMapY = false;
+      }
+      return;
+    }
     if (!m.texture) return;
     const id = m.texture;
     const maps = catalogNow()?.textures.find((t) => t.id === id)?.maps ?? ['diff', 'nor', 'arm'];
@@ -1195,6 +1205,9 @@ export class Viewport {
       mat.emissiveColor = Color3.FromHexString(m.emission).toLinearSpace().scale(m.emissionStrength);
       mat.alpha = m.alpha;
       mat.transparencyMode = m.alpha < 1 ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
+      // A pattern carries the colour itself.
+      if (!m.texture && m.pattern) mat.albedoColor = Color3.White();
+      applyPrincipled(mat, m);
     }
     if (e.material && o.water && (o.water !== prev?.water || o.material !== prev?.material)) {
       const mat = e.material;
@@ -1817,4 +1830,38 @@ function robloxReadme(report: { parts: number; triangles: number; maxTriangles: 
     '   Terrain Editor → Settings → Decoration: ON adds swaying grass.',
   );
   return lines.join('\n') + '\n';
+}
+
+/** Blender Principled BSDF extras mapped onto Babylon's PBR material layers. */
+function applyPrincipled(mat: PBRMaterial, m: SceneMaterial) {
+  const cc = m.clearcoat ?? 0;
+  mat.clearCoat.isEnabled = cc > 0;
+  if (cc > 0) {
+    mat.clearCoat.intensity = cc;
+    mat.clearCoat.roughness = m.clearcoatRoughness ?? 0.03;
+  }
+  const sh = m.sheen ?? 0;
+  mat.sheen.isEnabled = sh > 0;
+  if (sh > 0) {
+    mat.sheen.intensity = sh;
+    mat.sheen.color = Color3.FromHexString(m.sheenColor ?? '#ffffff').toLinearSpace();
+  }
+  const tr = m.transmission ?? 0;
+  mat.subSurface.isRefractionEnabled = tr > 0;
+  if (tr > 0) {
+    mat.subSurface.refractionIntensity = tr;
+    mat.subSurface.indexOfRefraction = m.ior ?? 1.5;
+    mat.subSurface.tintColor = Color3.FromHexString(m.baseColor).toLinearSpace();
+  }
+  const ss = m.subsurface ?? 0;
+  mat.subSurface.isTranslucencyEnabled = ss > 0;
+  if (ss > 0) {
+    mat.subSurface.translucencyIntensity = ss;
+    mat.subSurface.thicknessTexture = null;
+    mat.subSurface.maximumThickness = 1;
+    if (!tr) mat.subSurface.tintColor = Color3.FromHexString(m.subsurfaceColor ?? '#ff6040').toLinearSpace();
+  }
+  const an = m.anisotropy ?? 0;
+  mat.anisotropy.isEnabled = an > 0;
+  if (an > 0) mat.anisotropy.intensity = an;
 }

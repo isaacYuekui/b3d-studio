@@ -16,6 +16,8 @@ import type { ArmatureData, Bone, BonePose, Background, LightData, LightType, Ma
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
 import { compact } from './mesh/topology';
+import { PATTERNS } from './patterns';
+import type { PatternType } from './patterns';
 import { apply as applyM4, invert as invertM4, mul as mulM4, worldMatrix } from './rig';
 import { EDIT_OPS, runEditSteps } from './mesh/script';
 import { DEFAULT_OUTFIT, HUMAN_PRESETS, humanPreset } from './humans';
@@ -867,6 +869,25 @@ function validateMaterial(v: unknown, partial: boolean): Partial<Material> {
   if (v.alpha !== undefined) m.alpha = inRange(v.alpha, 0, 1) ? v.alpha : fail('material.alpha must be 0..1');
   if (v.emissionStrength !== undefined)
     m.emissionStrength = inRange(v.emissionStrength, 0, 1000) ? v.emissionStrength : fail('material.emissionStrength must be 0..1000');
+  for (const k of ['clearcoat', 'clearcoatRoughness', 'sheen', 'transmission', 'subsurface', 'anisotropy'] as const)
+    if (v[k] !== undefined) m[k] = inRange(v[k], 0, 1) ? (v[k] as number) : fail(`material.${k} must be 0..1`);
+  for (const k of ['sheenColor', 'subsurfaceColor'] as const) if (v[k] !== undefined) m[k] = isColor(v[k]) ? (v[k] as string) : fail(`material.${k} must be #rrggbb`);
+  if (v.ior !== undefined) m.ior = inRange(v.ior, 1, 3) ? (v.ior as number) : fail('material.ior must be 1..3');
+  if (v.pattern !== undefined) {
+    const p = v.pattern;
+    if (p === null) m.pattern = null;
+    else {
+      if (!isRecord(p) || !(PATTERNS as readonly unknown[]).includes(p.type)) fail(`material.pattern.type must be one of ${PATTERNS.join(', ')}`);
+      const q = p as Record<string, unknown>;
+      m.pattern = {
+        type: q.type as PatternType,
+        colorA: q.colorA === undefined ? '#2b2b2b' : isColor(q.colorA) ? q.colorA : fail('material.pattern.colorA must be #rrggbb'),
+        colorB: q.colorB === undefined ? '#d8d8d8' : isColor(q.colorB) ? q.colorB : fail('material.pattern.colorB must be #rrggbb'),
+        scale: q.scale === undefined ? 1 : inRange(q.scale, 0.01, 100) ? (q.scale as number) : fail('material.pattern.scale must be 0.01..100 (repeats per metre)'),
+        bump: q.bump === undefined ? 0.3 : inRange(q.bump, 0, 1) ? (q.bump as number) : fail('material.pattern.bump must be 0..1'),
+      };
+    }
+  }
   return m;
 }
 

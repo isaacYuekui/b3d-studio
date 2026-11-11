@@ -55,6 +55,21 @@ export interface Material {
   texture: string | null;
   /** How many times the texture repeats across each face. */
   textureScale: number;
+  /** Principled extras (Blender names), all 0..1 unless noted; absent = off. */
+  clearcoat?: number;
+  clearcoatRoughness?: number;
+  sheen?: number;
+  sheenColor?: string;
+  /** Glass-like see-through with refraction; ior 1..3 (glass 1.5, water 1.33). */
+  transmission?: number;
+  ior?: number;
+  /** Light scattering under the surface (skin, wax, leaves); tinted by subsurfaceColor. */
+  subsurface?: number;
+  subsurfaceColor?: string;
+  /** Stretched highlights (brushed metal). */
+  anisotropy?: number;
+  /** Procedural pattern (used when no library texture is set). */
+  pattern?: import('./patterns').Pattern | null;
 }
 
 export interface LightData {
