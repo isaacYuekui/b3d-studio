@@ -8,6 +8,7 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 ## Ocean waves and explosions (v3.6)
 
 - **Add → Water / Ocean**: a 40 m sea with real waves. Water tab: **Calm / Choppy / Rough / Storm**, wave height, wave size, direction — the surface itself moves frame by frame, like Blender's Ocean modifier (simplified: no foam or spray)
+- New example: *Storm at the lighthouse* — rough sea, rain blown sideways, a sweeping lamp
 - Particle presets **Explosion** (a fire burst) and **Dust cloud** start at the current frame — combine with Cell Fracture and physics for blasts
 
 ## Fire and smoke (v3.5)
