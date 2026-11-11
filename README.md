@@ -5,6 +5,10 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Follow camera (v1.7)
+
+- `cameraMove` with `"move":"follow"` (third-person, behind the person) or `"track"` (side shot alongside them), `"on": "<person id>"`. The camera lags a touch like a real operator. Pair it with `walkPath` for walk-through videos
+
 ## People walk paths (v1.6)
 
 - `walkPath`: a person walks (or runs) along a list of points, turning smoothly at corners, with feet following the terrain up and down hills. The timeline grows to fit the walk

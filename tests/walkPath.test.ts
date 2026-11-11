@@ -63,3 +63,30 @@ describe.runIf(have)('walkPath', () => {
     expect(() => validateCommand({ type: 'walkPath', id: 'bob', points: [[0, 0], [1, 1]], start: 1, action: 'fly' })).toThrow(/walk or run/);
   });
 });
+
+describe.runIf(have)('follow camera', () => {
+  let n = 0;
+  const ids = () => `f${n++}`;
+  const run = (doc: SceneDoc, cmd: unknown) => applyCommand(doc, validateCommand(cmd), ids).doc;
+  it('stays a few metres behind a walking person, looking ahead of them, without jitter', () => {
+    let doc: SceneDoc = { objects: {}, order: [] };
+    doc = run(doc, { type: 'addHuman', id: 'ana', preset: 'male' });
+    doc = run(doc, { type: 'walkPath', id: 'ana', points: [[0, 0], [0, 20], [15, 20]], start: 1 });
+    const end = doc.animation!.end;
+    doc = run(doc, { type: 'cameraMove', move: 'follow', on: 'ana', start: 1, end });
+    const keys = doc.animation!.camera;
+    expect(keys.length).toBeGreaterThan(100);
+    for (const k of keys.filter((_, i) => i > 20 && i % 15 === 0)) {
+      const p = transformAt(doc, 'ana', k.frame)!.position;
+      const d = Math.hypot(k.position[0] - p[0], k.position[1] - p[1]);
+      expect(d).toBeGreaterThan(2);
+      expect(d).toBeLessThan(7);
+    }
+    // On the first leg (walking +Y) the camera is behind: smaller y than the person.
+    const mid = keys.find((k) => k.frame >= 200)!;
+    expect(mid.position[1]).toBeLessThan(transformAt(doc, 'ana', mid.frame)!.position[1]);
+    // Smooth: frame-to-frame camera steps stay small.
+    for (let i = 1; i < keys.length; i++) expect(Math.hypot(...[0, 1, 2].map((j) => keys[i].position[j] - keys[i - 1].position[j]))).toBeLessThan(0.4);
+    expect(() => applyCommand(doc, validateCommand({ type: 'cameraMove', move: 'follow', start: 1, end: 10 }))).toThrow(/needs "on"/);
+  });
+});

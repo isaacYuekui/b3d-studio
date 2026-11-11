@@ -186,3 +186,16 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
 - Clearance (v1.4): the path rises smoothly over trees, rocks, houses and every scatter copy it
   would otherwise pass through or graze (1.5 m above them). The object being filmed is not
   counted, so close orbits stay close. `"clearance": false` turns it off.
+
+### Following a person (v1.7)
+
+```json
+{"type":"walkPath","id":"ana","points":[[-26,-9],[-12,-3.5],[0,0],[10,4.5]],"start":1}
+{"type":"cameraMove","move":"follow","on":"ana","start":1,"end":560}
+```
+
+- `follow`: behind and slightly to the right of the subject, looking 2 m ahead of them at chest
+  height. `track`: beside them (`"degrees": -90` puts the camera on the left).
+- `distance` (default 4 m for follow, 5 m for track) and `height` (default 1.6 m).
+- The camera eases towards where it should be each frame, so turns feel natural. `on` is
+  required. Obstacle clearance doesn't apply, because these are ground-level shots.
