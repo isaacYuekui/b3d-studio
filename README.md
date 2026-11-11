@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Materials (v2.3)
+
+- **More: clearcoat, glass, sheen, skin…** in the Material panel, matching Blender's Principled BSDF: Clearcoat (car paint), Transmission + IOR (glass, water), Sheen (velvet, cloth), Subsurface (skin, wax, leaves), Anisotropy (brushed metal)
+- One-tap presets: Car paint, Glass, Brushed metal, Velvet, Skin, Plain
+- **Pattern** (procedural textures, like Blender's texture nodes): Noise, Voronoi, Checker, Bricks, Wood, Marble, Gradient, with two colours, scale and bump. They tile seamlessly and need no downloads
+- New example: *Materials showcase*
+
 ## Edit tools (v2.2)
 
 - **Snapping** (magnet button, ⇧ Tab): moves in 0.25 m steps, rotations in 15°, scale in 0.1, in Object and Edit Mode

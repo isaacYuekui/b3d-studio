@@ -245,3 +245,18 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   piece stays.
 - `join` copies the other objects' shapes into `id`, with their modifiers applied and placed
   exactly where they were, then deletes them. Objects that have children can't be joined.
+
+## Materials (v2.3)
+
+```json
+{"type":"setMaterial","id":"car","material":{"baseColor":"#9c1414","metallic":0.6,"roughness":0.35,"clearcoat":1,"clearcoatRoughness":0.03}}
+{"type":"setMaterial","id":"vase","material":{"baseColor":"#e6f2f2","roughness":0.02,"transmission":1,"ior":1.5}}
+{"type":"setMaterial","id":"wall","material":{"pattern":{"type":"bricks","colorA":"#c9c2b4","colorB":"#8e3b2a","scale":0.8,"bump":0.6}}}
+```
+
+- Principled extras (0–1 unless noted): `clearcoat`, `clearcoatRoughness`, `sheen` + `sheenColor`,
+  `transmission` + `ior` (1–3), `subsurface` + `subsurfaceColor`, `anisotropy`.
+- `pattern`: `{type, colorA, colorB, scale, bump}`.
+  - `type` is one of `noise`, `voronoi`, `checker`, `bricks`, `wood`, `marble`, `gradient`.
+  - `scale` is repeats per metre (0.01–100). `bump` is 0–1.
+  - Patterns apply when `texture` is null. `"pattern": null` removes one.
