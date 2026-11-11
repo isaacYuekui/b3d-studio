@@ -20,6 +20,25 @@ export type Shading = 'solid' | 'rendered';
 export const QUALITIES = ['fast', 'balanced', 'best'] as const;
 export type Quality = (typeof QUALITIES)[number];
 const QUALITY_KEY = 'b3d.quality';
+
+/** Small per-device preferences (snap, proportional editing). Storage may be unavailable. */
+function loadPref<T>(key: string, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    if (v === null) return fallback;
+    const parsed = JSON.parse(v) as T;
+    return typeof parsed === typeof fallback ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function savePref(key: string, v: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(v));
+  } catch {
+    /* per session only */
+  }
+}
 function loadQuality(): Quality {
   try {
     const q = localStorage.getItem(QUALITY_KEY);
@@ -50,6 +69,10 @@ export interface AppState {
   edit: EditState | null;
   /** See-through display: select hidden vertices too. */
   xray: boolean;
+  /** Snap moves / rotations / scales to increments (0.25 m, 15°, 0.1). Saved per device. */
+  snap: boolean;
+  /** Edit mode: proportional editing, nearby vertices follow within `radius` metres. Saved per device. */
+  proportional: { on: boolean; radius: number };
   /** Edit mode, touch: taps add to / remove from the selection (Shift does this on a keyboard). */
   addSelect: boolean;
   /** Edit mode: next drag on the viewport draws a selection box (B). */
@@ -93,6 +116,8 @@ export class Store {
       quality: loadQuality(),
       edit: null,
       xray: false,
+      snap: loadPref('b3d.snap', false),
+      proportional: loadPref('b3d.proportional', { on: false, radius: 1 }),
       addSelect: false,
       boxMode: false,
       pose: null,
@@ -289,6 +314,17 @@ export class Store {
 
   setXray(xray: boolean) {
     this.set({ xray });
+  }
+
+  setSnap(snap: boolean) {
+    savePref('b3d.snap', snap);
+    this.set({ snap });
+  }
+
+  setProportional(p: { on: boolean; radius: number }) {
+    const v = { on: p.on, radius: Math.min(100, Math.max(0.01, p.radius)) };
+    savePref('b3d.proportional', v);
+    this.set({ proportional: v });
   }
 
   setPose(pose: AppState['pose']) {

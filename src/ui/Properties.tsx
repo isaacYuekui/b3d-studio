@@ -604,6 +604,7 @@ function ModifiersSection({ id }: { id: string }) {
         </div>
       )}
       <BooleanRow id={id} />
+      <JoinRow id={id} />
       <p className="prop-hint">Subdivision rounds the shape off; Keep sharp edges makes hard-surface parts (armour, cars) curved but crisp. Bevel rounds every edge sharper than 30° so it catches the light. Mirror X: model one half, the other follows.</p>
     </Section>
   );
@@ -638,7 +639,7 @@ function BooleanRow({ id }: { id: string }) {
         <div className="seg-text" role="radiogroup" aria-label="Boolean operation">
           {(['difference', 'union', 'intersect'] as const).map((k) => (
             <button key={k} role="radio" aria-checked={op === k} className={op === k ? 'active' : ''} data-bool-op={k} onClick={() => setOp(k)}>
-              {k === 'difference' ? 'Cut' : k === 'union' ? 'Join' : 'Keep overlap'}
+              {k === 'difference' ? 'Cut' : k === 'union' ? 'Union' : 'Intersect'}
             </button>
           ))}
         </div>
@@ -658,6 +659,38 @@ function BooleanRow({ id }: { id: string }) {
         </button>
       </div>
     </>
+  );
+}
+
+/** Join: pull another object into this one (one object, shapes untouched), like Ctrl J. */
+function JoinRow({ id }: { id: string }) {
+  const { store } = useCtx();
+  const objects = useApp((s) => s.doc.objects);
+  const order = useApp((s) => s.doc.order);
+  const [other, setOther] = useState('');
+  const meshes = order.filter((k) => k !== id && objects[k] && (objects[k].type === 'mesh' || ['cube', 'sphere', 'cylinder', 'cone', 'torus', 'capsule', 'plane'].includes(objects[k].type)) && !order.some((c) => objects[c]?.parentId === k));
+  if (!meshes.length) return null;
+  return (
+    <label className="prop-row">
+      <span>Join</span>
+      <span className="join-pick">
+        <select id="join-other" aria-label="Object to join into this one" value={other} onChange={(e) => setOther(e.target.value)}>
+          <option value="">Pick an object…</option>
+          {meshes.map((k) => (
+            <option key={k} value={k}>{objects[k].name}</option>
+          ))}
+        </select>
+        <button className="btn" data-testid="join-apply" disabled={!other} onClick={() => {
+          try {
+            store.dispatch({ type: 'join', id, others: [other] }, { select: false });
+            setOther('');
+            store.notify('Joined into one object (Separate by Loose Parts splits it again)');
+          } catch (e) {
+            store.notify(e instanceof Error ? e.message : String(e));
+          }
+        }}>Join</button>
+      </span>
+    </label>
   );
 }
 

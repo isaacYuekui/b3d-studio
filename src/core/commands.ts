@@ -15,6 +15,7 @@ import type { Animation, Easing, PoseKey } from './animation';
 import type { ArmatureData, Bone, BonePose, Background, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
+import { compact } from './mesh/topology';
 import { apply as applyM4, invert as invertM4, mul as mulM4, worldMatrix } from './rig';
 import { EDIT_OPS, runEditSteps } from './mesh/script';
 import { DEFAULT_OUTFIT, HUMAN_PRESETS, humanPreset } from './humans';
@@ -106,6 +107,10 @@ export type Command =
   | { type: 'setWorld'; world: Partial<World> }
   /** Ready-made camera move (orbit, dolly, flyover, crane, pan) as camera keys between start and end. */
   | { type: 'cameraMove'; move: CameraMoveKind; target?: Vec3; on?: string; start?: number; end?: number; distance?: number; height?: number; heading?: number; degrees?: number; smooth?: boolean; clearance?: boolean }
+  /** Separate: faces (or each loose part) of a mesh into new objects, like Blender's P. */
+  | { type: 'separate'; id: string; faces?: number[]; mode?: 'selection' | 'loose' }
+  /** Join other meshes into `id` (one object, shapes kept as they are), like Blender's Ctrl J. */
+  | { type: 'join'; id: string; others: string[] }
   /** Boolean (applied): cut / join / intersect `cutter` into `id`. The cutter is hidden unless keepCutter. */
   | { type: 'boolean'; id: string; cutter: string; op: BooleanOp; keepCutter?: boolean }
   /** Lake / sea / river surface: a flat plane at z = level with animated ripples. */
@@ -604,6 +609,54 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
       // Picking another sky by hand leaves the time-of-day preset.
       if (cmd.world.hdri !== undefined && cmd.world.time === undefined) delete world.time;
       return { doc: { ...doc, world }, created: [] };
+    }
+
+    case 'separate': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      const m = o.mesh!;
+      // Groups of faces that become their own object.
+      let groups: number[][];
+      if ((cmd.mode ?? 'selection') === 'loose') groups = looseParts(m).slice(1);
+      else {
+        const pick = [...new Set(cmd.faces ?? [])].filter((f) => f >= 0 && f < m.faces.length);
+        if (!pick.length) throw new CommandError('Select the faces to separate first');
+        if (pick.length === m.faces.length) throw new CommandError('That is the whole mesh: select only part of it');
+        groups = [pick];
+      }
+      if (!groups.length) throw new CommandError(`${o.name} is all one piece: nothing to separate`);
+      const taken = new Set(groups.flat());
+      let next = withObject(doc, { ...o, mesh: compact({ ...m, faces: m.faces.filter((_, i) => !taken.has(i)) }).mesh });
+      const created: string[] = [];
+      for (const g of groups) {
+        const newId = idGen();
+        const part: SceneObject = { ...clone(o), id: newId, name: uniqueName(next, o.name), mesh: compact({ ...m, faces: g.map((i) => m.faces[i]) }).mesh };
+        next = { ...next, objects: { ...next.objects, [newId]: part }, order: [...next.order, newId] };
+        created.push(newId);
+      }
+      return { doc: next, created };
+    }
+
+    case 'join': {
+      const t = asMesh(requireObj(doc, cmd.id));
+      const others = [...new Set(cmd.others)].filter((x) => x !== t.id).map((x) => asMesh(requireObj(doc, x)));
+      if (!others.length) throw new CommandError('Pick at least one other object to join');
+      for (const o of others) {
+        if (doc.order.some((k) => doc.objects[k]?.parentId === o.id)) throw new CommandError(`${o.name} has children: unparent them first`);
+        if (isAncestor(doc, o.id, t.id)) throw new CommandError(`${o.name} is a parent of ${t.name}`);
+      }
+      const inv = invertM4(worldMatrix(doc, t.id, 1));
+      const vertices = [...t.mesh!.vertices];
+      const faces = [...t.mesh!.faces];
+      for (const o of others) {
+        const M = mulM4(inv, worldMatrix(doc, o.id, 1));
+        const om = applyModifiers(o.mesh!, o.modifiers);
+        const base = vertices.length;
+        for (const v of om.vertices) vertices.push(applyM4(M, v).map((x) => Math.round(x * 1e5) / 1e5) as Vec3);
+        for (const f of om.faces) faces.push(f.map((i) => i + base));
+      }
+      if (vertices.length > LIMITS.vertices || faces.length > LIMITS.faces) throw new CommandError('The joined mesh would be too large');
+      const joined = withObject(doc, { ...t, mesh: { ...t.mesh!, vertices, faces } });
+      return applyCommand(joined, { type: 'delete', ids: others.map((o) => o.id) }, idGen);
     }
 
     case 'boolean': {
@@ -1399,6 +1452,17 @@ export function validateCommand(v: unknown, depth = 0): Command {
       return { type: 'applyModifiers', id: v.id };
     case 'setWorld':
       return { type: 'setWorld', world: validateWorld(v.world) };
+    case 'separate': {
+      if (!isId(v.id)) fail('separate needs id');
+      const mode = v.mode ?? 'selection';
+      if (mode !== 'selection' && mode !== 'loose') fail('separate mode must be selection or loose');
+      const cmd: Extract<Command, { type: 'separate' }> = { type: 'separate', id: v.id, mode };
+      if (v.faces !== undefined) cmd.faces = Array.isArray(v.faces) && v.faces.length <= LIMITS.faces && v.faces.every((f) => Number.isInteger(f) && (f as number) >= 0) ? (v.faces as number[]) : fail('separate faces must be face indices');
+      return cmd;
+    }
+    case 'join':
+      if (!isId(v.id) || !Array.isArray(v.others) || !v.others.length || v.others.length > 1000 || !v.others.every(isId)) fail('join needs id and others (a list of object ids)');
+      return { type: 'join', id: v.id, others: [...(v.others as string[])] };
     case 'boolean': {
       if (!isId(v.id) || !isId(v.cutter)) fail('boolean needs id (the object) and cutter (the other object)');
       if (!(BOOLEAN_OPS as readonly unknown[]).includes(v.op ?? 'difference')) fail(`boolean op must be one of ${BOOLEAN_OPS.join(', ')}`);
@@ -1505,3 +1569,17 @@ export function validateCommand(v: unknown, depth = 0): Command {
 }
 
 export { PRIMITIVES };
+
+/** Faces grouped into connected pieces (sharing vertices), largest first. */
+export function looseParts(m: MeshData): number[][] {
+  const parent = m.vertices.map((_, i) => i);
+  const find = (x: number): number => (parent[x] === x ? x : (parent[x] = find(parent[x])));
+  for (const f of m.faces) for (let k = 1; k < f.length; k++) parent[find(f[k])] = find(f[0]);
+  const groups = new Map<number, number[]>();
+  m.faces.forEach((f, i) => {
+    const r = find(f[0]);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r)!.push(i);
+  });
+  return [...groups.values()].sort((a, b) => b.length - a.length);
+}

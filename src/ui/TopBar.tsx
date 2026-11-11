@@ -12,7 +12,7 @@ const MENUS: { label: string; items: MenuItem[] }[] = [
   { label: 'File', items: ['file.new', '-', 'file.script', '-', 'file.save', 'file.load', '-', 'file.importModel', '-', 'file.import', 'file.export', 'file.glb', 'file.roblox', 'file.video'] },
   { label: 'Edit', items: ['edit.undo', 'edit.redo', '-', 'edit.duplicate', 'edit.delete', '-', 'edit.hide', 'edit.unhideAll', 'edit.deselect'] },
   { label: 'Add', items: ADD_ITEMS },
-  { label: 'Object', items: ['mode.edit', '-', 'mesh.smooth', 'mesh.flat', '-', 'mod.mirrorX', 'mod.subdiv1', 'mod.subdiv2', 'mod.subdiv3', 'mod.subdiv0', 'mod.apply'] },
+  { label: 'Object', items: ['mode.edit', '-', 'mesh.smooth', 'mesh.flat', '-', 'object.separateLoose', 'view.snap', '-', 'mod.mirrorX', 'mod.subdiv1', 'mod.subdiv2', 'mod.subdiv3', 'mod.subdiv0', 'mod.apply'] },
   {
     label: 'Animation',
     items: ['anim.play', '-', 'anim.insertKey', 'anim.deleteKey', 'anim.clear', '-', 'anim.cameraKey', 'anim.camOrbit', 'anim.camDolly', 'anim.camFlyover', 'anim.camCrane', 'view.camera', '-', 'anim.prevKey', 'anim.nextKey', '-', 'file.video'],

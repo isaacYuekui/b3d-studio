@@ -256,6 +256,16 @@ export const actions = {
   'select.linked': { id: 'select.linked', label: 'Select Linked', shortcut: `${MOD} L`, enabled: editing, run: (c) => selectCmd(c.store, 'linked') },
   'select.loop': { id: 'select.loop', label: 'Select Edge Loop', shortcut: '⌥ click', enabled: editing, run: (c) => selectCmd(c.store, 'loop') },
   'select.box': { id: 'select.box', label: 'Box Select', shortcut: 'B', enabled: editing, run: (c) => c.store.setBoxMode(!c.store.getState().boxMode) },
+  'view.snap': { id: 'view.snap', label: 'Toggle Snapping', shortcut: '⇧ Tab', run: (c) => {
+    const on = !c.store.getState().snap;
+    c.store.setSnap(on);
+    c.store.notify(on ? 'Snapping on: moves in 0.25 m steps, rotations in 15°, scale in 0.1' : 'Snapping off');
+  } },
+  'edit.proportional': { id: 'edit.proportional', label: 'Toggle Proportional Editing', shortcut: 'O', run: (c) => {
+    const p = c.store.getState().proportional;
+    c.store.setProportional({ ...p, on: !p.on });
+    c.store.notify(!p.on ? `Proportional editing on: vertices within ${p.radius} m follow smoothly` : 'Proportional editing off');
+  } },
   'view.xray': { id: 'view.xray', label: 'Toggle X-Ray', shortcut: '⌥ Z', run: (c) => c.store.setXray(!c.store.getState().xray) },
   'mesh.extrude': meshOp('extrude', 'Extrude', 'E'),
   'mesh.inset': meshOp('inset', 'Inset Faces', 'I'),
@@ -267,6 +277,39 @@ export const actions = {
   'mesh.fill': meshOp('fill', 'Fill (Make Face)', 'F'),
   'mesh.flip': meshOp('flip', 'Flip Normals', '⌥ N'),
   'mesh.recalc': meshOp('recalc', 'Recalculate Normals', '⇧ N'),
+  'mesh.separate': {
+    id: 'mesh.separate',
+    label: 'Separate Selection',
+    shortcut: 'P',
+    enabled: (c) => !!c.store.getState().edit?.sel.faces.length,
+    run: (c) => {
+      const ed = c.store.getState().edit;
+      if (!ed) return;
+      if (!ed.sel.faces.length) return c.store.notify('Select faces to separate (face select mode helps: 3)');
+      try {
+        c.store.dispatch({ type: 'separate', id: ed.id, faces: ed.sel.faces, mode: 'selection' }, { select: false });
+        c.store.setEdit({ ...ed, sel: { verts: [], edges: [], faces: [] } });
+        c.store.notify('Separated into a new object (see the Outliner)');
+      } catch (e) {
+        c.store.notify(e instanceof Error ? e.message : String(e));
+      }
+    },
+  },
+  'object.separateLoose': {
+    id: 'object.separateLoose',
+    label: 'Separate by Loose Parts',
+    enabled: (c) => { const s = c.store.getState(); const o = s.selection ? s.doc.objects[s.selection] : null; return !!o?.mesh; },
+    run: (c) => {
+      const id = c.store.getState().selection;
+      if (!id) return;
+      try {
+        c.store.dispatch({ type: 'separate', id, mode: 'loose' }, { select: false });
+        c.store.notify('Each loose part is now its own object');
+      } catch (e) {
+        c.store.notify(e instanceof Error ? e.message : String(e));
+      }
+    },
+  },
   'mesh.smooth': { id: 'mesh.smooth', label: 'Shade Smooth', enabled: editable, run: (c) => setSmooth(c.store, true) },
   'mesh.flat': { id: 'mesh.flat', label: 'Shade Flat', enabled: editable, run: (c) => setSmooth(c.store, false) },
   'mod.subdiv0': subdiv(0),
@@ -596,6 +639,7 @@ export function shortcutFor(e: KeyboardEvent, editMode = false): ActionId | null
   const mod = e.metaKey || e.ctrlKey;
   const k = e.key.toLowerCase();
   const code = e.code;
+  if (code === 'Tab' && e.shiftKey && !mod && !e.altKey) return 'view.snap';
   if (code === 'Tab' && mod && !e.altKey) return 'mode.pose';
   if (code === 'Tab' && !mod && !e.altKey) return 'mode.edit';
   if (mod && !e.shiftKey && !e.altKey && /^Digit[0-3]$/.test(code)) return `mod.subdiv${code.slice(5)}` as ActionId;
@@ -624,6 +668,8 @@ export function shortcutFor(e: KeyboardEvent, editMode = false): ActionId | null
         case 'KeyF': return 'mesh.fill';
         case 'KeyB': return 'select.box';
         case 'KeyL': return 'select.linked';
+        case 'KeyO': return 'edit.proportional';
+        case 'KeyP': return 'mesh.separate';
         case 'KeyH': return null;
       }
     }

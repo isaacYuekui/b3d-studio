@@ -211,7 +211,7 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   bevelled, like Blender's *Limit Method: Angle*). Order in the stack: Mirror → Bevel → Subdivision.
 - **Subdivision `sharpAngle`** — edges sharper than this stay crisp (creased) while the rest rounds
   off: curved armour, car panels, product shapes. Without it, subdivision rounds everything.
-- **`boolean`** — `op`: `difference` (cut), `union` (join), `intersect` (keep the overlap). Works on
+- **`boolean`** — `op`: `difference` (cut), `union` (merge into one solid), `intersect` (keep the overlap). Works on
   closed solids (shapes, meshes). The result is applied to `id` (its modifiers are baked first);
   the cutter is hidden unless `"keepCutter": true`. Use it for panel lines, vents, windows, holes.
   In the app: select an object → Shape → Boolean → pick the other object → Apply boolean.
@@ -231,3 +231,17 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   - `delete`;
   - `easing` with `easing` (`linear`, `ease`, `easeIn`, `easeOut`, `constant`).
 - Moved or copied keys replace keys already on their new frame. One command is one undo step.
+
+## Separate and join (v2.2)
+
+```json
+{"type":"separate","id":"hull","faces":[4,5,9]}
+{"type":"separate","id":"hull","mode":"loose"}
+{"type":"join","id":"hull","others":["fin-l","fin-r"]}
+```
+
+- `separate` moves the listed faces into a new object with the same transform, material and
+  modifiers. `"mode": "loose"` gives every disconnected piece its own object, and the biggest
+  piece stays.
+- `join` copies the other objects' shapes into `id`, with their modifiers applied and placed
+  exactly where they were, then deletes them. Objects that have children can't be joined.
