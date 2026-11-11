@@ -172,6 +172,8 @@ export interface SceneObject {
   text?: import('./text').TextData;
   /** Water surfaces: animated ripples (size of the waves in metres, speed in m/s). */
   water?: import('./ocean').WaterSettings;
+  /** Floats on the water under it, bobbing and tilting with the waves. */
+  float?: import('./ocean').FloatSettings;
 }
 
 export const BACKGROUNDS = ['color', 'hdri', 'blurred'] as const;

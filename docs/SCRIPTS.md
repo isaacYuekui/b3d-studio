@@ -286,6 +286,21 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   Exact per frame (time = frame / fps). The surface is up to ~40,000 vertices, so very large seas get
   coarser — keep the sea around the camera.
 
+## Camera shake and floating (v3.7)
+
+```json
+{"type":"addCameraShake","start":48,"end":96,"strength":0.8,"frequency":11}
+{"type":"removeCameraShake","start":48}
+{"type":"setFloat","id":"boat","float":{"offset":-0.2}}
+```
+
+- `addCameraShake`: from `start` (frame) to `end` (default start + 24), `strength` in metres at the
+  camera's target (0.05 subtle … 1 violent, default 0.35), `frequency` jolts per second (default 8;
+  3–4 for a quake). Sharp hit, then dies away. Several can overlap. `removeCameraShake` without
+  `start` removes all.
+- `setFloat` (`null` stops it): the object's origin rides `offset` metres above the water under it
+  (negative sinks it in), bobbing and tilting with the waves; its position X/Y and heading stay yours.
+
 ## Cell Fracture (v3.3)
 
 ```json

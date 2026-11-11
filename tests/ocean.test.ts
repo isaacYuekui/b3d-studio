@@ -47,3 +47,34 @@ describe('ocean waves', () => {
     expect(ex.settings.shape).toBe('fire');
   });
 });
+
+describe('float on water', () => {
+  it('rides the waves: height follows the surface, tilts on slopes, nothing when off the water', async () => {
+    const { floatTransform, oceanDisplace } = await import('../src/core/ocean');
+    let doc = createDefaultDoc();
+    doc = applyCommand(doc, validateCommand({ type: 'addWater', id: 'sea', size: [40, 40], level: 1, height: 2, waves: 2 })).doc;
+    doc = applyCommand(doc, validateCommand({ type: 'add', primitive: 'cube', id: 'boat', transform: { position: [3, 4, 5], rotation: [0, 0, 30] } })).doc;
+    expect(floatTransform(doc, 'boat', 10)).toBeNull();
+    doc = applyCommand(doc, validateCommand({ type: 'setFloat', id: 'boat', float: { offset: -0.3 } })).doc;
+    const fps = 24;
+    const zs: number[] = [];
+    for (const f of [1, 7, 13, 19]) {
+      const t = floatTransform(doc, 'boat', f)!;
+      const want = 1 + oceanDisplace(3, 4, f / fps, doc.objects.sea.water!)[2] - 0.3;
+      expect(t.position[2]).toBeCloseTo(want, 3);
+      expect(t.position.slice(0, 2)).toEqual([3, 4]);
+      expect(t.rotation[2]).toBe(30);
+      zs.push(t.position[2]);
+    }
+    expect(new Set(zs.map((z) => z.toFixed(3))).size).toBeGreaterThan(1);
+    const tilts = [1, 5, 9, 13].map((f) => floatTransform(doc, 'boat', f)!.rotation.slice(0, 2));
+    expect(tilts.some(([x, y]) => Math.abs(x) + Math.abs(y) > 1)).toBe(true);
+    doc = applyCommand(doc, validateCommand({ type: 'add', primitive: 'cube', id: 'far', transform: { position: [100, 0, 0] } })).doc;
+    doc = applyCommand(doc, validateCommand({ type: 'setFloat', id: 'far', float: { offset: 0 } })).doc;
+    expect(floatTransform(doc, 'far', 5)).toBeNull();
+    expect(validateSceneDoc(JSON.parse(JSON.stringify(doc))).objects.boat.float).toEqual({ offset: -0.3 });
+    doc = applyCommand(doc, validateCommand({ type: 'setFloat', id: 'boat', float: null })).doc;
+    expect(doc.objects.boat.float).toBeUndefined();
+    expect(() => applyCommand(doc, validateCommand({ type: 'setFloat', id: 'sea', float: { offset: 0 } }))).toThrow(/Water can't float/);
+  });
+});

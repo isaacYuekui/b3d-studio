@@ -19,6 +19,7 @@ import { RIGID_SHAPES, RIGID_TYPES } from '../core/physics';
 import { PARTICLE_PRESETS, PARTICLE_SHAPES } from '../core/particles';
 import type { ParticleSettings } from '../core/particles';
 import type { WaterSettings } from '../core/ocean';
+import { SHAKE_PRESETS } from '../core/shake';
 import type { RigidBody } from '../core/physics';
 import { bakePhysics, freePhysics } from './physicsUi';
 import { prepareBooleans } from './prepare';
@@ -250,6 +251,7 @@ export function Properties() {
       {cur === 'data' && o.water && <WaterSection id={o.id} />}
       {cur === 'modifiers' && <ModifiersSection id={o.id} />}
       {cur === 'physics' && <PhysicsSection id={o.id} />}
+      {cur === 'physics' && !o.water && <FloatSection id={o.id} />}
       {cur === 'data' && o.type === 'armature' && <PoseSection id={o.id} />}
 
       {cur === 'material' && (
@@ -423,6 +425,7 @@ function SceneTab() {
         <p className="prop-hint">Select an object in the viewport or Outliner to edit its properties.</p>
       </Section>
       <CameraSection />
+      <ShakeSection />
       <ScenePhysicsSection />
       <WorldSection />
     </>
@@ -432,6 +435,40 @@ function SceneTab() {
 const TIME_LABEL: Record<TimeOfDay, string> = { sunrise: 'Sunrise', morning: 'Morning', noon: 'Noon', afternoon: 'Late afternoon', sunset: 'Sunset', dusk: 'Dusk', night: 'Night (moon)', overcast: 'Overcast', misty: 'Misty morning' };
 
 /** Scene-wide look for Rendered shading: HDRI sky, exposure, bloom, ambient occlusion. */
+/** Camera shake bursts (impacts, explosions, earthquakes) on top of the camera's motion. */
+function ShakeSection() {
+  const { store } = useCtx();
+  const anim = useApp((s) => s.doc.animation);
+  const frame = useApp((s) => s.frame);
+  const { fps } = animationOf({ animation: anim });
+  const shakes = anim?.shakes ?? [];
+  return (
+    <Section title="Camera shake" defaultOpen={shakes.length > 0}>
+      <div className="prop-row">
+        <span>Add at frame {frame}</span>
+      </div>
+      <div className="seg-text" role="group" aria-label="Camera shake presets">
+        {SHAKE_PRESETS.map((p) => (
+          <button key={p.id} data-shake={p.id} onClick={() => store.dispatch({ type: 'addCameraShake', start: frame, end: frame + Math.round(p.seconds * fps), ...p.shake }, { select: false })}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {shakes.map((s) => (
+        <div className="prop-row" key={s.start} data-shake-item={s.start}>
+          <span>
+            Frames {s.start}–{s.end} · {s.strength} m{s.frequency ? ` · ${s.frequency}/s` : ''}
+          </span>
+          <button className="btn" aria-label={`Remove the shake at frame ${s.start}`} onClick={() => store.dispatch({ type: 'removeCameraShake', start: s.start }, { select: false })}>
+            ✕
+          </button>
+        </div>
+      ))}
+      <p className="prop-hint">Shakes the scene camera from the current frame: a sharp hit that dies away. Seen through the camera (Camera view) and in videos — for impacts, explosions and earthquakes.</p>
+    </Section>
+  );
+}
+
 /** Scene camera lens (Blender's camera data): focal length and depth of field. */
 function CameraSection() {
   const { store } = useCtx();
@@ -974,6 +1011,38 @@ function ScenePhysicsSection() {
         <button className="btn" disabled={!active} onClick={() => freePhysics(store)}>Free bake</button>
       </div>
       <p className="prop-hint">Gravity 9.81 m/s² down. Turn on Physics → Rigid body on each object first. Freeing the bake removes the keyframes of the active objects.</p>
+    </Section>
+  );
+}
+
+/** Float on water: the object rides the waves of the water under it. */
+function FloatSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const f = useApp((s) => s.doc.objects[id].float);
+  const hasWater = useApp((s) => Object.values(s.doc.objects).some((o) => o.water));
+  if (!hasWater && !f) return null;
+  return (
+    <Section title="Float on water" defaultOpen>
+      <label className="prop-row">
+        <span>Float</span>
+        <input type="checkbox" data-testid="float-toggle" checked={!!f} onChange={(e) => store.dispatch({ type: 'setFloat', id, float: e.target.checked ? { offset: 0 } : null }, { select: false })} />
+      </label>
+      {f && (
+        <NumberField
+          label="Height above water"
+          value={f.offset}
+          step={0.05}
+          dragRate={0.005}
+          suffix=" m"
+          onPreview={(v) => store.preview({ type: 'setFloat', id, float: { offset: clampN(v, -100, 100, false) } })}
+          onCommit={(v) => {
+            store.preview({ type: 'setFloat', id, float: { offset: clampN(v, -100, 100, false) } });
+            store.commitPreview();
+          }}
+          onCancel={() => store.cancelPreview()}
+        />
+      )}
+      <p className="prop-hint">Bobs and tilts with the waves of the water under it (boats, buoys, debris). Negative height sinks it in: for a boat, about a third of its hull.</p>
     </Section>
   );
 }

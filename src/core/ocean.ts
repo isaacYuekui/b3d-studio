@@ -2,7 +2,8 @@
 // by a few Gerstner waves (rolling crests, flatter troughs). Worked out from the frame time, so
 // every frame of a video is exact and scrubbing matches playback.
 
-import type { Vec3 } from './types';
+import type { SceneDoc, Transform, Vec3 } from './types';
+import { animationOf, transformAt } from './animation';
 
 export interface WaterSettings {
   /** Size of the ripples/waves in metres (wavelength of the main wave = 8 × this). */
@@ -59,4 +60,44 @@ export function oceanGrid(sizeX: number, sizeY: number, w: WaterSettings): [numb
   // Keep the total under ~40k vertices.
   const k = Math.min(1, Math.sqrt(40000 / ((nx + 1) * (ny + 1))));
   return [Math.max(8, Math.floor(nx * k)), Math.max(8, Math.floor(ny * k))];
+}
+
+/** Float on water: the object's origin rides `offset` metres above the surface, tilting with the slope. */
+export interface FloatSettings {
+  offset: number;
+}
+
+/** Where a floating object is at a frame (null if it doesn't float or isn't over water). */
+export function floatTransform(doc: SceneDoc, id: string, frame: number): Transform | null {
+  const o = doc.objects[id];
+  if (!o?.float) return null;
+  const base = transformAt(doc, id, frame) ?? o.transform;
+  const t = frame / animationOf(doc).fps;
+  for (const wid of doc.order) {
+    const w = doc.objects[wid];
+    if (!w?.water || !w.mesh?.vertices.length || !w.visible || wid === id) continue;
+    const wt = transformAt(doc, wid, frame) ?? w.transform;
+    const sx = wt.scale[0] || 1, sy = wt.scale[1] || 1;
+    const lx = (base.position[0] - wt.position[0]) / sx, ly = (base.position[1] - wt.position[1]) / sy;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const v of w.mesh.vertices) {
+      x0 = Math.min(x0, v[0]);
+      x1 = Math.max(x1, v[0]);
+      y0 = Math.min(y0, v[1]);
+      y1 = Math.max(y1, v[1]);
+    }
+    if (lx < x0 || lx > x1 || ly < y0 || ly > y1) continue;
+    const ws = w.water;
+    const h = (x: number, y: number) => oceanDisplace(x, y, t, ws)[2] * (wt.scale[2] || 1);
+    const z = wt.position[2] + h(lx, ly) + o.float.offset;
+    // Tilt with the slope under it (measured over a metre either side), a little less than the water.
+    const slopeX = (h(lx + 1 / sx, ly) - h(lx - 1 / sx, ly)) / 2;
+    const slopeY = (h(lx, ly + 1 / sy) - h(lx, ly - 1 / sy)) / 2;
+    const deg = 180 / Math.PI;
+    const roll = Math.atan(slopeY) * deg * 0.8;
+    const pitch = -Math.atan(slopeX) * deg * 0.8;
+    const r = (v: number) => Math.round(v * 1e4) / 1e4;
+    return { ...base, position: [base.position[0], base.position[1], r(z)], rotation: [r(base.rotation[0] + roll), r(base.rotation[1] + pitch), base.rotation[2]] };
+  }
+  return null;
 }

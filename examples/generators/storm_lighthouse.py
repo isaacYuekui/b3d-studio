@@ -6,10 +6,22 @@ from pathlib import Path
 C = []
 
 
-def add(i, name, prim, mat, pos, scale=(1, 1, 1), rot=(0, 0, 0), mods=None, params=None):
+def box(sx, sy, sz):
+    """Box mesh centred on its origin, faces outward."""
+    hx, hy, hz = sx / 2, sy / 2, sz / 2
+    v = [[x, y, z] for z in (-hz, hz) for y in (-hy, hy) for x in (-hx, hx)]
+    f = [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [1, 3, 7, 5], [3, 2, 6, 7], [2, 0, 4, 6]]
+    return {"vertices": [[round(c, 4) for c in p] for p in v], "faces": f, "smooth": False}
+
+
+def add(i, name, prim, mat, pos, scale=(1, 1, 1), rot=(0, 0, 0), mods=None, params=None, mesh=None, parent=None):
     cmd = {"type": "add", "primitive": prim, "id": i, "name": name, "material": mat, "transform": {"position": list(pos), "rotation": list(rot), "scale": list(scale)}}
     if params:
         cmd["params"] = params
+    if mesh:
+        cmd["mesh"] = mesh
+    if parent:
+        cmd["parentId"] = parent
     C.append(cmd)
     if mods:
         C.append({"type": "setModifiers", "id": i, "modifiers": mods})
@@ -46,6 +58,12 @@ C.append({"type": "add", "primitive": "light", "id": "glow", "name": "Lamp glow"
 C.append({"type": "add", "primitive": "light", "id": "beam", "name": "Lamp beam", "light": {"type": "spot", "power": 60000, "color": "#ffe2a0", "shadows": False, "spotAngle": 18}, "transform": {"position": [6, 26, TOP + 0.75], "rotation": [84, 0, 0]}})
 for f, z in ((1, 0), (73, 360), (144, 710)):
     C.append({"type": "setKeyframe", "id": "beam", "frame": f, "easing": "linear", "transform": {"position": [6, 26, TOP + 0.75], "rotation": [84, 0, z], "scale": [1, 1, 1]}})
+
+# A small boat riding the swell (Float on water); cabin and mast are parented to the hull.
+add("boat", "Boat hull", "mesh", {"baseColor": "#d9d4c7", "roughness": 0.5}, (-5.5, 3, 0), rot=(0, 0, 28), mesh=box(4.2, 1.6, 0.9), mods={"bevel": {"width": 0.08, "segments": 2, "angle": 30}})
+C.append({"type": "setFloat", "id": "boat", "float": {"offset": -0.2}})
+add("cabin", "Cabin", "mesh", {"baseColor": "#8f2a22", "roughness": 0.5}, (-0.5, 0, 0.85), mesh=box(1.5, 1.1, 0.8), parent="boat")
+add("mast", "Mast", "cylinder", DARK, (0.9, 0, 1.6), scale=(0.05, 0.05, 1.3), parent="boat")
 
 # Rain from a hidden sheet above the shot, blown sideways.
 add("rain", "Rain cloud", "plane", {"baseColor": "#888888"}, (0, 8, 22), scale=(30, 26, 1))

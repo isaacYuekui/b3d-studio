@@ -10,7 +10,8 @@ import { Camera } from '@babylonjs/core/Cameras/camera';
 import { DepthOfFieldEffectBlurLevel } from '@babylonjs/core/PostProcesses/depthOfFieldEffect';
 import { cameraFov, equivalentFocal } from '../core/lens';
 import { isBillboard, particlesAt } from '../core/particles';
-import { oceanDisplace, oceanGrid } from '../core/ocean';
+import { floatTransform, oceanDisplace, oceanGrid } from '../core/ocean';
+import { shakeCamera } from '../core/shake';
 import type { ParticleFrame, ParticleSettings } from '../core/particles';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
@@ -1109,6 +1110,17 @@ export class Viewport {
       const t = evaluateTransform(keys, state.frame)!;
       this.applyTransform(e.node, { ...state.doc.objects[id], transform: t });
     }
+    // Objects floating on water ride the waves (after their own animation).
+    for (const id of state.doc.order) {
+      const o = state.doc.objects[id];
+      if (!o?.float) continue;
+      const e = this.entries.get(id);
+      if (!e || (this.dragging && id === sel)) continue;
+      const ft = floatTransform(state.doc, id, state.frame);
+      if (!ft) continue;
+      now.add(id);
+      this.applyTransform(e.node, { ...o, transform: ft });
+    }
     // Objects whose animation was removed go back to their own transform.
     for (const id of this.animated) {
       if (now.has(id)) continue;
@@ -1120,7 +1132,10 @@ export class Viewport {
     this.applyRigs(state);
     if (state.cameraView) {
       const cam = (anim?.camera.length ? evaluateCamera(anim.camera, state.frame) : null) ?? state.doc.camera;
-      if (cam) this.placeCamera(cam.position, cam.target);
+      if (cam) {
+        const c = shakeCamera(cam, anim?.shakes, state.frame, anim?.fps ?? 24);
+        this.placeCamera(c.position, c.target);
+      }
     }
   }
 

@@ -20,7 +20,8 @@ import { DEFAULT_RIGID, RIGID_SHAPES, RIGID_TYPES, simulate } from './physics';
 import { fracturePieces } from './fracture';
 import { DEFAULT_PARTICLES, PARTICLE_GROUND, PARTICLE_SHAPES } from './particles';
 import type { ParticleSettings } from './particles';
-import type { WaterSettings } from './ocean';
+import type { FloatSettings, WaterSettings } from './ocean';
+import type { CameraShake } from './shake';
 import type { RigidBody } from './physics';
 import type { FontId, TextAlign, TextData } from './text';
 import { compact } from './mesh/topology';
@@ -134,6 +135,12 @@ export type Command =
   | { type: 'addText'; id?: string; name?: string; text: Partial<TextData> & { body: string }; transform?: Partial<Transform>; material?: Partial<Material>; parentId?: string | null }
   /** Change a text object's words, font, size, thickness or alignment (rebuilds its mesh). */
   | { type: 'setText'; id: string; text: Partial<TextData> }
+  /** Float an object on the water under it (null stops it floating). */
+  | { type: 'setFloat'; id: string; float: FloatSettings | null }
+  /** Camera shake from `start` to `end` (an impact, explosion or earthquake). */
+  | { type: 'addCameraShake'; start: number; end: number; strength: number; frequency?: number }
+  /** Remove camera shakes: the one starting at `start`, or all of them. */
+  | { type: 'removeCameraShake'; start?: number }
   /** Rigid body settings for one object (null removes it from the simulation). */
   | { type: 'setRigidBody'; id: string; rigid: Partial<RigidBody> | null }
   /** Particle system on an object (null removes it). */
@@ -981,6 +988,31 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       return { doc: withAnimation(base, next), created: [] };
     }
 
+    case 'setFloat': {
+      const o = requireObj(doc, cmd.id);
+      if (o.water) throw new CommandError("Water can't float on water");
+      const next = { ...o };
+      if (cmd.float) next.float = { ...cmd.float };
+      else delete next.float;
+      return { doc: withObject(doc, next), created: [] };
+    }
+
+    case 'addCameraShake': {
+      const a = animationOf(doc);
+      if (cmd.end <= cmd.start) throw new CommandError('A camera shake needs its end after its start');
+      const shake: CameraShake = { start: cmd.start, end: cmd.end, strength: cmd.strength, ...(cmd.frequency !== undefined ? { frequency: cmd.frequency } : {}) };
+      const shakes = [...(a.shakes ?? []).filter((s) => s.start !== cmd.start), shake].sort((x, y) => x.start - y.start);
+      return { doc: withAnimation(doc, { ...a, shakes }), created: [] };
+    }
+
+    case 'removeCameraShake': {
+      const a = animationOf(doc);
+      const shakes = cmd.start === undefined ? [] : (a.shakes ?? []).filter((s) => s.start !== cmd.start);
+      const next: ReturnType<typeof animationOf> = { ...a, shakes };
+      if (!shakes.length) delete next.shakes;
+      return { doc: withAnimation(doc, next), created: [] };
+    }
+
     case 'setAnimation': {
       const anim = animationOf(doc);
       const next = { ...anim, ...(cmd.fps !== undefined ? { fps: cmd.fps } : {}), ...(cmd.start !== undefined ? { start: cmd.start } : {}), ...(cmd.end !== undefined ? { end: cmd.end } : {}) };
@@ -1356,6 +1388,10 @@ export function validateSceneObject(raw: unknown): SceneObject {
   if (obj.type === 'mesh' && v.skin !== undefined) {
     obj.skin = validateSkin(v.skin, `object ${v.id}`);
   }
+  if (v.float !== undefined) {
+    if (!isRecord(v.float) || !inRange(v.float.offset, -100, 100)) fail(`object ${v.id}: float invalid`);
+    obj.float = { offset: v.float.offset as number };
+  }
   if (obj.type === 'mesh' && v.water !== undefined) {
     const w = v.water;
     if (!isRecord(w)) fail(`object ${v.id}: water invalid`);
@@ -1547,7 +1583,15 @@ export function validateAnimation(v: unknown, objects: Record<string, SceneObjec
       }
     }
   }
-  return { fps, start, end, tracks, camera, ...(poses ? { poses } : {}) };
+  let shakes: CameraShake[] | undefined;
+  if (v.shakes !== undefined) {
+    if (!Array.isArray(v.shakes) || v.shakes.length > 1000) fail('animation.shakes invalid');
+    shakes = v.shakes.map((k, i) => {
+      if (!isRecord(k) || !isFrame(k.start) || !isFrame(k.end) || !(k.end > k.start) || !inRange(k.strength, 0.001, 20) || (k.frequency !== undefined && !inRange(k.frequency, 0.1, 60))) fail(`camera shake ${i} invalid`);
+      return { start: k.start as number, end: k.end as number, strength: k.strength as number, ...(k.frequency !== undefined ? { frequency: k.frequency as number } : {}) };
+    });
+  }
+  return { fps, start, end, tracks, camera, ...(poses ? { poses } : {}), ...(shakes?.length ? { shakes } : {}) };
 }
 
 const REF_ID = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -1947,6 +1991,22 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (cmd.op === 'easing' && cmd.easing === undefined) fail('editKeys easing needs easing');
       return cmd;
     }
+    case 'setFloat':
+      if (!isId(v.id)) fail('setFloat needs id');
+      if (v.float === null) return { type: 'setFloat', id: v.id, float: null };
+      if (!isRecord(v.float)) fail('setFloat needs float: {offset} or null');
+      return { type: 'setFloat', id: v.id, float: { offset: v.float.offset === undefined ? 0 : inRange(v.float.offset, -100, 100) ? (v.float.offset as number) : fail('float.offset must be -100..100 m') } };
+    case 'addCameraShake': {
+      if (!isFrame(v.start)) fail('addCameraShake needs start (frame)');
+      const end = v.end === undefined ? (v.start as number) + 24 : isFrame(v.end) ? (v.end as number) : fail('addCameraShake end must be a frame');
+      const strength = v.strength === undefined ? 0.35 : inRange(v.strength, 0.001, 20) ? (v.strength as number) : fail('addCameraShake strength must be 0.001..20 m');
+      const cmd: Extract<Command, { type: 'addCameraShake' }> = { type: 'addCameraShake', start: v.start as number, end, strength };
+      if (v.frequency !== undefined) cmd.frequency = inRange(v.frequency, 0.1, 60) ? (v.frequency as number) : fail('addCameraShake frequency must be 0.1..60 per second');
+      return cmd;
+    }
+    case 'removeCameraShake':
+      if (v.start !== undefined && !isFrame(v.start)) fail('removeCameraShake start must be a frame');
+      return v.start === undefined ? { type: 'removeCameraShake' } : { type: 'removeCameraShake', start: v.start as number };
     case 'setAnimation':
       if (v.fps !== undefined && !inRange(v.fps, 1, 240)) fail('fps must be 1..240');
       if (v.start !== undefined && !isFrame(v.start)) fail('start invalid');

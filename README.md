@@ -5,6 +5,11 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Camera shake and floating (v3.7)
+
+- **Scene → Camera shake**: Impact, Explosion, Earthquake or Rumble at the current frame — a sharp jolt that dies away, seen through the scene camera and in videos (like a Noise modifier on the camera in Blender's Graph Editor)
+- **Physics → Float on water**: boats, buoys and debris bob and tilt with the ocean waves under them; children (a cabin, a mast) follow. The *Storm at the lighthouse* example now has a boat
+
 ## Ocean waves and explosions (v3.6)
 
 - **Add → Water / Ocean**: a 40 m sea with real waves. Water tab: **Calm / Choppy / Rough / Storm**, wave height, wave size, direction — the surface itself moves frame by frame, like Blender's Ocean modifier (simplified: no foam or spray)

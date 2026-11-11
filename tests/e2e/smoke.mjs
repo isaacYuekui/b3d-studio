@@ -1013,6 +1013,45 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Camera shake and floating on water (v3.7).
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'addWater', id: 'sea', size: [40, 40], level: 0, height: 1.5, waves: 2 },
+      { type: 'add', primitive: 'cube', id: 'buoy', name: 'Buoy', transform: { position: [2, 3, 0], scale: [0.5, 0.5, 0.5] } },
+      { type: 'setCamera', position: [0, -14, 4], target: [0, 0, 0] },
+    ] });
+    s.select(null);
+    s.setFrame(10);
+  });
+  await page.click('.prop-section-head:has-text("Camera shake")');
+  await page.click('[data-shake="impact"]');
+  const shakes = await page.evaluate(() => window.__b3d.store.getState().doc.animation?.shakes);
+  check('v3.7: Scene → Camera shake adds an impact at the current frame', shakes?.length === 1 && shakes[0].start === 10 && shakes[0].end > 20, JSON.stringify(shakes));
+  const aim = await page.evaluate(async () => {
+    const s = window.__b3d.store, vp = window.__b3d.viewport();
+    vp.viewCamera();
+    await new Promise((r) => setTimeout(r, 600));
+    const at = (f) => { s.setFrame(f); const t = vp.camera.target; return [t.x, t.y, t.z].map((v) => Math.round(v * 1000) / 1000); };
+    return { before: at(8), during: at(13), after: at(60) };
+  });
+  check('v3.7: the camera jolts during the shake and settles after', JSON.stringify(aim.before) === JSON.stringify(aim.after) && JSON.stringify(aim.during) !== JSON.stringify(aim.before), JSON.stringify(aim));
+  await page.evaluate(() => { window.__b3d.store.setCameraView(false); window.__b3d.store.select('buoy'); });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('[data-testid="float-toggle"]');
+  const bob = await page.evaluate(() => {
+    const s = window.__b3d.store, node = window.__b3d.viewport().entries.get('buoy').node;
+    const y = (f) => { s.setFrame(f); return Math.round(node.position.y * 1000) / 1000; };
+    return { f: s.getState().doc.objects.buoy.float, a: y(1), b: y(12), c: y(24) };
+  });
+  check('v3.7: Float on water makes it bob with the waves', bob.f?.offset === 0 && new Set([bob.a, bob.b, bob.c]).size > 1, JSON.stringify(bob));
+  check('v3.7: no errors (shake, float)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Ocean waves and burst presets (v3.6).
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 800 });
