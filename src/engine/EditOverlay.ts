@@ -61,6 +61,12 @@ export class EditOverlay {
       const c = selEdges.has(k) ? SEL : WIRE;
       colors.push([c, c]);
     }
+    // Curves have points only: draw the control polygon through them.
+    if (!mesh.faces.length)
+      for (let i = 0; i + 1 < P.length; i++) {
+        lines.push([P[i], P[i + 1]]);
+        colors.push([WIRE, WIRE]);
+      }
     if (lines.length) {
       const e = (this.edges = MeshBuilder.CreateLineSystem('edit-edges', { lines, colors, useVertexAlpha: false }, s));
       e.isPickable = false;

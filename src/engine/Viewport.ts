@@ -32,6 +32,7 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Node } from '@babylonjs/core/node';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import type { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture';
 import { MultiMaterial } from '@babylonjs/core/Materials/multiMaterial';
 import { RawCubeTexture } from '@babylonjs/core/Materials/Textures/rawCubeTexture';
 import { HDRCubeTexture } from '@babylonjs/core/Materials/Textures/hdrCubeTexture';
@@ -61,7 +62,7 @@ import { PRIMITIVES, isRenderable, worldOf } from '../core/types';
 import type { PrimitiveType } from '../core/types';
 import { primitiveMesh } from '../core/mesh/primitives';
 import { catalogNow, hdriUrl, loadCatalog, modelUrl, textureUrl } from './library';
-import { animationOf, evaluateCamera, evaluateTransform, transformEdit } from '../core/animation';
+import { animationOf, sceneCameraAt, transformAt, transformEdit } from '../core/animation';
 import { guessUnitScale, isUserAsset, updateUserModelMeta, userModelMetaNow, userModelUrl } from './userModels';
 
 class MissingModel extends Error {}
@@ -69,6 +70,7 @@ import { babylonQuatToEulerDeg, clean, eulerDegToBabylonQuat, fromBabylonVec, to
 import { applyGeometry } from './geometry';
 import { validUv } from '../core/mesh/uv';
 import { isUserImage, userImageUrl } from './userImages';
+import { bakeMaps } from './nodeBake';
 import { subtree } from '../core/commands';
 import { EditOverlay } from './EditOverlay';
 import { rippleNormalTexture } from './water';
@@ -1123,8 +1125,17 @@ export class Viewport {
       if (!e || !keys.length) continue;
       now.add(id);
       if (this.dragging && id === sel) continue;
-      const t = evaluateTransform(keys, state.frame)!;
+      const t = transformAt(state.doc, id, state.frame)!;
       this.applyTransform(e.node, { ...state.doc.objects[id], transform: t });
+    }
+    // Follow Path without keys of their own.
+    for (const id of state.doc.order) {
+      const o = state.doc.objects[id];
+      if (!o?.follow || now.has(id)) continue;
+      const e = this.entries.get(id);
+      if (!e || (this.dragging && id === sel)) continue;
+      now.add(id);
+      this.applyTransform(e.node, { ...o, transform: transformAt(state.doc, id, state.frame)! });
     }
     // Objects floating on water ride the waves (after their own animation).
     for (const id of state.doc.order) {
@@ -1148,7 +1159,7 @@ export class Viewport {
     this.applyFlashes(state);
     this.applyRigs(state);
     if (state.cameraView) {
-      const cam = (anim?.camera.length ? evaluateCamera(anim.camera, state.frame) : null) ?? state.doc.camera;
+      const cam = sceneCameraAt(state.doc, state.frame);
       if (cam) {
         const c = shakeCamera(cam, anim?.shakes, state.frame, anim?.fps ?? 24);
         this.placeCamera(c.position, c.target);
@@ -1548,7 +1559,9 @@ export class Viewport {
 
   /** A scene material on a Babylon PBR material (Principled-style settings, textures, patterns). */
   private applyMaterial(mat: PBRMaterial, m: SceneMaterial, prev?: SceneMaterial) {
-    this.applyTexture(mat, m, prev);
+    if (m.nodes) return this.applyNodes(mat, m);
+    if (prev?.nodes) this.dropNodeMaps(mat);
+    this.applyTexture(mat, m, prev?.nodes ? undefined : prev);
     mat.albedoColor = Color3.FromHexString(m.baseColor).toLinearSpace();
     // With a texture, metal/roughness come from its maps (scalars act as multipliers).
     mat.metallic = m.texture ? 1 : m.metallic;
@@ -1560,6 +1573,64 @@ export class Viewport {
     mat.transparencyMode = m.alpha < 1 ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
     // A pattern carries the colour itself.
     if (!m.texture && m.pattern) mat.albedoColor = Color3.White();
+    applyPrincipled(mat, m);
+  }
+
+  /** Node maps baked for a material (disposed when replaced). */
+  private nodeMaps = new WeakMap<PBRMaterial, RawTexture[]>();
+  private nodeKey = new WeakMap<PBRMaterial, string>();
+
+  private dropNodeMaps(mat: PBRMaterial) {
+    for (const t of this.nodeMaps.get(mat) ?? []) t.dispose();
+    this.nodeMaps.delete(mat);
+    this.nodeKey.delete(mat);
+    mat.albedoTexture = mat.bumpTexture = mat.metallicTexture = mat.emissiveTexture = null;
+    mat.useAlphaFromAlbedoTexture = false;
+    this.texWanted.delete(mat);
+  }
+
+  /** Shader Editor material: bake the node graph into maps and set the PBR inputs from it. */
+  private applyNodes(mat: PBRMaterial, m: SceneMaterial) {
+    this.texWanted.set(mat, m);
+    // Moving nodes around doesn't change the result: only rebake when the maths changed.
+    const key = JSON.stringify([m.nodes!.nodes.map((n) => [n.id, n.type, n.props]), m.nodes!.links]);
+    if (this.nodeKey.get(mat) !== key || !this.nodeMaps.has(mat)) {
+      // Old non-node textures go too.
+      for (const t of [mat.albedoTexture, mat.bumpTexture, mat.metallicTexture, mat.emissiveTexture]) if (t && !isSharedTexture(t) && !(this.nodeMaps.get(mat) ?? []).includes(t as RawTexture)) t.dispose();
+      this.dropNodeMaps(mat);
+      this.texWanted.set(mat, m);
+      this.nodeKey.set(mat, key);
+      const graph = m.nodes!;
+      const baked = bakeMaps(this.scene, graph, () => {
+        // An image arrived: bake again if this material still wants this graph.
+        if (this.nodeKey.get(mat) === key && mat.getScene()) {
+          const latest = this.texWanted.get(mat) ?? m;
+          this.dropNodeMaps(mat);
+          if (latest.nodes) this.applyNodes(mat, latest);
+        }
+      });
+      const maps = [baked.albedo, baked.arm, baked.emissive, baked.normal].filter((t): t is RawTexture => !!t);
+      this.nodeMaps.set(mat, maps);
+      const r = baked.result;
+      mat.albedoTexture = baked.albedo;
+      // A baked colour map carries the colour; a constant one is the albedo colour (an alpha-only map is white).
+      mat.albedoColor = typeof r.base === 'string' && !baked.albedo ? Color3.FromHexString(r.base).toLinearSpace() : Color3.White();
+      mat.useAlphaFromAlbedoTexture = typeof r.alpha !== 'number';
+      mat.metallicTexture = baked.arm;
+      mat.useAmbientOcclusionFromMetallicTextureRed = false;
+      mat.useRoughnessFromMetallicTextureGreen = mat.useMetallnessFromMetallicTextureBlue = !!baked.arm;
+      mat.metallic = typeof r.metallic === 'number' ? r.metallic : 1;
+      mat.roughness = typeof r.roughness === 'number' ? r.roughness : 1;
+      if (baked.arm && typeof r.metallic === 'number') mat.metallic = r.metallic;
+      if (baked.arm && typeof r.roughness === 'number') mat.roughness = r.roughness;
+      mat.emissiveTexture = baked.emissive;
+      mat.emissiveColor = baked.emissive ? new Color3(r.strength, r.strength, r.strength) : Color3.FromHexString(r.emission as string).toLinearSpace().scale(r.strength);
+      mat.bumpTexture = baked.normal;
+      mat.invertNormalMapX = mat.invertNormalMapY = false;
+      const alpha = typeof r.alpha === 'number' ? r.alpha : 1;
+      mat.alpha = alpha;
+      mat.transparencyMode = alpha < 1 || typeof r.alpha !== 'number' ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
+    }
     applyPrincipled(mat, m);
   }
 
@@ -2099,7 +2170,7 @@ export class Viewport {
   /** Move to the scene camera (if the scene has one). Returns false when there is none. */
   viewCamera(): boolean {
     const st = this.store.getState();
-    const c = (st.doc.animation?.camera.length ? evaluateCamera(st.doc.animation.camera, st.frame) : null) ?? st.doc.camera;
+    const c = sceneCameraAt(st.doc, st.frame);
     if (!c) return false;
     const pos = new Vector3(...toBabylonVec(c.position));
     const target = new Vector3(...toBabylonVec(c.target));
@@ -2241,7 +2312,7 @@ export class Viewport {
     this.forceBest = true;
     this.setRenderOnly(true);
     this.sync(this.store.getState());
-    const hasCamera = !!st0.doc.camera || (st0.doc.animation?.camera.length ?? 0) > 0;
+    const hasCamera = !!st0.doc.camera || (st0.doc.animation?.camera.length ?? 0) > 0 || !!st0.doc.animation?.cameraFollow;
 
     // Look the way the final video should: rendered shading, no selection, through the scene camera.
     this.store.select(null);

@@ -1013,6 +1013,112 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Curves + Follow Path (v3.20): Add → Curve, edit points, an object and the camera follow it.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'setAnimation', start: 1, end: 48 }] });
+    s.select(null);
+  });
+  await page.click('[data-menu="Add"]');
+  await page.hover('.menu-item:has-text("Curve")');
+  await page.click('.menu [data-action="add.curve.bezier"]');
+  const c = await page.evaluate(() => {
+    const st = window.__b3d.store.getState();
+    const o = st.doc.objects[st.selection];
+    const e = window.__b3d.viewport().entries.get(st.selection);
+    return { id: o.id, pts: o.mesh.vertices.length, curve: !!o.modifiers?.curve, tris: (e.node.getIndices()?.length ?? 0) / 3 };
+  });
+  check('v3.20: Add → Curve → Bezier makes a curve drawn as a tube', c.curve && c.pts === 4 && c.tris > 50, JSON.stringify(c));
+  await page.click('[data-prop-tab="data"]');
+  const bevelRow = await page.locator('.prop-section-head', { hasText: 'Curve' }).count();
+  check('v3.20: the Curve tab shows the curve settings', bevelRow === 1, String(bevelRow));
+  await page.click('[data-testid="mode-toggle"]');
+  await page.evaluate((id) => { const st = window.__b3d.store; st.setEdit({ id, mode: 'vert', sel: { verts: [3], edges: [], faces: [] } }); }, c.id);
+  await page.mouse.move(640, 400);
+  await page.keyboard.press('KeyE');
+  const ex = await page.evaluate((id) => ({ pts: window.__b3d.store.getState().doc.objects[id].mesh.vertices.length, sel: window.__b3d.store.getState().edit?.sel.verts }), c.id);
+  check('v3.20: E on the end point adds a point to the curve and selects it', ex.pts === 5 && JSON.stringify(ex.sel) === '[4]', JSON.stringify(ex));
+  await page.click('[data-testid="mode-toggle"]');
+  await page.evaluate(() => { const s = window.__b3d.store; const [id] = s.dispatch({ type: 'add', primitive: 'cube', id: 'car', transform: { scale: [0.2, 0.2, 0.2] } }); s.select(id); });
+  await page.click('[data-prop-tab="object"]');
+  await page.click('.prop-section-head:has-text("Follow Path")');
+  await page.selectOption('[aria-label="Follow curve"]', c.id);
+  const fol = await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const node = window.__b3d.viewport().entries.get('car').node;
+    s.setFrame(1);
+    const a = node.position.clone();
+    s.setFrame(48);
+    const b = node.position.clone();
+    return { follow: s.getState().doc.objects.car.follow, moved: Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) };
+  });
+  check('v3.20: Object → Follow Path moves the object along the curve over the frames', fol.follow?.curve === c.id && fol.moved > 1.5, JSON.stringify(fol));
+  await page.click('[data-prop-tab="scene"]');
+  const camHead = page.locator('.prop-section-head', { hasText: /^Camera$/ });
+  if ((await camHead.getAttribute('aria-expanded')) !== 'true') await camHead.click();
+  await page.selectOption('[aria-label="Camera follow curve"]', c.id);
+  const cf = await page.evaluate(() => window.__b3d.store.getState().doc.animation?.cameraFollow);
+  check('v3.20: the camera can follow the curve too (Scene → Camera → Follow path)', cf?.curve === c.id && cf.look === 'ahead', JSON.stringify(cf));
+  await page.evaluate(() => window.__b3d.store.setFrame(20));
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: `${shots}/curves.png`, timeout: 60000 }).catch(() => {});
+  check('v3.20: no errors (curves)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Shader Editor (v3.19): Use Nodes, add a Pattern Texture, wire it into Base Color, the material bakes.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 900 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'sphere', id: 'ball', name: 'Ball' }] });
+    s.select('ball');
+  });
+  await page.click('[data-testid="tl-shader"]');
+  await page.click('[data-testid="shader-use-nodes"]');
+  await page.click('[data-testid="shader-add"]');
+  await page.click('[data-add-node="texture"]');
+  await page.click('[data-testid="shader-add"]');
+  await page.click('[data-add-node="ramp"]');
+  // Move the ramp below the texture so the sockets don't overlap, then wire texture → ramp → Base Color.
+  const drag = async (fromSel, toSel) => {
+    const a = await page.$eval(fromSel, (el) => { const r = el.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; });
+    const b = await page.$eval(toSel, (el) => { const r = el.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; });
+    await page.mouse.move(a[0], a[1]);
+    await page.mouse.down();
+    await page.mouse.move((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, { steps: 4 });
+    await page.mouse.move(b[0], b[1], { steps: 4 });
+    await page.mouse.up();
+  };
+  const head = await page.$eval('[data-node-head="ramp1"]', (el) => { const r = el.getBoundingClientRect(); return [r.x + 30, r.y + 8]; });
+  await page.mouse.move(head[0], head[1]);
+  await page.mouse.down();
+  await page.mouse.move(head[0] + 40, head[1] + 150, { steps: 5 });
+  await page.mouse.up();
+  await drag('[data-socket="texture1:out:fac"]', '[data-socket="ramp1:in:fac"]');
+  await drag('[data-socket="ramp1:out:color"]', '[data-socket="out:in:base"]');
+  const g = await page.evaluate(() => {
+    const m = window.__b3d.store.getState().doc.objects.ball.material;
+    const e = window.__b3d.viewport().entries.get('ball');
+    return { links: m.nodes.links.map((l) => `${l.from}.${l.out}>${l.to}.${l.in}`), moved: m.nodes.nodes.find((n) => n.id === 'ramp1').y, albedo: e.material.albedoTexture?.name };
+  });
+  check('v3.19: Shader Editor — nodes wire up by dragging and the material bakes from them', g.links.includes('texture1.fac>ramp1.fac') && g.links.includes('ramp1.color>out.base') && g.albedo === 'nodes-base', JSON.stringify(g));
+  await page.selectOption('[aria-label="Pattern Texture Type"]', 'bricks');
+  const t = await page.evaluate(() => window.__b3d.store.getState().doc.objects.ball.material.nodes.nodes.find((n) => n.id === 'texture1').props.pattern);
+  check('v3.19: node settings edit in place (pattern type)', t === 'bricks', String(t));
+  await page.click('[data-node-head="texture1"]');
+  await page.keyboard.press('KeyX');
+  const after = await page.evaluate(() => { const g = window.__b3d.store.getState().doc.objects.ball.material.nodes; return { nodes: g.nodes.length, links: g.links.length }; });
+  check('v3.19: X deletes the selected node and its links', after.nodes === 2 && after.links === 1, JSON.stringify(after));
+  await page.evaluate(() => window.__b3d.store.setShading('rendered'));
+  await page.waitForTimeout(1200);
+  await page.screenshot({ path: `${shots}/shader-editor.png`, timeout: 60000 }).catch(() => {});
+  check('v3.19: no errors (shader editor)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Image textures + UV unwrap (v3.18): upload a picture, Smart UV Project, it follows the UVs.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });

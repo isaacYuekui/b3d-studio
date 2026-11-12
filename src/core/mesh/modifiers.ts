@@ -8,6 +8,7 @@ import { add, compact, ek, edgeMap, newell, scale } from './topology';
 import { bevel as bevelOp } from './ops';
 import { transferMaterialIndex, usesSlots, withMaterialIndex } from './materialIndex';
 import { validUv } from './uv';
+import { DEFAULT_CURVE, curveTube } from '../curve';
 import { vertexNormals } from './sculpt';
 
 export const MAX_SUBDIV_FACES = 400_000;
@@ -20,13 +21,16 @@ export function hasModifiers(m?: Modifiers): boolean {
       (m.bevel?.width ?? 0) > 0 ||
       (m.array?.count ?? 1) > 1 ||
       !!m.solidify?.thickness ||
-      !!m.displace?.strength)
+      !!m.displace?.strength ||
+      !!m.curve)
   );
 }
 
 export function applyModifiers(mesh: MeshData, mods?: Modifiers): MeshData {
   if (!hasModifiers(mods)) return mesh;
   let out = mesh;
+  // A curve object's points become a tube first; the other modifiers then work on the tube.
+  if (mods!.curve) out = curveTube(out.vertices, { ...DEFAULT_CURVE, ...mods!.curve });
   if (mods!.mirror) {
     const { x, y, z, merge = 0.001 } = mods!.mirror;
     ([x, y, z] as (boolean | undefined)[]).forEach((on, axis) => {

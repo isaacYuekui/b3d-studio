@@ -110,6 +110,7 @@ export const ADD_ITEMS: MenuItem[] = [
   'file.importModel',
   '-',
   'add.cube', 'add.sphere', 'add.cylinder', 'add.cone', 'add.torus', 'add.capsule', 'add.plane',
+  { label: 'Curve', items: ['add.curve.bezier', 'add.curve.circle', 'add.curve.path'] },
   '-', 'add.text', 'add.water', 'add.empty',
   { label: 'Force Field', items: ['add.field.blast', 'add.field.push', 'add.field.wind', 'add.field.vortex'] },
   { label: 'Town', items: ['add.town.village', 'add.town.town', 'add.town.city'] },

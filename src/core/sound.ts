@@ -4,7 +4,7 @@
 // This file only finds the events and how loud they are over time; the engine synthesises them.
 
 import { isShown } from './collections';
-import { animationOf, evaluateCamera, transformAt } from './animation';
+import { animationOf, sceneCameraAt, transformAt } from './animation';
 import { activeFields } from './fields';
 import { crestFrames } from './particles';
 import { worldMatrix, apply as applyM4 } from './rig';
@@ -43,8 +43,7 @@ const dist = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b
 
 /** Where the scene camera is at a frame (null without a camera). */
 function cameraAt(doc: SceneDoc, frame: number): Vec3 | null {
-  const a = animationOf(doc);
-  return (a.camera.length ? evaluateCamera(a.camera, frame)?.position : null) ?? doc.camera?.position ?? null;
+  return sceneCameraAt(doc, frame)?.position ?? null;
 }
 
 /** Closer is louder: 1 within `near` metres, fading with distance. */

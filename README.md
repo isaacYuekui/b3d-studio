@@ -5,6 +5,21 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Curves and Follow Path (v3.20)
+
+- **Add → Curve**: Bezier, Circle and Path. A curve is a smooth line through its points (auto handles), drawn as a round tube; set **Bevel depth**, **Resolution**, **Sides** and **Cyclic** on the Data tab, or **Convert to Mesh**
+- **Edit Mode** on a curve: move points, **E** adds a point at the selected end, Subdivide puts points between selected ones, X deletes points
+- **Object → Follow Path**: anything moves along a curve between two frames, turning to face the way it goes (a car on a road, a bird around a loop)
+- **Scene → Camera → Follow path**: a fly-through camera that looks along the path or at a target
+- Scripts: `setFollow`, `setCameraFollow`, `editCurve`; a curve is a mesh with points and no faces plus `modifiers.curve`
+
+## Shader Editor (v3.19)
+
+- **Node materials** like Blender's Shader Editor (Timeline → **⬡ Shader**, then **Use Nodes**): a **Principled BSDF** fed by **Pattern Texture** (noise, voronoi, checker, bricks, wood, marble, gradient, windows), **Image Texture** (your pictures or library textures), **RGB**, **Value**, **Mix Color** (mix, multiply, add, subtract, screen, overlay, darken, lighten), **Color Ramp**, **Math**, **Invert Color** and **Bump** (→ Normal)
+- Drag from an output dot to an input dot to connect; drag a connected input away to disconnect; drag titles to move nodes; X / Delete removes the selected node; pinch or scroll to zoom, drag the background to pan
+- Works per material slot; the graph is baked into the material's colour, roughness/metal, emission and normal maps, so node materials render, export and record videos like any other
+- Scripts: `material.nodes` = `{nodes: [{id, type, x, y, props}], links: [{from, out, to, in}]}`
+
 ## Image textures and UV unwrap (v3.18)
 
 - **Your own pictures as textures**: Material → Texture → **Upload an image…** (photos are shrunk to 2048 px and kept on the device; *Your images* lists them; project files carry them along)

@@ -401,6 +401,31 @@ sound by building the events themselves.
 
 Loudness follows strength, size and distance to the scene camera.
 
+## Node materials (v3.19)
+
+```json
+{"type":"setMaterial","id":"ball","material":{"nodes":{
+  "nodes":[
+    {"id":"t","type":"texture","x":0,"y":20,"props":{"pattern":"voronoi","scale":2}},
+    {"id":"r","type":"ramp","x":240,"y":0,"props":{"c0":"#1a0a05","c1":"#ff7a1a","p0":0.2,"p1":0.6}},
+    {"id":"b","type":"bump","x":240,"y":200,"props":{"strength":0.8}},
+    {"id":"out","type":"principled","x":480,"y":20,"props":{"roughness":0.6}}],
+  "links":[
+    {"from":"t","out":"fac","to":"r","in":"fac"},
+    {"from":"r","out":"color","to":"out","in":"base"},
+    {"from":"t","out":"fac","to":"b","in":"height"},
+    {"from":"b","out":"normal","to":"out","in":"normal"}]}}}
+```
+
+- Node types and sockets: `principled` (in: base, metallic, roughness, emission, alpha, normal;
+  props also strength, repeat), `texture` (out fac, color; props pattern, scale 1–32, seed),
+  `image` (out color, alpha; props image = your `img-…` id or a library texture id, scale), `rgb`
+  (out color), `value` (out value), `mix` (in fac, a, b; mode), `ramp` (in fac; out color, alpha;
+  c0/p0, c1/p1), `math` (in a, b; op), `invert` (in/out color), `bump` (in height; out normal;
+  strength). Unconnected inputs use the prop of the same name.
+- Exactly one `principled`; no loops; at most 40 nodes. `"nodes": null` goes back to the plain
+  material settings.
+
 ## UV maps (v3.18)
 
 ```json
@@ -528,3 +553,22 @@ Loudness follows strength, size and distance to the scene camera.
     the material's Emission while set. Try 2–4 at night, 8+ for lava cracks.
   - `scale` is repeats per metre (0.01–100). `bump` is 0–1.
   - Patterns apply when `texture` is null. `"pattern": null` removes one.
+
+## Curves and Follow Path (v3.20)
+
+A curve is a mesh object whose vertices are the control points (no faces) with a `curve` modifier:
+
+```json
+{"type":"batch","commands":[
+  {"type":"add","primitive":"mesh","id":"road","name":"Road","mesh":{"vertices":[[-6,0,0],[-2,3,0],[2,-3,0],[6,0,0]],"faces":[]}},
+  {"type":"setModifiers","id":"road","modifiers":{"curve":{"bevel":0.05,"resolution":12,"cyclic":false,"sides":8}}},
+  {"type":"add","primitive":"cube","id":"car","transform":{"scale":[0.4,0.2,0.2]}},
+  {"type":"setFollow","id":"car","follow":{"curve":"road","start":1,"end":120,"orient":true}},
+  {"type":"setCameraFollow","follow":{"curve":"road","start":1,"end":120,"look":"ahead","height":1.6}}
+]}
+```
+
+- `setFollow`: the object's own location becomes an offset from the path; `orient` turns it along the path (+Y forward). `from` / `to` (0..1) use part of the path. `follow: null` stops it.
+- `setCameraFollow`: `look` is `"ahead"` (along the path) or an object id to keep in view; `height` lifts the camera above the path.
+- `editCurve`: `{"type":"editCurve","id":"road","op":"extrude"|"subdivide"|"delete","points":[3]}`.
+- `applyModifiers` turns the tube into a real mesh.
