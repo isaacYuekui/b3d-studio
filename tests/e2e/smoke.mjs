@@ -1156,10 +1156,11 @@ const setNumber = async (page, scope, label, value) => {
     s.dispatch({ type: 'add', primitive: 'empty', id: 'boom', name: 'Boom', transform: { position: [0, 0, 1] } });
     s.select('boom');
     s.setFrame(20);
-    s.setShading('rendered');
   });
+  // Click before switching to Rendered (a lit village at night is slow to draw in software GL).
   await page.click('[data-prop-tab="physics"]');
   await page.click('[data-field-preset="blast"]');
+  await page.evaluate(() => window.__b3d.store.setShading('rendered'));
   const fl = await page.evaluate(() => {
     const s = window.__b3d.store;
     const f = s.getState().doc.objects.boom.field;
@@ -1174,7 +1175,7 @@ const setNumber = async (page, scope, label, value) => {
   });
   check('v3.13: Explosion field flashes at its start frame and fades', fl.flash > 0 && fl.before === 0 && fl.at > 100 && fl.after < fl.at / 4 && fl.box, JSON.stringify(fl));
   await page.waitForTimeout(1200);
-  await page.screenshot({ path: `${shots}/night-lights.png` });
+  await page.screenshot({ path: `${shots}/night-lights.png`, timeout: 60000 }).catch(() => console.log('(night-lights screenshot skipped: slow software rendering)'));
   check('v3.13: no errors (night lights)', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }
