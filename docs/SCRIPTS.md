@@ -382,6 +382,25 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   textured object, a darker rough version of a plain colour. `"inner": {material}` sets it,
   `"inner": false` keeps one material.
 
+## Sound effects in videos (v3.16)
+
+There is no sound command: the video's soundtrack is worked out from the scene, so scripts get
+sound by building the events themselves.
+
+| In the scene | Sound |
+|---|---|
+| `setField` force with strength ≥ 80 and a short `start`–`end` (≤ 6 frames) | explosion boom at `start`, debris after it |
+| a burst of ≥ 300 `fire` particles (`end − start` ≤ 6) | smaller boom |
+| `addCameraShake` | rumble for its frames |
+| water with a `surge` | wave roar, louder as the front nears the camera |
+| water with `height` ≥ 1 (or a surge) | sea wash |
+| `fire` particles (steady) | crackling fire; on an emitter moving > 12 m/s: a whoosh |
+| `drop` particles, gravity ≥ 0.8, count ≥ 1000 | rain |
+| `wind` field | wind |
+| baked active rigid bodies | crashes where they suddenly slow down (landing, hitting) |
+
+Loudness follows strength, size and distance to the scene camera.
+
 ## Material slots (v3.15)
 
 ```json

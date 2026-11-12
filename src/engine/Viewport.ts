@@ -2174,8 +2174,8 @@ export class Viewport {
    * can encode it). Deterministic: every frame is posed from the timeline, rendered,
    * copied, and encoded, so the result never drops frames however slow the device is.
    */
-  async renderVideo(opts: { width: number; height: number; start: number; end: number; fps: number; onProgress?: (done: number, total: number) => void; isCancelled?: () => boolean }): Promise<{ blob: Blob; codec: string } | null> {
-    const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, QUALITY_HIGH, getFirstEncodableVideoCodec } = await import('mediabunny');
+  async renderVideo(opts: { width: number; height: number; start: number; end: number; fps: number; sound?: boolean; onProgress?: (done: number, total: number) => void; isCancelled?: () => boolean }): Promise<{ blob: Blob; codec: string; audio: string | null; sound: AudioBuffer | null } | null> {
+    const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, AudioBufferSource, QUALITY_HIGH, getFirstEncodableVideoCodec, getFirstEncodableAudioCodec } = await import('mediabunny');
     const W = Math.round(opts.width / 2) * 2;
     const H = Math.round(opts.height / 2) * 2;
     const codec = await getFirstEncodableVideoCodec(['avc', 'hevc', 'vp9', 'av1'], { width: W, height: H });
@@ -2207,7 +2207,32 @@ export class Viewport {
     const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
     const source = new CanvasSource(copy, { codec, quality: QUALITY_HIGH, keyFrameInterval: 2 });
     output.addVideoTrack(source, { frameRate: opts.fps });
+    // Automatic sound effects from the scene (explosions, waves, fire…), when asked for and possible.
+    let sound: AudioBuffer | null = null;
+    let audio: string | null = null;
+    let audioSource: InstanceType<typeof AudioBufferSource> | null = null;
+    if (opts.sound) {
+      try {
+        const [{ soundEvents }, { renderSoundtrack, SAMPLE_RATE }] = await Promise.all([import('../core/sound'), import('./soundSynth')]);
+        const events = soundEvents(this.store.getState().doc, opts.start, opts.end, opts.fps);
+        sound = await renderSoundtrack(events, (opts.end - opts.start + 1) / opts.fps);
+        if (sound) {
+          audio = await getFirstEncodableAudioCodec(['aac', 'opus'], { numberOfChannels: 2, sampleRate: SAMPLE_RATE });
+          if (audio) {
+            audioSource = new AudioBufferSource({ codec: audio as 'aac' | 'opus', quality: QUALITY_HIGH });
+            output.addAudioTrack(audioSource);
+          }
+        }
+      } catch (e) {
+        console.warn('Sound effects skipped:', e);
+        audio = null;
+      }
+    }
     await output.start();
+    if (audioSource && sound) {
+      await audioSource.add(sound);
+      audioSource.close();
+    }
 
     const total = opts.end - opts.start + 1;
     let cancelled = false;
@@ -2230,7 +2255,7 @@ export class Viewport {
       }
       await output.finalize();
       const buf = (output.target as InstanceType<typeof BufferTarget>).buffer!;
-      return { blob: new Blob([buf], { type: 'video/mp4' }), codec };
+      return { blob: new Blob([buf], { type: 'video/mp4' }), codec, audio: audioSource ? audio : null, sound };
     } finally {
       this.forceBest = false;
       this.recording = false;

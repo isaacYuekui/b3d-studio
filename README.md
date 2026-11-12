@@ -5,6 +5,12 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Sound effects (v3.16)
+
+- **Render video** now adds a **soundtrack made from the scene**, like a Foley artist watching the cut: explosion fields boom (with debris landing after), camera shakes rumble, a giant wave roars louder as it reaches the camera, fire crackles, a flying meteor whooshes, rain hisses, stormy seas wash, and baked physics pieces crash where they land
+- The dialog lists what it will hear; **Save sound (.wav)** gives the soundtrack on its own for editing apps (and for browsers that can't put sound in the MP4 — Safari needs iOS / iPadOS / macOS 26 or newer for that)
+- Synthesised on the device (no sound files, no servers), the same every time for the same scene
+
 ## Material slots (v3.15)
 
 - **Several materials on one mesh**, like Blender: Material tab → **Slots** (Main, Slot 2, Slot 3… up to 9); **+** adds a slot, each slot is a full material (colour, texture, pattern, glow…)

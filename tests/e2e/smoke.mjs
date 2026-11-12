@@ -1013,6 +1013,41 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Sound effects (v3.16): videos get an automatic soundtrack from the scene (here: an explosion).
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'setAnimation', fps: 24, start: 1, end: 24 },
+      { type: 'add', primitive: 'cube', id: 'crate', transform: { position: [0, 0, 1] } },
+      { type: 'add', primitive: 'empty', id: 'boom', transform: { position: [0, 0, 1] } },
+      { type: 'setField', id: 'boom', field: { type: 'force', strength: 400, radius: 14, start: 4, end: 5, flash: 60000 } },
+    ] });
+  });
+  await page.click('[data-menu="File"]');
+  await page.click('.menu [data-action="file.video"]');
+  await page.click('[data-preset="square"]');
+  await page.check('#video-draft');
+  const label = await page.evaluate(() => ({ on: document.querySelector('#video-sound')?.checked, text: document.querySelector('#video-sound')?.parentElement?.textContent }));
+  check('v3.16: the video dialog lists the scene’s sounds (Explosion) and has sound on', label.on === true && /Explosion/.test(label.text ?? ''), JSON.stringify(label));
+  await page.click('[data-testid="video-render"]');
+  const ok = await page.waitForSelector('[data-testid="video-preview"], .video-modal .script-status.bad', { timeout: 180000 }).then(() => true).catch(() => false);
+  const foot = ok ? await page.evaluate(() => [...document.querySelectorAll('.video-result .help-foot')].map((e) => e.textContent).join(' ')) : '';
+  check('v3.16: the MP4 has a sound track', ok && /with sound/.test(foot), foot);
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-testid="video-save-sound"]')]);
+  const fs = await import('node:fs');
+  const wav = fs.readFileSync(await dl.path());
+  // Loudest moment should be the blast (frame 4 = 0.125 s), not the start.
+  const ch = wav.readUInt16LE(22), rate = wav.readUInt32LE(24), n = (wav.length - 44) / 2 / ch;
+  let peakAt = 0, peak = 0;
+  for (let i = 0; i < n; i += 64) { const v = Math.abs(wav.readInt16LE(44 + i * ch * 2)); if (v > peak) { peak = v; peakAt = i / rate; } }
+  check('v3.16: Save sound gives a WAV whose loudest moment is the explosion', wav.subarray(0, 4).toString('latin1') === 'RIFF' && Math.abs(n / rate - 1) < 0.01 && peak > 3000 && peakAt > 0.1 && peakAt < 0.6, JSON.stringify({ secs: n / rate, peak, peakAt }));
+  check('v3.16: no errors (sound)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Material slots (v3.15): Material tab → Slots → +, Edit Mode → Assign; fracture inner material.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });
