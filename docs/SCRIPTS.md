@@ -318,7 +318,7 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
 
 ```json
 {"type":"add","primitive":"empty","id":"blast","transform":{"position":[0,6,0.6]}}
-{"type":"setField","id":"blast","field":{"type":"force","strength":420,"radius":22,"start":60,"end":61,"flash":400000}}
+{"type":"setField","id":"blast","field":{"type":"force","strength":420,"radius":22,"start":60,"end":61,"flash":80000}}
 {"type":"bakePhysics"}
 ```
 
@@ -327,8 +327,8 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   acceleration in m/s² (same push for light and heavy pieces), fading linearly to zero at `radius` m
   (0 = everywhere, no fade). `start` / `end` frames limit it (null clears them). Acts during
   `bakePhysics` only — put the bake after the field.
-- `flash` (v3.13): an explosion light in watts (like a lamp's Power; 60000 for a building, 400000 for
-  a meteor) that flares at `start` and fades over about 2 s, lighting up everything around it in
+- `flash` (v3.13): an explosion light in watts (like a lamp's Power; 60000 for a building, 80000 for
+  a meteor; it sits a little above the empty) that flares at `start` and fades over about 2 s, lighting up everything around it in
   Rendered view and videos. `flashColor` (default `#ff9a45`). 0 / null removes it.
 
 ## Tsunami / giant wave (v3.8)

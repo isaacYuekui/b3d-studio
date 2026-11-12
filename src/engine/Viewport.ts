@@ -1312,7 +1312,8 @@ export class Viewport {
     let flash: PointLight | undefined;
     if (o.field?.flash) {
       // Explosion light: off until the field starts (applyFlashes sets it per frame).
-      flash = new PointLight(`${o.id}-flash`, Vector3.Zero(), s);
+      // Raised above the centre so the ground right under it isn't a white-hot spot (Babylon Y = up).
+      flash = new PointLight(`${o.id}-flash`, new Vector3(0, Math.min(10, Math.max(1, o.field.radius * 0.25)), 0), s);
       flash.parent = node;
       flash.intensity = 0;
       flash.setEnabled(this.store.getState().shading === 'rendered');

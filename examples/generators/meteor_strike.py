@@ -59,7 +59,7 @@ C.append({"type": "setParticles", "id": "dust", "particles": {"count": 700, "sta
 
 # The blast: a force field for two frames, then bake the falling pieces.
 C.append({"type": "add", "primitive": "empty", "id": "blast", "name": "Blast", "transform": {"position": HIT}})
-C.append({"type": "setField", "id": "blast", "field": {"type": "force", "strength": 650, "radius": 32, "start": IMPACT, "end": IMPACT + 1, "flash": 400000, "flashColor": "#ff9a45"}})
+C.append({"type": "setField", "id": "blast", "field": {"type": "force", "strength": 650, "radius": 32, "start": IMPACT, "end": IMPACT + 1, "flash": 80000, "flashColor": "#ff9a45"}})
 C.append({"type": "addCameraShake", "start": IMPACT, "end": IMPACT + 60, "strength": 0.9, "frequency": 11})
 C.append({"type": "bakePhysics"})
 
