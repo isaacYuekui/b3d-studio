@@ -1013,6 +1013,37 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Town generator (v3.12): Add → Town → Village / Town / City; buildings with windows and roofs.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'delete', ids: [...s.getState().doc.order] });
+  });
+  await page.click('[data-menu="Add"]');
+  await page.hover('.menu-item:has-text("Town")');
+  await page.click('.menu [data-action="add.town.town"]');
+  const t = await page.evaluate(() => {
+    const o = window.__b3d.store.getState().doc.objects;
+    const ids = Object.keys(o);
+    const b = ids.filter((id) => /^town-b\d+$/.test(id));
+    return { buildings: b.length, roofs: b.filter((id) => o[`${id}-roof`]).length, ground: o['town-ground']?.rigid?.type, windows: o[b[0]]?.material.pattern?.type };
+  });
+  check('v3.12: Add → Town builds a street grid of buildings with roofs, windows and a ground', t.buildings >= 4 && t.roofs === t.buildings && t.ground === 'passive' && t.windows === 'windows', JSON.stringify(t));
+  await page.evaluate(() => window.__b3d.store.setShading('rendered'));
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: `${shots}/town.png` });
+  await page.evaluate(() => { window.__b3d.store.setShading('solid'); window.__b3d.store.select('town-b0'); });
+  await page.click('[data-menu="Object"]');
+  await page.hover('.menu-item:has-text("Quick Effects")');
+  await page.click('.menu [data-action="quick.explode"]');
+  await page.waitForFunction(() => !!window.__b3d.store.getState().doc.objects['town-b0-roof']?.rigid, null, { timeout: 90000 });
+  const roof = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; return { rigid: d.objects['town-b0-roof'].rigid.type, keys: d.animation?.tracks['town-b0-roof']?.length ?? 0 }; });
+  check('v3.12: Quick Explode on a town building brings its roof down too', roof.rigid === 'active' && roof.keys > 2, JSON.stringify(roof));
+  check('v3.12: no errors (town)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Quick Effects (v3.11): Object → Quick Effects → Quick Explode in one tap.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });

@@ -296,6 +296,21 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   and pushes active bodies with its motion — Blender's Rigid Body → Animated. Key it first (e.g. a
   swinging wrecking ball, a bulldozer blade, a meteor), then bake.
 
+## Town generator (v3.12)
+
+```json
+{"type":"addTown","prefix":"town","style":"town","center":[0,8],"size":[64,64],"seed":5,"ground":true}
+```
+
+- `style`: `village` (1–2 storeys, hip roofs), `town` (2–5 storeys, flat roofs), `city` (6–24 storeys).
+  `center` [x, y] and `size` [width, depth] in metres (10–1000), `base` (ground height, default 0),
+  `seed` (same seed = same town), `ground` (asphalt slab, passive rigid body; default true).
+- Objects are named by `prefix`: buildings `<prefix>-b0`, `-b1`…, their roofs `<prefix>-bN-roof`,
+  the ground `<prefix>-ground` — so a script can `fracture` or `setRigidBody` chosen buildings.
+  A second town needs another prefix.
+- Material pattern `windows`: storey-high tiles of wall (colour B) with an inset window (colour A);
+  `scale` = 1 / storey height (e.g. 0.333 for 3 m).
+
 ## Force fields (v3.9)
 
 ```json

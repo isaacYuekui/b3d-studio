@@ -132,6 +132,26 @@ export function pickFile(accept: string | null = '.json,.b3d,application/json'):
   });
 }
 
+/** Add → Town: a street grid of buildings (village houses, town blocks or city towers). */
+function addTown(style: 'village' | 'town' | 'city'): Action {
+  const size: Record<typeof style, [number, number]> = { village: [70, 70], town: [80, 80], city: [110, 110] };
+  return {
+    id: `add.town.${style}`,
+    label: style === 'village' ? 'Village' : style === 'town' ? 'Town' : 'City',
+    run: (c) => {
+      const objs = c.store.getState().doc.objects;
+      let prefix: string = style;
+      for (let k = 2; objs[`${prefix}-b0`] || objs[`${prefix}-ground`]; k++) prefix = `${style}${k}`;
+      const before = c.store.getState().doc;
+      c.store.dispatch({ type: 'addTown', style, prefix, size: size[style], seed: Math.floor(Math.random() * 1e6) }, { select: false });
+      if (c.store.getState().doc !== before) {
+        c.viewport()?.frame(false);
+        c.store.notify(`${style === 'city' ? 'City' : style === 'town' ? 'Town' : 'Village'} added — each building is its own object (Quick Explode works on them)`);
+      }
+    },
+  };
+}
+
 /** Add → Force Field: an empty carrying a field preset (explosions start at the current frame). */
 function addField(preset: string): Action {
   const p = FIELD_PRESETS.find((x) => x.id === preset)!;
@@ -449,6 +469,9 @@ export const actions = {
   'quick.fire': { id: 'quick.fire', label: 'Quick Fire', enabled: (c) => canQuick(c.store), run: (c) => quickParticles(c.store, 'fire') },
   'quick.smoke': { id: 'quick.smoke', label: 'Quick Smoke', enabled: (c) => canQuick(c.store), run: (c) => quickParticles(c.store, 'smoke') },
   'quick.float': { id: 'quick.float', label: 'Quick Float (on water)', enabled: (c) => hasSel(c), run: (c) => quickFloat(c.store) },
+  'add.town.village': addTown('village'),
+  'add.town.town': addTown('town'),
+  'add.town.city': addTown('city'),
   'add.field.blast': addField('blast'),
   'add.field.push': addField('push'),
   'add.field.wind': addField('wind'),

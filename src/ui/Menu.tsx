@@ -112,6 +112,7 @@ export const ADD_ITEMS: MenuItem[] = [
   'add.cube', 'add.sphere', 'add.cylinder', 'add.cone', 'add.torus', 'add.capsule', 'add.plane',
   '-', 'add.text', 'add.water', 'add.empty',
   { label: 'Force Field', items: ['add.field.blast', 'add.field.push', 'add.field.wind', 'add.field.vortex'] },
+  { label: 'Town', items: ['add.town.village', 'add.town.town', 'add.town.city'] },
   { label: 'Light', items: ['add.pointLight', 'add.sunLight', 'add.spotLight'] },
 ];
 

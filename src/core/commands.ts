@@ -24,6 +24,8 @@ import type { FloatSettings, Surge, WaterSettings } from './ocean';
 import { DEFAULT_SURGE } from './ocean';
 import type { CameraShake } from './shake';
 import { DEFAULT_FIELD, FIELD_TYPES } from './fields';
+import { DEFAULT_TOWN, TOWN_STYLES, townCommands } from './town';
+import type { TownOptions, TownStyle } from './town';
 import type { FieldType, ForceField } from './fields';
 import type { RigidBody } from './physics';
 import type { FontId, TextAlign, TextData } from './text';
@@ -138,6 +140,8 @@ export type Command =
   | { type: 'addText'; id?: string; name?: string; text: Partial<TextData> & { body: string }; transform?: Partial<Transform>; material?: Partial<Material>; parentId?: string | null }
   /** Change a text object's words, font, size, thickness or alignment (rebuilds its mesh). */
   | { type: 'setText'; id: string; text: Partial<TextData> }
+  /** A whole town of buildings on a street grid (village, town or city), with an optional ground. */
+  | { type: 'addTown'; prefix?: string; style?: TownStyle; center?: [number, number]; size?: [number, number]; base?: number; seed?: number; ground?: boolean }
   /** Force field on an empty (null removes it): Force, Wind or Vortex, acting in the physics bake. */
   | { type: 'setField'; id: string; field: Partial<ForceField> | null }
   /** Float an object on the water under it (null stops it floating). */
@@ -356,7 +360,8 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
           primitive: 'mesh',
           id,
           name: `${o.name} piece ${i + 1}`,
-          mesh: pc.mesh,
+          // Keep the texture where it was on the whole object (windows stay lined up on the pieces).
+          mesh: { ...pc.mesh, uvOffset: [0, 1, 2].map((k) => Math.round(((geo.uvOffset?.[k] ?? 0) + pc.center[k]) * 1e5) / 1e5) as Vec3 },
           material: o.material,
           parentId: o.parentId,
           transform: { position: [p[0] + off[0], p[1] + off[1], p[2] + off[2]].map((x) => Math.round(x * 1e5) / 1e5) as Vec3, rotation: [...o.transform.rotation], scale: [...sc] },
@@ -995,6 +1000,14 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       return { doc: withAnimation(base, next), created: [] };
     }
 
+    case 'addTown': {
+      const opts: TownOptions = { ...DEFAULT_TOWN, ...cmd };
+      if (doc.objects[`${opts.prefix}-b0`] || doc.objects[`${opts.prefix}-ground`]) throw new CommandError(`There is already a town called "${opts.prefix}": give this one another prefix`);
+      const cmds = townCommands(opts);
+      if (!cmds.some((c) => c.type === 'add' && /-b\d+$/.test(c.id ?? ''))) throw new CommandError('That area is too small for a building: make the town bigger');
+      return applyCommand(doc, { type: 'batch', commands: cmds }, idGen);
+    }
+
     case 'setField': {
       const o = requireObj(doc, cmd.id);
       if (o.type !== 'empty') throw new CommandError(`${o.name}: force fields go on empties (Add → Force Field)`);
@@ -1166,7 +1179,9 @@ export function validateMeshData(v: unknown): MeshData {
     if (!Array.isArray(f) || f.length < 3 || f.length > 1024) fail(`mesh face ${i} must list 3..1024 vertex indices`);
     return f.map((idx) => (Number.isInteger(idx) && idx >= 0 && idx < n ? (idx as number) : fail(`mesh face ${i} has invalid index ${String(idx)}`)));
   });
-  return { vertices, faces, smooth: v.smooth === true };
+  const out: MeshData = { vertices, faces, smooth: v.smooth === true };
+  if (v.uvOffset !== undefined) out.uvOffset = isVec3(v.uvOffset) ? ([...v.uvOffset] as Vec3) : fail('mesh uvOffset must be [x,y,z]');
+  return out;
 }
 
 function validateSkin(v: unknown, at: string): NonNullable<SceneObject['skin']> {
@@ -2038,6 +2053,18 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if ((cmd.op === 'move' || cmd.op === 'duplicate') && cmd.offset === undefined) fail(`editKeys ${cmd.op} needs offset`);
       if (cmd.op === 'scale' && cmd.factor === undefined) fail('editKeys scale needs factor');
       if (cmd.op === 'easing' && cmd.easing === undefined) fail('editKeys easing needs easing');
+      return cmd;
+    }
+    case 'addTown': {
+      const cmd: Extract<Command, { type: 'addTown' }> = { type: 'addTown' };
+      if (v.prefix !== undefined) cmd.prefix = typeof v.prefix === 'string' && /^[A-Za-z0-9_.-]{1,40}$/.test(v.prefix) ? v.prefix : fail('addTown prefix may only use letters, digits, _ . - (max 40)');
+      if (v.style !== undefined) cmd.style = (TOWN_STYLES as readonly unknown[]).includes(v.style) ? (v.style as TownStyle) : fail(`addTown style must be one of ${TOWN_STYLES.join(', ')}`);
+      const pair = (x: unknown, lo: number, hi: number) => Array.isArray(x) && x.length === 2 && x.every((n) => inRange(n, lo, hi));
+      if (v.center !== undefined) cmd.center = pair(v.center, -100000, 100000) ? ([...(v.center as number[])] as [number, number]) : fail('addTown center must be [x, y] metres');
+      if (v.size !== undefined) cmd.size = pair(v.size, 10, 1000) ? ([...(v.size as number[])] as [number, number]) : fail('addTown size must be [width, depth], each 10..1000 m');
+      if (v.base !== undefined) cmd.base = inRange(v.base, -10000, 10000) ? (v.base as number) : fail('addTown base must be a height in metres');
+      if (v.seed !== undefined) cmd.seed = Number.isInteger(v.seed) && inRange(v.seed, 0, 1e9) ? (v.seed as number) : fail('addTown seed must be a whole number');
+      if (v.ground !== undefined) cmd.ground = typeof v.ground === 'boolean' ? v.ground : fail('addTown ground must be true/false');
       return cmd;
     }
     case 'setField':
