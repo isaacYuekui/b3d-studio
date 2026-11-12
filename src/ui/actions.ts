@@ -201,10 +201,14 @@ export const actions = {
     run: async (c) => {
       const doc = c.store.getState().doc;
       const { collectEmbeddedModels } = await import('../engine/userModels');
+      const { collectEmbeddedImages, imagesInDoc } = await import('../engine/userImages');
       const models = await collectEmbeddedModels(doc.order.map((id) => doc.objects[id].asset ?? ''));
+      const images = await collectEmbeddedImages(imagesInDoc(doc));
       const json = serializeProject(doc);
-      // Imported models travel inside the project file so it opens on any device.
-      const text = Object.keys(models).length ? json.replace(/\n}$/, `,\n  "models": ${JSON.stringify(models)}\n}`) : json;
+      // Imported models and your images travel inside the project file so it opens on any device.
+      let text = json;
+      if (Object.keys(models).length) text = text.replace(/\n}$/, `,\n  "models": ${JSON.stringify(models)}\n}`);
+      if (Object.keys(images).length) text = text.replace(/\n}$/, `,\n  "images": ${JSON.stringify(images)}\n}`);
       downloadBlob(`b3d-scene-${stamp()}.b3d.json`, new Blob([text], { type: 'application/json' }));
       c.store.notify(Object.keys(models).length ? `Project exported with ${Object.keys(models).length} imported model(s)` : 'Project exported');
     },
@@ -219,10 +223,14 @@ export const actions = {
       try {
         const text = await file.text();
         const doc = parseProject(text);
-        const embedded = (JSON.parse(text) as { models?: unknown }).models;
-        if (embedded) {
+        const raw = JSON.parse(text) as { models?: unknown; images?: unknown };
+        if (raw.models) {
           const { restoreEmbeddedModels } = await import('../engine/userModels');
-          await restoreEmbeddedModels(embedded);
+          await restoreEmbeddedModels(raw.models);
+        }
+        if (raw.images) {
+          const { restoreEmbeddedImages } = await import('../engine/userImages');
+          await restoreEmbeddedImages(raw.images);
         }
         c.store.reset(doc, `Imported ${file.name}`);
         c.viewport()?.frame(true);
@@ -352,6 +360,37 @@ export const actions = {
   'mesh.fill': meshOp('fill', 'Fill (Make Face)', 'F'),
   'mesh.flip': meshOp('flip', 'Flip Normals', '⌥ N'),
   'mesh.recalc': meshOp('recalc', 'Recalculate Normals', '⇧ N'),
+  'uv.smartProject': {
+    id: 'uv.smartProject',
+    label: 'Smart UV Project',
+    shortcut: 'U',
+    enabled: (c) => {
+      const st = c.store.getState();
+      const id = st.edit?.id ?? st.selection;
+      return !!id && st.doc.objects[id]?.type === 'mesh';
+    },
+    run: (c) => {
+      const st = c.store.getState();
+      const id = st.edit?.id ?? st.selection;
+      if (!id) return;
+      c.store.dispatch({ type: 'unwrap', id }, { select: false });
+      c.store.notify('Unwrapped: textures from your images now follow the UV map (Material tab → Texture)');
+    },
+  },
+  'uv.clear': {
+    id: 'uv.clear',
+    label: 'Clear UV Map',
+    enabled: (c) => {
+      const st = c.store.getState();
+      const id = st.edit?.id ?? st.selection;
+      return !!id && !!st.doc.objects[id]?.mesh?.uv;
+    },
+    run: (c) => {
+      const st = c.store.getState();
+      const id = st.edit?.id ?? st.selection;
+      if (id) c.store.dispatch({ type: 'clearUv', id }, { select: false });
+    },
+  },
   'mesh.dissolve': meshOp('dissolve', 'Dissolve', `${MOD} X`),
   'mesh.connect': meshOp('connect', 'Connect Vertex Path', 'J'),
   'mesh.bridge': meshOp('bridge', 'Bridge Edge Loops'),
@@ -828,6 +867,7 @@ export function shortcutFor(e: KeyboardEvent, editMode = false): ActionId | null
         case 'KeyB': return 'select.box';
         case 'KeyL': return 'select.linked';
         case 'KeyO': return 'edit.proportional';
+        case 'KeyU': return 'uv.smartProject';
         case 'KeyP': return 'mesh.separate';
         case 'KeyJ': return 'mesh.connect';
         case 'KeyH': return null;

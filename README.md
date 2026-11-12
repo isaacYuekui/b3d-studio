@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Image textures and UV unwrap (v3.18)
+
+- **Your own pictures as textures**: Material → Texture → **Upload an image…** (photos are shrunk to 2048 px and kept on the device; *Your images* lists them; project files carry them along)
+- **Smart UV Project** (U in Edit Mode, Mesh / Object → UV): each side becomes a flat island at true size, packed into the square — the picture then follows the model instead of being projected in metres
+- UV maps survive moving vertices and Subdivision; tools that rebuild faces (extrude, bevel…) drop it, like a stretched map in Blender you re-unwrap; **Clear UV Map** goes back to box projection
+- Scripts: `unwrap`, `clearUv`, and `mesh.uv` (per face, one [u, v] per corner)
+
 ## Collections (v3.17)
 
 - **Outliner collections** like Blender: **+** on the Scene Collection row makes one; tap a collection to make it active — new objects go into it

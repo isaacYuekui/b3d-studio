@@ -121,6 +121,7 @@ export const MESH_ITEMS: MenuItem[] = [
   '-', 'edit.duplicate', 'mesh.fill', 'mesh.merge', 'mesh.mergeDistance', 'mesh.separate', 'edit.delete', 'mesh.dissolve',
   { label: 'Deform', items: ['mesh.smoothVerts', 'mesh.shrinkFatten', 'mesh.toSphere'] },
   { label: 'Faces', items: ['mesh.poke', 'mesh.triangulate', 'mesh.trisToQuads'] },
+  { label: 'UV', items: ['uv.smartProject', 'uv.clear'] },
   '-', 'mesh.recalc', 'mesh.flip', 'mesh.smooth', 'mesh.flat',
   '-', 'mod.mirrorX', 'mod.subdiv1', 'mod.subdiv2', 'mod.subdiv0', 'mod.apply',
 ];

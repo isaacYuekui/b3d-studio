@@ -401,6 +401,20 @@ sound by building the events themselves.
 
 Loudness follows strength, size and distance to the scene camera.
 
+## UV maps (v3.18)
+
+```json
+{"type":"unwrap","id":"crate","angle":66,"margin":0.02}
+{"type":"clearUv","id":"crate"}
+```
+
+- `unwrap` is Smart UV Project: faces facing within `angle`° of each other form islands, projected
+  at true size and packed into 0..1 with `margin` between them.
+- `mesh.uv` can also be given directly on `add` / `setMesh`: for each face, one `[u, v]` per corner.
+- Without a UV map, textures are box-projected in metres (`textureScale` = repeats per metre); with
+  one, `textureScale` 1 shows the image once over the map. Your own images (texture ids `img-…`)
+  are uploaded in the app; scripts can use their ids once they are on the device.
+
 ## Collections (v3.17)
 
 ```json

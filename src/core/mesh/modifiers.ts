@@ -7,6 +7,7 @@ import type { V } from './topology';
 import { add, compact, ek, edgeMap, newell, scale } from './topology';
 import { bevel as bevelOp } from './ops';
 import { transferMaterialIndex, usesSlots, withMaterialIndex } from './materialIndex';
+import { validUv } from './uv';
 import { vertexNormals } from './sculpt';
 
 export const MAX_SUBDIV_FACES = 400_000;
@@ -340,9 +341,18 @@ export function catmullClarkCreased(mesh: MeshData, creases?: Set<string>): { me
   out.push(...fp);
   const faces: number[][] = [];
   const index: number[] | undefined = usesSlots(mesh) ? [] : undefined;
+  // UV map: each new quad takes its corner, two edge midpoints and the face centre in UV space too.
+  const uvIn = validUv(mesh) ? mesh.uv! : null;
+  const uvOut: [number, number][][] | undefined = uvIn ? [] : undefined;
   mesh.faces.forEach((f, fi) => {
+    const fu = uvIn?.[fi];
+    const cu: [number, number] | null = fu ? [fu.reduce((a, p) => a + p[0], 0) / fu.length, fu.reduce((a, p) => a + p[1], 0) / fu.length] : null;
     for (let i = 0; i < f.length; i++) {
       index?.push(mesh.materialIndex![fi]);
+      if (fu && cu) {
+        const a = fu[i], b = fu[(i + 1) % f.length], c = fu[(i - 1 + f.length) % f.length];
+        uvOut!.push([a, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], cu, [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2]]);
+      }
       const v = f[i];
       const next = f[(i + 1) % f.length];
       const prev = f[(i - 1 + f.length) % f.length];
@@ -360,5 +370,7 @@ export function catmullClarkCreased(mesh: MeshData, creases?: Set<string>): { me
       next.add(ek(e.b, ep));
     }
   }
-  return { mesh: withMaterialIndex({ vertices: out, faces, smooth: mesh.smooth }, index), creases: next };
+  const result = withMaterialIndex({ vertices: out, faces, smooth: mesh.smooth }, index);
+  if (uvOut) result.uv = uvOut;
+  return { mesh: result, creases: next };
 }

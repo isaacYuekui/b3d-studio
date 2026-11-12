@@ -45,6 +45,8 @@ export interface MeshData {
   uvOffset?: Vec3;
   /** Material slot of each face (0 = the object's material, 1.. = materialSlots); missing = all 0. */
   materialIndex?: number[];
+  /** UV map: per face, one [u, v] per corner (0..1 image space); missing = box projection in metres. */
+  uv?: [number, number][][];
 }
 
 /** Principled-BSDF-like material. */
