@@ -164,6 +164,8 @@ export interface SceneObject {
   mesh?: MeshData;
   /** Mesh objects only. */
   modifiers?: Modifiers;
+  /** Shape keys (Basis + other shapes mixed by value); the mesh's vertices are the active key's shape. */
+  shapeKeys?: import('./shapeKeys').ShapeKeys;
   light?: LightData;
   /** Library model id, for type 'model'. */
   asset?: string;

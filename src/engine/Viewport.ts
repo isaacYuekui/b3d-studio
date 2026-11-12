@@ -62,7 +62,7 @@ import { PRIMITIVES, isRenderable, worldOf } from '../core/types';
 import type { PrimitiveType } from '../core/types';
 import { primitiveMesh } from '../core/mesh/primitives';
 import { catalogNow, hdriUrl, loadCatalog, modelUrl, textureUrl } from './library';
-import { animationOf, sceneCameraAt, transformAt, transformEdit } from '../core/animation';
+import { animationOf, evaluateValue, sceneCameraAt, transformAt, transformEdit } from '../core/animation';
 import { guessUnitScale, isUserAsset, updateUserModelMeta, userModelMetaNow, userModelUrl } from './userModels';
 
 class MissingModel extends Error {}
@@ -87,6 +87,7 @@ import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { apply as m4apply, rotEuler as rotEulerM, boneBase, invert as m4invert, m4ToQuat, mul as m4mul, poseAt, poseBones, poseEdit, quatToM4, rotationOnly, skinMesh, toEuler, worldMatrix } from '../core/rig';
 import { applyModifiers } from '../core/mesh/modifiers';
+import { hasShapeKeys, shapedMesh, shapeValuesAt } from '../core/shapeKeys';
 import { transformVerts } from '../core/mesh/ops';
 import { flush, pickElement, selectLoop } from '../core/mesh/select';
 import type { MeshSelection } from '../core/mesh/select';
@@ -410,6 +411,11 @@ export class Viewport {
     const editKey = state.edit ? `${state.edit.id}|${state.edit.mode}|${state.xray}` : '';
     const editChanged = editKey !== this.lastEditKey || state.edit !== this.lastEdit || (state.edit && docChanged);
     if (editChanged) this.syncEdit(state, editKey !== this.lastEditKey);
+    const shapeMode = `${state.edit?.id ?? ''}|${state.sculpt?.id ?? ''}`;
+    if (shapeMode !== this.lastShapeMode) {
+      this.lastShapeMode = shapeMode;
+      this.applyShapes(state);
+    }
     const poseChanged = state.pose !== this.lastPose;
     this.lastPose = state.pose;
     if (poseChanged) this.applyRigs(state);
@@ -741,11 +747,45 @@ export class Viewport {
   private bonePivot!: TransformNode;
   private boneDrag: { arm: string; bone: string; startQ: Quaternion; startPos: Vector3; base: M4; armWorld: M4; rot0: [number, number, number]; loc0: [number, number, number] } | null = null;
   private bindCache = new Map<string, { key: unknown; weights: Weights; rel: string }>();
-  private evalCache = new Map<string, { mesh: unknown; mods: unknown; out: MeshData }>();
+  private evalCache = new Map<string, { mesh: unknown; mods: unknown; sig?: string; out: MeshData }>();
+  private shapeSig = new Map<string, { sig: string; mesh: unknown; mods: unknown; node: unknown }>();
+  private lastShapeMode = '';
+
+  /**
+   * Shape keys: Object Mode shows the mix at this frame (values may be keyframed); while the
+   * object is in Edit Mode or Sculpt Mode it shows the active key's own shape, which is what
+   * those tools change.
+   */
+  private applyShapes(state: AppState) {
+    const doc = state.doc;
+    const now = new Set<string>();
+    for (const id of doc.order) {
+      const o = doc.objects[id];
+      if (o.type !== 'mesh' || !o.mesh || !hasShapeKeys(o.shapeKeys) || (o.skin && doc.objects[o.skin.armature])) continue;
+      const e = this.entries.get(id);
+      if (!e || !(e.node instanceof Mesh)) continue;
+      now.add(id);
+      const own = state.edit?.id === id || state.sculpt?.id === id;
+      const values = own ? null : shapeValuesAt(o.shapeKeys, doc.animation?.shapes?.[id], state.frame, evaluateValue);
+      const sig = values ? values.map((v) => v.toFixed(4)).join(',') : 'own';
+      const prev = this.shapeSig.get(id);
+      if (prev && prev.sig === sig && prev.mesh === o.mesh && prev.mods === o.modifiers && prev.node === e.node) continue;
+      this.shapeSig.set(id, { sig, mesh: o.mesh, mods: o.modifiers, node: e.node });
+      this.updateDeformed(e.node, applyModifiers(values ? shapedMesh(o.mesh, o.shapeKeys, values) : o.mesh, o.modifiers));
+    }
+    for (const id of [...this.shapeSig.keys()]) {
+      if (now.has(id)) continue;
+      this.shapeSig.delete(id);
+      const o = doc.objects[id];
+      const e = this.entries.get(id);
+      if (o?.mesh && e?.node instanceof Mesh && !(o.skin && doc.objects[o.skin.armature])) applyGeometry(e.node, applyModifiers(o.mesh, o.modifiers));
+    }
+  }
   private skinned = new Set<string>();
 
   /** Draw bones (posed) and deform skinned meshes for the current frame. */
   private applyRigs(state: AppState) {
+    this.applyShapes(state);
     const doc = state.doc;
     const rendered = state.shading === 'rendered';
     for (const id of doc.order) {
@@ -775,8 +815,10 @@ export class Viewport {
       if (state.edit?.id === id) continue; // edit the rest shape
       now.add(id);
       let ev = this.evalCache.get(id);
-      if (!ev || ev.mesh !== o.mesh || ev.mods !== o.modifiers) {
-        ev = { mesh: o.mesh, mods: o.modifiers, out: applyModifiers(o.mesh, o.modifiers) };
+      const values = hasShapeKeys(o.shapeKeys) ? shapeValuesAt(o.shapeKeys, doc.animation?.shapes?.[id], state.frame, evaluateValue) : null;
+      const sig = values ? values.map((v) => v.toFixed(4)).join(',') : '';
+      if (!ev || ev.mesh !== o.mesh || ev.mods !== o.modifiers || ev.sig !== sig) {
+        ev = { mesh: o.mesh, mods: o.modifiers, sig, out: applyModifiers(values ? shapedMesh(o.mesh, o.shapeKeys, values) : o.mesh, o.modifiers) };
         this.evalCache.set(id, ev);
       }
       let explicit: Weights | null = null;

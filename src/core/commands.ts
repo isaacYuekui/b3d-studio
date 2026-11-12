@@ -12,6 +12,8 @@ import { DEFAULT_ANIMATION, EASINGS, animationOf, transformAt, upsertKey } from 
 import { KEY_OPS, editKeys as editKeysIn } from './dopesheet';
 import type { KeyOp, KeyRef } from './dopesheet';
 import type { Animation, CameraFollow, Easing, PoseKey } from './animation';
+import { addShapeKey, carryShapeKeys, removeShapeKey, setActiveKey, validShapeKeys, MAX_SHAPE_KEYS } from './shapeKeys';
+import type { ShapeKeys } from './shapeKeys';
 import type { ArmatureData, Bone, BonePose, Background, CameraLens, FollowPath, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
@@ -95,6 +97,14 @@ export type Command =
   | { type: 'setMaterial'; id: string; material: Partial<Material>; slot?: number }
   /** Follow Path: an object moves along a curve object (null removes it). */
   | { type: 'setFollow'; id: string; follow: FollowPath | null }
+  /** Shape keys: the first add makes the Basis; later ones a new key (from the Basis, or the current mix). */
+  | { type: 'addShapeKey'; id: string; name?: string; fromMix?: boolean }
+  | { type: 'setShapeKey'; id: string; index: number; name?: string; value?: number; min?: number; max?: number; mute?: boolean }
+  | { type: 'setActiveShapeKey'; id: string; index: number }
+  | { type: 'removeShapeKey'; id: string; index: number }
+  /** Keyframe a shape key's value (default: its value now). */
+  | { type: 'keyShape'; id: string; key: string; frame: number; value?: number; easing?: Easing }
+  | { type: 'unkeyShape'; id: string; key: string; frame: number }
   /** The scene camera flies along a curve (null removes it). */
   | { type: 'setCameraFollow'; follow: CameraFollow | null }
   /** Curve Edit Mode tools on the control points. */
@@ -309,7 +319,27 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
   const after = cmd.type === 'setText' || cmd.type === 'addText' ? r.doc : dropStaleText(doc, r.doc);
   // Commands that set the per-face slots / UVs themselves are left as they are.
   if (cmd.type === 'assignMaterial' || cmd.type === 'removeMaterialSlot' || cmd.type === 'clearUv') return { ...r, doc: after };
-  return { ...r, doc: carrySlots(doc, after) };
+  const slotted = carrySlots(doc, after);
+  if (cmd.type === 'addShapeKey' || cmd.type === 'setActiveShapeKey' || cmd.type === 'removeShapeKey' || cmd.type === 'setShapeKey') return { ...r, doc: slotted };
+  return { ...r, doc: carryShapes(doc, slotted) };
+}
+
+/** Mesh edits on an object with shape keys change the active key (see core/shapeKeys.ts). */
+function carryShapes(before: SceneDoc, after: SceneDoc): SceneDoc {
+  let objects = after.objects;
+  for (const [id, o] of Object.entries(after.objects)) {
+    const b = before.objects[id];
+    if (!o.shapeKeys || !o.mesh || !b?.mesh || b.mesh === o.mesh || b.mesh.vertices === o.mesh.vertices) continue;
+    let shapeKeys: ShapeKeys;
+    try {
+      shapeKeys = carryShapeKeys(b.mesh, o.mesh, o.shapeKeys);
+    } catch (e) {
+      throw new CommandError(e instanceof Error ? e.message : String(e));
+    }
+    if (objects === after.objects) objects = { ...objects };
+    objects[id] = { ...o, shapeKeys };
+  }
+  return objects === after.objects ? after : { ...after, objects };
 }
 
 /**
@@ -528,11 +558,12 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       const objects: Record<string, SceneObject> = {};
       for (const [id, o] of Object.entries(doc.objects)) if (!doomed.has(id)) objects[id] = o;
       let animation = doc.animation;
-      if (animation && [...doomed].some((id) => animation!.tracks[id] || animation!.poses?.[id])) {
+      if (animation && [...doomed].some((id) => animation!.tracks[id] || animation!.poses?.[id] || animation!.shapes?.[id])) {
         const tracks = { ...animation.tracks };
         const poses = { ...animation.poses };
-        doomed.forEach((id) => (delete tracks[id], delete poses[id]));
-        animation = { ...animation, tracks, poses };
+        const shapes = { ...animation.shapes };
+        doomed.forEach((id) => (delete tracks[id], delete poses[id], delete shapes[id]));
+        animation = { ...animation, tracks, poses, ...(animation.shapes ? { shapes } : {}) };
       }
       // Meshes skinned to a deleted armature keep their rest shape.
       for (const [id, o] of Object.entries(objects)) if (o.skin && doomed.has(o.skin.armature)) {
@@ -569,6 +600,11 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
             if (isRoot) keys.forEach((k) => (k.transform.position[0] += 1));
             const anim = animationOf(next);
             next = { ...next, animation: { ...anim, tracks: { ...anim.tracks, [newId]: keys } } };
+          }
+          const srcShapes = doc.animation?.shapes?.[srcId];
+          if (srcShapes) {
+            const anim = animationOf(next);
+            next = { ...next, animation: { ...anim, shapes: { ...anim.shapes, [newId]: clone(srcShapes) } } };
           }
           const srcPoses = doc.animation?.poses?.[srcId];
           if (srcPoses) {
@@ -643,6 +679,103 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       if (!c?.modifiers?.curve) throw new CommandError('Follow Path needs a curve object (Add → Curve)');
       if (cmd.follow.curve === o.id) throw new CommandError('A curve can’t follow itself');
       return { doc: withObject(doc, { ...o, follow: { ...cmd.follow } }), created: [] };
+    }
+
+    case 'addShapeKey': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      if (o.modifiers?.curve) throw new CommandError('Curves can’t have shape keys');
+      let r;
+      try {
+        r = addShapeKey(o.mesh!, o.shapeKeys, cmd.name, cmd.fromMix, shapeValuesNow(doc, o));
+      } catch (e) {
+        throw new CommandError(e instanceof Error ? e.message : String(e));
+      }
+      return { doc: withObject(doc, { ...o, mesh: r.mesh, shapeKeys: r.shapeKeys }), created: [] };
+    }
+
+    case 'setShapeKey': {
+      const o = requireObj(doc, cmd.id);
+      const sk = o.shapeKeys;
+      const k = sk?.keys[cmd.index];
+      if (!sk || !k) throw new CommandError(`${o.name} has no shape key ${cmd.index}`);
+      const next = { ...k };
+      let animation = doc.animation;
+      if (cmd.name !== undefined && cmd.name !== k.name) {
+        if (sk.keys.some((x) => x.name === cmd.name)) throw new CommandError(`There is already a shape key called ${cmd.name}`);
+        next.name = cmd.name;
+        const tracks = animation?.shapes?.[o.id];
+        if (animation && tracks?.[k.name]) {
+          const t = { ...tracks, [cmd.name]: tracks[k.name] };
+          delete t[k.name];
+          animation = { ...animation, shapes: { ...animation.shapes, [o.id]: t } };
+        }
+      }
+      if (cmd.min !== undefined) next.min = cmd.min;
+      if (cmd.max !== undefined) next.max = cmd.max;
+      if ((next.min ?? 0) > (next.max ?? 1)) throw new CommandError('Shape key min must be below max');
+      if (cmd.value !== undefined) next.value = Math.max(next.min ?? 0, Math.min(next.max ?? 1, cmd.value));
+      if (cmd.mute !== undefined) {
+        if (cmd.mute) next.mute = true;
+        else delete next.mute;
+      }
+      const keys = sk.keys.map((x, i) => (i === cmd.index ? next : x));
+      return { doc: { ...withObject(doc, { ...o, shapeKeys: { ...sk, keys } }), animation }, created: [] };
+    }
+
+    case 'setActiveShapeKey': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      if (!o.shapeKeys) throw new CommandError(`${o.name} has no shape keys`);
+      try {
+        const r = setActiveKey(o.mesh!, o.shapeKeys, cmd.index);
+        return { doc: withObject(doc, { ...o, mesh: r.mesh, shapeKeys: r.shapeKeys }), created: [] };
+      } catch (e) {
+        throw new CommandError(e instanceof Error ? e.message : String(e));
+      }
+    }
+
+    case 'removeShapeKey': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      if (!o.shapeKeys?.keys[cmd.index]) throw new CommandError(`${o.name} has no shape key ${cmd.index}`);
+      const gone = cmd.index === 0 || o.shapeKeys.keys.length <= 2 ? o.shapeKeys.keys.map((k) => k.name) : [o.shapeKeys.keys[cmd.index].name];
+      const r = removeShapeKey(o.mesh!, o.shapeKeys, cmd.index);
+      const { shapeKeys: _s, ...rest } = o;
+      void _s;
+      let animation = doc.animation;
+      const tracks = animation?.shapes?.[o.id];
+      if (animation && tracks) {
+        const t = { ...tracks };
+        gone.forEach((n) => delete t[n]);
+        const shapes = { ...animation.shapes };
+        if (Object.keys(t).length) shapes[o.id] = t;
+        else delete shapes[o.id];
+        animation = { ...animation, shapes };
+      }
+      return { doc: { ...withObject(doc, { ...rest, mesh: r.mesh, ...(r.shapeKeys ? { shapeKeys: r.shapeKeys } : {}) }), animation }, created: [] };
+    }
+
+    case 'keyShape': {
+      const o = requireObj(doc, cmd.id);
+      const k = o.shapeKeys?.keys.find((x) => x.name === cmd.key);
+      if (!k || o.shapeKeys!.keys[0] === k) throw new CommandError(`${o.name} has no shape key ${cmd.key} to animate`);
+      const a = animationOf(doc);
+      const value = Math.max(k.min ?? 0, Math.min(k.max ?? 1, cmd.value ?? k.value));
+      const tracks = { ...a.shapes?.[o.id] };
+      tracks[cmd.key] = upsertKey(tracks[cmd.key] ?? [], { frame: cmd.frame, value, easing: cmd.easing ?? 'ease' });
+      return { doc: { ...doc, animation: { ...a, shapes: { ...a.shapes, [o.id]: tracks } } }, created: [] };
+    }
+
+    case 'unkeyShape': {
+      const a = doc.animation;
+      const keys = a?.shapes?.[cmd.id]?.[cmd.key];
+      if (!a || !keys?.some((k) => k.frame === cmd.frame)) return { doc, created: [] };
+      const tracks = { ...a.shapes![cmd.id] };
+      const left = keys.filter((k) => k.frame !== cmd.frame);
+      if (left.length) tracks[cmd.key] = left;
+      else delete tracks[cmd.key];
+      const shapes = { ...a.shapes };
+      if (Object.keys(tracks).length) shapes[cmd.id] = tracks;
+      else delete shapes[cmd.id];
+      return { doc: { ...doc, animation: { ...a, shapes } }, created: [] };
     }
 
     case 'setCameraFollow': {
@@ -1703,6 +1836,7 @@ export function validateSceneObject(raw: unknown): SceneObject {
   }
   if (obj.type === 'mesh') obj.mesh = validateMeshData(v.mesh);
   if (obj.type === 'mesh' && v.modifiers !== undefined) obj.modifiers = validateModifiers(v.modifiers);
+  if (obj.type === 'mesh' && v.shapeKeys !== undefined) obj.shapeKeys = validateShapeKeys(v.shapeKeys, obj.mesh!.vertices.length, String(v.id));
   if (obj.type === 'mesh' && v.text !== undefined) obj.text = validateText(v.text, false) as TextData;
   if (v.rigid !== undefined && (obj.type === 'mesh' || (PRIMITIVES as readonly string[]).includes(obj.type))) obj.rigid = validateRigid(v.rigid, false) as RigidBody;
   if (v.particles !== undefined && (obj.type === 'mesh' || (PRIMITIVES as readonly string[]).includes(obj.type))) obj.particles = validateParticles(v.particles, false) as ParticleSettings;
@@ -1977,7 +2111,25 @@ export function validateAnimation(v: unknown, objects: Record<string, SceneObjec
     });
   }
   const cameraFollow = v.cameraFollow !== undefined ? validateCameraFollow(v.cameraFollow) : undefined;
-  return { fps, start, end, tracks, camera, ...(poses ? { poses } : {}), ...(shakes?.length ? { shakes } : {}), ...(cameraFollow ? { cameraFollow } : {}) };
+  let shapes: Animation['shapes'];
+  if (v.shapes !== undefined) {
+    if (!isRecord(v.shapes)) fail('animation.shapes invalid');
+    shapes = {};
+    for (const [id, keys] of Object.entries(v.shapes)) {
+      if (!objects[id] || !isRecord(keys)) continue;
+      shapes[id] = {};
+      for (const [name, ks] of Object.entries(keys)) {
+        if (!Array.isArray(ks) || ks.length > 100000) fail(`shape keys ${id}.${name} invalid`);
+        shapes[id][name] = ks
+          .map((k, i) => {
+            if (!isRecord(k) || !isFrame(k.frame) || !inRange(k.value, -10, 10)) fail(`shape key ${id}.${name}[${i}] invalid`);
+            return { frame: k.frame as number, value: k.value as number, easing: isEasing(k.easing) ? k.easing : ('ease' as Easing) };
+          })
+          .sort((a, b) => a.frame - b.frame);
+      }
+    }
+  }
+  return { fps, start, end, tracks, camera, ...(poses ? { poses } : {}), ...(shapes && Object.keys(shapes).length ? { shapes } : {}), ...(shakes?.length ? { shakes } : {}), ...(cameraFollow ? { cameraFollow } : {}) };
 }
 
 const REF_ID = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -2053,6 +2205,37 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (!isId(v.id)) fail('setFollow needs id');
       return { type: 'setFollow', id: v.id, follow: v.follow === null ? null : validateFollow(v.follow) };
     }
+    case 'addShapeKey': {
+      if (!isId(v.id)) fail('addShapeKey needs id');
+      const cmd: Extract<Command, { type: 'addShapeKey' }> = { type: 'addShapeKey', id: v.id };
+      if (v.name !== undefined) cmd.name = typeof v.name === 'string' && v.name.length >= 1 && v.name.length <= 64 ? v.name : fail('addShapeKey name must be 1..64 characters');
+      if (v.fromMix !== undefined) cmd.fromMix = !!v.fromMix;
+      return cmd;
+    }
+    case 'setShapeKey': {
+      if (!isId(v.id) || !(Number.isInteger(v.index) && inRange(v.index, 0, MAX_SHAPE_KEYS - 1))) fail('setShapeKey needs id and index');
+      const cmd: Extract<Command, { type: 'setShapeKey' }> = { type: 'setShapeKey', id: v.id, index: v.index as number };
+      if (v.name !== undefined) cmd.name = typeof v.name === 'string' && v.name.length >= 1 && v.name.length <= 64 ? v.name : fail('shape key name must be 1..64 characters');
+      if (v.value !== undefined) cmd.value = inRange(v.value, -10, 10) ? (v.value as number) : fail('shape key value must be -10..10');
+      if (v.min !== undefined) cmd.min = inRange(v.min, -10, 10) ? (v.min as number) : fail('shape key min must be -10..10');
+      if (v.max !== undefined) cmd.max = inRange(v.max, -10, 10) ? (v.max as number) : fail('shape key max must be -10..10');
+      if (v.mute !== undefined) cmd.mute = !!v.mute;
+      return cmd;
+    }
+    case 'setActiveShapeKey':
+    case 'removeShapeKey':
+      if (!isId(v.id) || !(Number.isInteger(v.index) && inRange(v.index, 0, MAX_SHAPE_KEYS - 1))) fail(`${v.type} needs id and index`);
+      return { type: v.type, id: v.id, index: v.index as number };
+    case 'keyShape': {
+      if (!isId(v.id) || typeof v.key !== 'string' || !isFrame(v.frame)) fail('keyShape needs id, key (name) and frame');
+      const cmd: Extract<Command, { type: 'keyShape' }> = { type: 'keyShape', id: v.id, key: v.key, frame: v.frame as number };
+      if (v.value !== undefined) cmd.value = inRange(v.value, -10, 10) ? (v.value as number) : fail('keyShape value must be -10..10');
+      if (v.easing !== undefined) cmd.easing = isEasing(v.easing) ? v.easing : fail(`easing must be one of ${EASINGS.join(', ')}`);
+      return cmd;
+    }
+    case 'unkeyShape':
+      if (!isId(v.id) || typeof v.key !== 'string' || !isFrame(v.frame)) fail('unkeyShape needs id, key and frame');
+      return { type: 'unkeyShape', id: v.id, key: v.key, frame: v.frame as number };
     case 'setCameraFollow':
       return { type: 'setCameraFollow', follow: v.follow === null ? null : validateCameraFollow(v.follow) };
     case 'editCurve':
@@ -2505,4 +2688,30 @@ export function looseParts(m: MeshData): number[][] {
     groups.get(r)!.push(i);
   });
   return [...groups.values()].sort((a, b) => b.length - a.length);
+}
+
+/** Shape key values at the scene's current state (their own values; animation isn't evaluated here). */
+function shapeValuesNow(_doc: SceneDoc, o: SceneObject): number[] | undefined {
+  return o.shapeKeys?.keys.map((k) => k.value);
+}
+
+function validateShapeKeys(v: unknown, vertexCount: number, id: string): ShapeKeys {
+  if (!isRecord(v) || !Array.isArray(v.keys)) fail(`object ${id}: shapeKeys invalid`);
+  const sk: ShapeKeys = {
+    active: v.active as number,
+    keys: (v.keys as unknown[]).map((k) => {
+      if (!isRecord(k)) fail(`object ${id}: shape key invalid`);
+      return {
+        name: k.name as string,
+        verts: Array.isArray(k.verts) ? (k.verts as unknown[]).map((p) => (isVec3(p) ? ([...p] as [number, number, number]) : fail(`object ${id}: shape key point invalid`))) : fail(`object ${id}: shape key verts invalid`),
+        value: (k.value ?? 0) as number,
+        ...(k.min !== undefined ? { min: k.min as number } : {}),
+        ...(k.max !== undefined ? { max: k.max as number } : {}),
+        ...(k.mute ? { mute: true } : {}),
+      };
+    }),
+  };
+  const err = validShapeKeys(sk, vertexCount);
+  if (err) fail(`object ${id}: ${err}`);
+  return sk;
 }

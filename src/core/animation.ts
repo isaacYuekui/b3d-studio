@@ -40,6 +40,8 @@ export interface Animation {
   shakes?: import('./shake').CameraShake[];
   /** The scene camera flies along a curve between two frames (overrides camera keys then). */
   cameraFollow?: CameraFollow;
+  /** Shape key values: object id → key name → keys. */
+  shapes?: Record<string, Record<string, import('./shapeKeys').ValueKey[]>>;
 }
 
 export interface CameraFollow {
@@ -162,6 +164,13 @@ export function evaluateCamera(keys: CameraKey[], frame: number): { position: Ve
   return { position: lerp3(a.position, b.position, t), target: lerp3(a.target, b.target, t) };
 }
 
+export function evaluateValue(keys: { frame: number; value: number; easing: Easing }[], frame: number): number | null {
+  const s = segment(keys, frame);
+  if (!s) return null;
+  const [a, b, t] = s;
+  return lerp(a.value, b.value, t);
+}
+
 export function evaluatePose(keys: PoseKey[], frame: number): { rotation: Vec3; location: Vec3 } | null {
   const s = segment(keys, frame);
   if (!s) return null;
@@ -240,6 +249,7 @@ export function keyFrames(anim: Animation, ids: string[] | null): number[] {
   for (const t of tracks) for (const k of t) set.add(k.frame);
   // Bone keys count for their armature.
   for (const [arm, bones] of Object.entries(anim.poses ?? {})) if (!ids || ids.includes(arm)) for (const ks of Object.values(bones)) for (const k of ks) set.add(k.frame);
+  for (const [id, keys] of Object.entries(anim.shapes ?? {})) if (!ids || ids.includes(id)) for (const ks of Object.values(keys)) for (const k of ks) set.add(k.frame);
   if (!ids) for (const k of anim.camera) set.add(k.frame);
   return [...set].sort((a, b) => a - b);
 }
