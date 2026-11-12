@@ -551,6 +551,8 @@ export class Viewport {
           um.alphaMode = s.shape === 'fire' ? 1 /* additive */ : 2 /* blend */;
           um.backFaceCulling = false;
           mesh.hasVertexAlpha = true;
+          // Glowing fire draws after smoke, so flames show through a smoke column instead of vanishing in it.
+          mesh.alphaIndex = s.shape === 'fire' ? 2 : 1;
           mat = um;
         } else {
           mesh =

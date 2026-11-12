@@ -34,7 +34,7 @@ def fbm(x, y, s=0):
 
 
 # --- the cone: rings of points from the crater floor out to the base, gullies and noise
-RINGS, SEG = 34, 96
+RINGS, SEG = 34, 160
 CHANNELS = [-100.0, -78.0, 205.0]   # lava runs down these directions (degrees)
 
 
@@ -106,14 +106,16 @@ C.append({"type": "setParticles", "id": "vent", "particles": {"count": 900, "sta
 C.append({"type": "add", "primitive": "light", "id": "crater-glow", "name": "Crater glow", "light": {"type": "point", "power": 90000, "color": "#ff6a20", "shadows": False}, "transform": {"position": [0, 0, H + 6]}})
 
 # The eruption: a blast with a flash, a fire fountain, lava bombs and an ash column.
-C.append({"type": "add", "primitive": "empty", "id": "blast", "name": "Eruption", "transform": {"position": TOP}})
+# (the empty sits high above the crater: its flash then lights the slopes and the village, not just the crater)
+C.append({"type": "add", "primitive": "empty", "id": "blast", "name": "Eruption", "transform": {"position": [0, 0, H + 30]}})
 C.append({"type": "setField", "id": "blast", "field": {"type": "force", "strength": 300, "radius": 40, "start": ERUPT, "end": ERUPT + 1, "flash": 900000, "flashColor": "#ff8a3a"}})
-C.append({"type": "add", "primitive": "sphere", "id": "fountain", "name": "Fire fountain", "transform": {"position": TOP, "scale": [4, 4, 1]}})
-C.append({"type": "setParticles", "id": "fountain", "particles": {"count": 5000, "start": ERUPT, "end": 168, "lifetime": 34, "speed": 26, "random": 7, "gravity": 0.9, "size": 4.5, "sizeRandom": 0.5, "shape": "fire", "color": "#ff7a1a", "glow": 1, "ground": "none", "hideEmitter": True, "seed": 5}})
-C.append({"type": "add", "primitive": "sphere", "id": "bombs", "name": "Lava bombs", "transform": {"position": TOP, "scale": [3, 3, 1]}})
-C.append({"type": "setParticles", "id": "bombs", "particles": {"count": 700, "start": ERUPT, "end": ERUPT + 40, "lifetime": 110, "speed": 30, "random": 16, "gravity": 1, "size": 1.4, "sizeRandom": 0.6, "shape": "sphere", "color": "#ff5a10", "glow": 1, "ground": "stop", "hideEmitter": True, "seed": 8}})
-C.append({"type": "add", "primitive": "sphere", "id": "ash", "name": "Ash column", "transform": {"position": [0, 0, H + 4], "scale": [8, 8, 3]}})
-C.append({"type": "setParticles", "id": "ash", "particles": {"count": 2600, "start": ERUPT, "end": 168, "lifetime": 160, "speed": 14, "random": 4, "gravity": -0.12, "size": 13, "sizeRandom": 0.5, "shape": "smoke", "color": "#3d3836", "glow": 0, "ground": "none", "wind": [2.2, 0.6, 0], "hideEmitter": True, "seed": 11}})
+# Emitters are flat plates facing up, so everything is thrown upwards (plus the random spread).
+C.append({"type": "add", "primitive": "plane", "id": "fountain", "name": "Fire fountain", "transform": {"position": TOP, "scale": [3, 3, 1]}})
+C.append({"type": "setParticles", "id": "fountain", "particles": {"count": 6000, "start": ERUPT, "end": 168, "lifetime": 40, "speed": 30, "random": 6, "gravity": 0.9, "size": 5.5, "sizeRandom": 0.5, "shape": "fire", "color": "#ff7a1a", "glow": 1, "ground": "none", "hideEmitter": True, "seed": 5}})
+C.append({"type": "add", "primitive": "plane", "id": "bombs", "name": "Lava bombs", "transform": {"position": TOP, "scale": [3, 3, 1]}})
+C.append({"type": "setParticles", "id": "bombs", "particles": {"count": 700, "start": ERUPT, "end": ERUPT + 40, "lifetime": 110, "speed": 28, "random": 14, "gravity": 1, "size": 1.4, "sizeRandom": 0.6, "shape": "sphere", "color": "#ff5a10", "glow": 1, "ground": "stop", "hideEmitter": True, "seed": 8}})
+C.append({"type": "add", "primitive": "plane", "id": "ash", "name": "Ash column", "transform": {"position": [0, 0, H + 8], "scale": [6, 6, 1]}})
+C.append({"type": "setParticles", "id": "ash", "particles": {"count": 2000, "start": ERUPT + 4, "end": 168, "lifetime": 160, "speed": 16, "random": 4, "gravity": -0.12, "size": 11, "sizeRandom": 0.5, "shape": "smoke", "color": "#4a3e39", "glow": 0.15, "ground": "none", "wind": [2.2, 0.6, 0], "hideEmitter": True, "seed": 11}})
 
 # The ground shakes: a tremor first, then the blast.
 C.append({"type": "addCameraShake", "start": 18, "end": 44, "strength": 0.25, "frequency": 9})
