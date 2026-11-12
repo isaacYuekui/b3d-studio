@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 /** Newest first. The first entry is the current version. */
 const CHANGES: { v: string; items: string[] }[] = [
+  { v: '3.12', items: ['Add → Town: village, town or city with windows and roofs, ready to blow up'] },
   { v: '3.11', items: ['Object → Quick Effects: Quick Explode, Fire, Smoke, Float — one tap each'] },
   { v: '3.10', items: ['Animated rigid bodies: a keyframed passive object (wrecking ball, meteor) shoves things in the physics bake'] },
   { v: '3.9', items: ['Force fields (Add → Force Field): explosions, wind, tornado push rigid bodies (example: Meteor strike)'] },

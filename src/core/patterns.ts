@@ -2,7 +2,7 @@
 // tileable grey "mix" image (0 → colour A, 1 → colour B) that also serves as a bump height.
 // Pure and deterministic, so a scene looks the same everywhere.
 
-export const PATTERNS = ['noise', 'voronoi', 'checker', 'bricks', 'wood', 'marble', 'gradient'] as const;
+export const PATTERNS = ['noise', 'voronoi', 'checker', 'bricks', 'wood', 'marble', 'gradient', 'windows'] as const;
 export type PatternType = (typeof PATTERNS)[number];
 
 export interface Pattern {
@@ -111,6 +111,16 @@ export function patternValues(type: PatternType, size = 256, seed = 1): Float32A
         case 'gradient':
           t = u;
           break;
+        case 'windows': {
+          // One storey × one bay: wall (B) with an inset window (A) and a thin frame; each window a
+          // slightly different shade, like blinds and reflections. Scale 1/3 = 3 m storeys.
+          const inX = u > 0.27 && u < 0.73, inY = v > 0.33 && v < 0.82;
+          const frame = u > 0.24 && u < 0.76 && v > 0.3 && v < 0.85;
+          if (inX && inY) t = 0.06 * hash(Math.floor(u * 4), Math.floor(v * 4), 64, seed) + (Math.abs(u - 0.5) < 0.012 ? 0.3 : 0);
+          else if (frame) t = 0.5;
+          else t = 0.84 + 0.16 * fbm(u, v, 8, 2, seed + 3);
+          break;
+        }
       }
       out[j * size + i] = t;
     }

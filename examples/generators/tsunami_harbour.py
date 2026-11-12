@@ -47,12 +47,8 @@ add("pier", "Pier deck", "mesh", WOOD, (-14, 8, 1.3), mesh=box(4, 26, 0.3))
 for k in range(6):
     add(f"post{k}", f"Pier post {k + 1}", "cylinder", WOOD, (-15.6 + (k % 2) * 3.2, -3 + (k // 2) * 9, 0.2), scale=(0.18, 0.18, 1.2))
 
-# Houses along the front.
-for i in range(7):
-    x = -30 + i * 9.5
-    h = 4 + (i % 3) * 1.5
-    add(f"house{i}", f"House {i + 1}", "mesh", {"baseColor": WALLS[i % len(WALLS)], "roughness": 0.8}, (x, 30 + (i % 2) * 3, 1.5 + h / 2), mesh=box(7, 6, h))
-    add(f"roof{i}", f"Roof {i + 1}", "cone", ROOF, (0, 0, h / 2 + 1.1), scale=(4.6, 4.2, 1.1), rot=(0, 0, 45), parent=f"house{i}", params={"segments": 4})
+# Houses along the front: a generated village standing on the shore (base 1.5 m).
+C.append({"type": "addTown", "prefix": "village", "style": "village", "center": [0, 42], "size": [96, 36], "base": 1.5, "seed": 11, "ground": False})
 
 # Boats moored in the harbour: hull + cabin, floating.
 BOATS = [(-4, -6, 15, "#d8d2c4", "#2f5d8a"), (6, -12, -20, "#c94f3d", "#f0ece2"), (14, -4, 5, "#e7e2d4", "#3d7a4f"), (-22, -14, 30, "#2e3f5c", "#e9e4d6")]

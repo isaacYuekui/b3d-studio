@@ -5,6 +5,11 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Town generator (v3.12)
+
+- **Add → Town**: **Village** (houses with tiled hip roofs), **Town** (blocks with flat roofs) or **City** (towers) on a street grid, with an asphalt ground — each building a real-size mesh with a new **Windows** facade pattern (also in Material → Pattern), so it reads as a building from a distance
+- Every building is its own object: Quick Explode, Cell Fracture, physics and force fields work on them (roofs come down too). The *Meteor strike* and *Tsunami harbour* examples now use generated towns
+
 ## Quick Effects (v3.11)
 
 - **Object → Quick Effects** (also in the long-press menu), like Blender's: **Quick Explode** (breaks the object into pieces, blasts them apart at the current frame with a fireball and camera shake, adds a floor if needed, bakes — one undo removes it all), **Quick Fire**, **Quick Smoke**, **Quick Float** (adds a sea if there's none)

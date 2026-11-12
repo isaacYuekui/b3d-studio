@@ -41,7 +41,7 @@ import { centroid } from '../core/mesh/topology';
 
 const AXES = ['x', 'y', 'z'] as const;
 
-const PATTERN_LABEL: Record<PatternType, string> = { noise: 'Noise', voronoi: 'Voronoi (cells)', checker: 'Checker', bricks: 'Bricks', wood: 'Wood', marble: 'Marble', gradient: 'Gradient' };
+const PATTERN_LABEL: Record<PatternType, string> = { noise: 'Noise', voronoi: 'Voronoi (cells)', checker: 'Checker', bricks: 'Bricks', wood: 'Wood', marble: 'Marble', gradient: 'Gradient', windows: 'Windows (building)' };
 const PATTERN_DEFAULTS: Record<PatternType, Pattern> = {
   noise: { type: 'noise', colorA: '#3b3f44', colorB: '#a9adb2', scale: 1, bump: 0.25 },
   voronoi: { type: 'voronoi', colorA: '#20252b', colorB: '#8a939c', scale: 1, bump: 0.4 },
@@ -50,6 +50,7 @@ const PATTERN_DEFAULTS: Record<PatternType, Pattern> = {
   wood: { type: 'wood', colorA: '#5a3418', colorB: '#b07a45', scale: 0.6, bump: 0.15 },
   marble: { type: 'marble', colorA: '#ebe8e2', colorB: '#4d4f55', scale: 0.4, bump: 0 },
   gradient: { type: 'gradient', colorA: '#1b2a49', colorB: '#f2a65a', scale: 1, bump: 0 },
+  windows: { type: 'windows', colorA: '#2b3a48', colorB: '#d8cdb8', scale: 0.333, bump: 0.5 },
 };
 const EXTRA_LABEL = { clearcoat: 'Clearcoat', clearcoatRoughness: 'Coat roughness', transmission: 'Transmission (glass)', sheen: 'Sheen (fabric)', subsurface: 'Subsurface (skin)', anisotropy: 'Anisotropy (brushed)' } as const;
 /** One-tap looks, Blender-style Principled settings. */

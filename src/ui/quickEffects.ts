@@ -52,6 +52,9 @@ export async function quickExplode(store: Store) {
   }
   if (!o!.rigid) cmds.push({ type: 'setRigidBody', id, rigid: { mass: Math.max(1, size * size * size * 200) } });
   cmds.push({ type: 'fracture', id, pieces: 24 });
+  // A town building's roof falls with it.
+  const roof = st.doc.objects[`${id}-roof`];
+  if (roof && !roof.rigid && !roof.parentId) cmds.push({ type: 'setRigidBody', id: `${id}-roof`, rigid: { mass: Math.max(1, size * size * 20), shape: 'box' } });
   const blast = freeId(store, `${id}-blast`);
   cmds.push({ type: 'add', primitive: 'empty', id: blast, name: `${o!.name} blast`, transform: { position: at } });
   cmds.push({ type: 'setField', id: blast, field: { type: 'force', strength: 160 + 40 * size, radius: size * 2.5, start: f, end: f + 1 } });

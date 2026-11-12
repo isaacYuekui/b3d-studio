@@ -41,7 +41,8 @@ export function buildVertexData(mesh: MeshData): VertexData {
       const p = mesh.vertices[v];
       positions.push(...toBabylonVec(p));
       normals.push(...bn);
-      uvs.push(...boxUV(p, n));
+      const o = mesh.uvOffset;
+      uvs.push(...boxUV(o ? [p[0] + o[0], p[1] + o[1], p[2] + o[2]] : p, n));
     });
     for (const t of triangulate(mesh.vertices, face)) indices.push(local.get(t[0])!, local.get(t[1])!, local.get(t[2])!);
   }
@@ -67,7 +68,9 @@ function boxUV([x, y, z]: Vec3, [nx, ny, nz]: Vec3): [number, number] {
  */
 export function boxUVs(mesh: MeshData, babylonNormals: number[]): number[] {
   const uvs: number[] = [];
-  mesh.vertices.forEach(([x, y, z], i) => {
+  const [ox, oy, oz] = mesh.uvOffset ?? [0, 0, 0];
+  mesh.vertices.forEach(([x0, y0, z0], i) => {
+    const x = x0 + ox, y = y0 + oy, z = z0 + oz;
     // Babylon normal (x, y, z) = Blender (x, z, y)
     const nx = Math.abs(babylonNormals[i * 3]);
     const nz = Math.abs(babylonNormals[i * 3 + 1]);

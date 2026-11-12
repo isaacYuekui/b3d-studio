@@ -41,6 +41,8 @@ export interface MeshData {
   faces: number[][];
   /** Smooth shading (averaged normals) vs flat facets. */
   smooth: boolean;
+  /** Added to positions before box-projecting UVs, so the pieces of a broken object keep its texture in place. */
+  uvOffset?: Vec3;
 }
 
 /** Principled-BSDF-like material. */
