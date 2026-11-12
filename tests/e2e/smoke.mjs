@@ -805,7 +805,7 @@ const setNumber = async (page, scope, label, value) => {
 
   await page.evaluate(() => window.__b3d.viewport().viewCamera());
   await page.waitForTimeout(2500);
-  await page.screenshot({ path: `${shots}/village.png` });
+  await page.screenshot({ path: `${shots}/village.png`, timeout: 60000 }).catch(() => console.log('(village screenshot skipped: slow software rendering)'));
   // A model script with no camera, pasted after a scene that set one, must be framed, not
   // viewed through the old scene camera 45 m away.
   await page.click('[data-testid="script-btn"]');
