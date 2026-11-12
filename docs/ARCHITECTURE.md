@@ -33,7 +33,13 @@ gets a safe surface — Claude emits JSON commands that pass the same validator 
 | `src/engine/Viewport.ts` | Babylon scene: mesh sync, picking, gizmos, camera, view presets |
 | `src/ui/actions.ts` | Action registry shared by menus, shortcuts and context menus |
 | `src/ui/*.tsx` | Top bar, tool shelf, viewport overlay, Outliner, Properties, Timeline, menus, help |
-| `tests/` | Vitest unit tests; `tests/e2e/smoke.mjs` real-browser test (desktop, iPad, phone) |
+| `src/core/mesh/*` | Mesh tools (Edit Mode ops, modifiers, booleans via manifold-3d, sculpt, selection) — pure, Blender topology |
+| `src/core/mesh/materialIndex.ts` | Material slots per face; carried through any edit by `applyCommand` (shared corners / planes), so mesh tools don't track slots |
+| `src/core/physics.ts`, `fields.ts`, `fracture.ts` | Rigid bodies (cannon-es, baked to keys), force fields with explosion flash, cell fracture |
+| `src/core/particles.ts`, `ocean.ts`, `shake.ts` | Closed-form particles (scrub-exact), Gerstner ocean + tsunami surge + crest spray, camera shake |
+| `src/core/town.ts`, `patterns.ts` | Town generator; procedural patterns (Windows facade with lit windows / glow) |
+| `src/core/sound.ts` → `src/engine/soundSynth.ts` | Video soundtrack: events found in the scene, synthesised offline with Web Audio (no samples) |
+| `tests/` | Vitest unit tests (incl. every example script validates); `tests/e2e/smoke.mjs` real-browser test (desktop, iPad, phone) |
 
 ## Key decisions
 
