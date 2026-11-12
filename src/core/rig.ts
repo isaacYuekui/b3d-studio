@@ -9,6 +9,7 @@
 import type { Animation } from './animation';
 import { evaluatePose, transformAt } from './animation';
 import type { Bone, BonePose, MeshData, SceneDoc, Transform, Vec3 } from './types';
+import { groupsToWeights } from './vertexGroups';
 
 /** 4×4 matrix, row-major, acting on column vectors (p' = M p). */
 export type M4 = number[];
@@ -280,17 +281,22 @@ export function skinMesh(
   const relInv = invert(rel);
   const restPts = mesh.vertices.map((v) => apply(rel, v));
   let cached = bindCache?.get(meshId);
-  if (!cached || cached.key !== mesh || cached.rel !== relKey || (cached as unknown as { bones: unknown }).bones !== arm.armature.bones || (cached as unknown as { ex: unknown }).ex !== explicit) {
+  if (!cached || cached.key !== mesh || cached.rel !== relKey || (cached as unknown as { bones: unknown }).bones !== arm.armature.bones || (cached as unknown as { ex: unknown }).ex !== explicit || (cached as unknown as { vg: unknown }).vg !== o.vertexGroups) {
     const bone = o.skin!.bone;
+    // Painted vertex groups (named after bones) win over library and automatic weights.
+    const painted = groupsToWeights(o.vertexGroups, arm.armature.bones, restPts.length);
     const weights: Weights =
       bone && arm.armature.bones.some((b) => b.name === bone)
         ? { bones: [bone], w: restPts.map(() => [[0, 1]] as [number, number][]) }
-        : explicit && explicit.w.length === restPts.length
-          ? explicit
-          : autoWeights(restPts, arm.armature.bones);
+        : painted
+          ? painted
+          : explicit && explicit.w.length === restPts.length
+            ? explicit
+            : autoWeights(restPts, arm.armature.bones);
     cached = { key: mesh, rel: relKey, weights };
     (cached as unknown as { bones: unknown }).bones = arm.armature.bones;
     (cached as unknown as { ex: unknown }).ex = explicit;
+    (cached as unknown as { vg: unknown }).vg = o.vertexGroups;
     bindCache?.set(meshId, cached);
   }
   const { skin } = poseBones(arm.armature.bones, poseAt(doc, armId!, frame));
@@ -344,4 +350,15 @@ export function poseEdit(doc: SceneDoc, frame: number, armId: string, bone: stri
   const keys = doc.animation?.poses?.[armId]?.[bone];
   if (keys?.length) return { type: 'setPoseKey' as const, id: armId, bone, frame, rotation: pose.rotation, ...(pose.location ? { location: pose.location } : {}) };
   return { type: 'setPose' as const, id: armId, pose: { [bone]: pose } };
+}
+
+/** The weights a skinned mesh uses now (painted groups, library set or automatic), for Weight Paint to start from. */
+export function currentWeights(doc: { animation?: Animation; objects: SceneDoc['objects'] }, meshId: string, frame: number, explicit?: Weights | null): Weights | null {
+  const o = doc.objects[meshId];
+  const arm = o?.skin ? doc.objects[o.skin.armature] : undefined;
+  if (!o?.mesh || !arm?.armature) return null;
+  const rel = mul(invert(worldMatrix(doc, arm.id, frame)), worldMatrix(doc, meshId, frame));
+  const restPts = o.mesh.vertices.map((v) => apply(rel, v));
+  if (o.skin!.bone) return { bones: [o.skin!.bone], w: restPts.map(() => [[0, 1]] as [number, number][]) };
+  return groupsToWeights(o.vertexGroups, arm.armature.bones, restPts.length) ?? (explicit && explicit.w.length === restPts.length ? explicit : autoWeights(restPts, arm.armature.bones));
 }

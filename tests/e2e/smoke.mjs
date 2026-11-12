@@ -1013,6 +1013,61 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Weight Paint (v3.22): vertex groups from the automatic weights, painted with a brush.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'armature', id: 'rig', armature: { bones: [{ name: 'root', parent: null, head: [0, 0, 0], tail: [0, 0, 1] }, { name: 'top', parent: 'root', head: [0, 0, 1], tail: [0, 0, 2] }] } },
+      { type: 'add', primitive: 'cylinder', id: 'pole', parentId: 'rig', transform: { position: [0, 0, 1], scale: [0.3, 0.3, 1] } },
+      { type: 'editMesh', id: 'pole', steps: [{ op: 'loopcut', select: { mode: 'edge', nearest: [0.1, 0, 0] }, cuts: 7 }] },
+      { type: 'setSkin', id: 'pole', armature: 'rig' },
+    ] });
+    s.select('pole');
+  });
+  await page.evaluate(() => window.__b3d.viewport().frame());
+  await page.waitForTimeout(300);
+  await page.click('[data-testid="weight-toggle"]');
+  const st = await page.evaluate(() => {
+    const s = window.__b3d.store.getState();
+    const vg = s.doc.objects.pole.vertexGroups;
+    const e = window.__b3d.viewport().entries.get('pole');
+    const view = window.__b3d.viewport().scene.meshes.find((m) => m.metadata?.weightView);
+    return { mode: !!s.weightPaint, groups: vg?.groups.map((g) => g.name), hidden: e.meshes.every((m) => !m.isVisible), view: !!view && view.parent === e.node, label: document.querySelector('[data-testid="mode-toggle"]').textContent };
+  });
+  check('v3.22: Weights starts Weight Paint with one group per bone (from the automatic weights)', st.mode && JSON.stringify([...(st.groups ?? [])].sort()) === '["root","top"]' && st.view && st.hidden && st.label === 'Weight Paint', JSON.stringify(st));
+  const topIdx = await page.evaluate(() => window.__b3d.store.getState().doc.objects.pole.vertexGroups.groups.findIndex((g) => g.name === 'top'));
+  await page.selectOption('[data-testid="weight-group"]', String(topIdx));
+  await page.click('[data-weight-brush="draw"]');
+  await page.locator('[data-testid="weight-value"]').fill('100');
+  const sumOf = () => page.evaluate(() => { const vg = window.__b3d.store.getState().doc.objects.pole.vertexGroups; return vg.groups.find((g) => g.name === 'top').w.reduce((a, b) => a + b, 0); });
+  const before = await sumOf();
+  const undoBefore = await page.evaluate(() => window.__b3d.store.getState().canUndo);
+  const a = await screenOf(page, [0, -1, -0.6]);
+  const b = await screenOf(page, [0, -1, 0.2]);
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(a.x + ((b.x - a.x) * i) / 8, a.y + ((b.y - a.y) * i) / 8);
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const after = await sumOf();
+  check('v3.22: a stroke paints the chosen group (weight goes up under the brush)', after > before + 1 && undoBefore !== undefined, JSON.stringify({ before, after }));
+  await page.screenshot({ path: `${shots}/weightpaint.png`, timeout: 60000 }).catch(() => {});
+  await page.evaluate(() => window.__b3d.store.undo());
+  const undone = await sumOf();
+  check('v3.22: one stroke is one undo step', Math.abs(undone - before) < 1e-6, JSON.stringify({ undone, before }));
+  await page.click('[data-testid="weight-done"]');
+  const back = await page.evaluate(() => {
+    const e = window.__b3d.viewport().entries.get('pole');
+    return { mode: !!window.__b3d.store.getState().weightPaint, visible: e.meshes.some((m) => m.isVisible), view: window.__b3d.viewport().scene.meshes.some((m) => m.metadata?.weightView) };
+  });
+  check('v3.22: Done goes back to the normal model', !back.mode && back.visible && !back.view, JSON.stringify(back));
+  check('v3.22: no errors (weight paint)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Shape keys (v3.21): Basis + a key shaped in Edit Mode, blended by a value that animates.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });

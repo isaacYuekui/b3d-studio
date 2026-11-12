@@ -274,6 +274,7 @@ export function Properties() {
       {cur === 'data' && o.text && <TextSection id={o.id} />}
       {cur === 'data' && o.modifiers?.curve && <CurveSection id={o.id} />}
       {cur === 'data' && o.water && <WaterSection id={o.id} />}
+      {cur === 'data' && canEdit(o) && !o.modifiers?.curve && !o.text && !o.water && !o.terrain && <VertexGroupsSection id={o.id} />}
       {cur === 'data' && canEdit(o) && !o.modifiers?.curve && !o.text && !o.water && !o.terrain && <ShapeKeysSection id={o.id} />}
       {cur === 'modifiers' && <ModifiersSection id={o.id} />}
       {cur === 'physics' && o.type === 'empty' && <FieldSection id={o.id} />}
@@ -573,6 +574,51 @@ function CameraFollowRows() {
 }
 
 /** Curve objects (Blender: Object Data → Shape / Geometry): the tube, smoothness, closed loop. */
+/** Vertex Groups (Blender's Object Data → Vertex Groups): the list, + / −, rename, Weight Paint. */
+function VertexGroupsSection({ id }: { id: string }) {
+  const ctx = useCtx();
+  const { store } = ctx;
+  const vg = useApp((s) => s.doc.objects[id]?.vertexGroups);
+  const skinned = useApp((s) => !!s.doc.objects[id]?.skin);
+  const painting = useApp((s) => s.weightPaint?.id === id);
+  const run = (cmd: Command) => store.dispatch(cmd, { select: false });
+  return (
+    <Section title="Vertex Groups" defaultOpen={!!vg || skinned}>
+      {vg && (
+        <div className="sk-list" data-testid="vertex-groups">
+          {vg.groups.map((g, i) => (
+            <div key={i} className={`sk-row${vg.active === i ? ' active' : ''}`} data-vg={i}>
+              <input type="radio" name={`vg-${id}`} aria-label={`Use ${g.name}`} checked={vg.active === i} onChange={() => run({ type: 'setActiveVertexGroup', id, index: i })} />
+              <input
+                className="sk-name"
+                aria-label="Vertex group name"
+                defaultValue={g.name}
+                key={g.name}
+                onBlur={(e) => e.target.value.trim() && e.target.value.trim() !== g.name && run({ type: 'setVertexGroup', id, index: i, name: e.target.value.trim().slice(0, 64) })}
+                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="prop-actions">
+        <button className="btn" data-testid="vg-add" onClick={() => run({ type: 'addVertexGroup', id })}>+ Group</button>
+        {vg && (
+          <button className="btn" data-testid="vg-remove" onClick={() => run({ type: 'removeVertexGroup', id, index: vg.active })}>
+            − Group
+          </button>
+        )}
+        <button className="btn" data-testid="vg-paint" onClick={() => runAction(ctx, 'mode.weight')}>{painting ? 'Stop painting' : 'Weight Paint'}</button>
+      </div>
+      <p className="prop-hint">
+        {skinned
+          ? 'Groups named after bones decide how much each bone moves each part (red 1 = fully, blue 0 = not at all). Weight Paint starts from the automatic weights.'
+          : 'A vertex group is a weight 0..1 on every point. Name groups after an armature’s bones to skin this mesh by hand.'}
+      </p>
+    </Section>
+  );
+}
+
 /**
  * Shape Keys (Blender's Object Data → Shape Keys): the list with the active key, each key's
  * value slider (◆ keyframes it at this frame), + / − and the edit hint.

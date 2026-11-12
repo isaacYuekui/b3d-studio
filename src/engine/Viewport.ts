@@ -68,6 +68,8 @@ import { guessUnitScale, isUserAsset, updateUserModelMeta, userModelMetaNow, use
 class MissingModel extends Error {}
 import { babylonQuatToEulerDeg, clean, eulerDegToBabylonQuat, fromBabylonVec, toBabylonVec } from './coords';
 import { applyGeometry } from './geometry';
+import { WeightView } from './weightView';
+import { paintWeights } from '../core/vertexGroups';
 import { validUv } from '../core/mesh/uv';
 import { isUserImage, userImageUrl } from './userImages';
 import { bakeMaps } from './nodeBake';
@@ -138,6 +140,9 @@ export class Viewport {
   private lastDoc: SceneDoc | null = null;
   private lastSel: string | null | undefined = undefined;
   private lastSculpt: unknown = undefined;
+  private weightView: WeightView | null = null;
+  private weightHidden: AbstractMesh[] = [];
+  private lastWeightKey: unknown[] = [];
   private lastTool: ToolMode | null = null;
   private lastShading: Shading | null = null;
   private resizeObs: ResizeObserver;
@@ -257,7 +262,7 @@ export class Viewport {
       if (info.type !== PointerEventTypes.POINTERTAP) return;
       const ev = info.event as PointerEvent;
       if (ev.button !== 0) return;
-      if (this.store.getState().sculpt) return; // taps don't change the selection while sculpting
+      if (this.store.getState().sculpt || this.store.getState().weightPaint) return; // taps don't change the selection while sculpting / painting
       if (this.store.getState().pose) this.poseTap(scene.pointerX, scene.pointerY, ev.pointerType !== 'mouse');
       else if (this.store.getState().edit) this.editTap(scene.pointerX, scene.pointerY, ev.shiftKey || this.store.getState().addSelect, ev.altKey, ev.pointerType !== 'mouse');
       else this.store.select(this.pickAt(scene.pointerX, scene.pointerY));
@@ -419,8 +424,9 @@ export class Viewport {
     const poseChanged = state.pose !== this.lastPose;
     this.lastPose = state.pose;
     if (poseChanged) this.applyRigs(state);
-    const sculptChanged = state.sculpt !== this.lastSculpt;
+    const sculptChanged = state.sculpt !== this.lastSculpt || state.weightPaint !== this.lastWeightKey[0];
     this.lastSculpt = state.sculpt;
+    this.syncWeights(state);
     if (state.selection !== this.lastSel || state.tool !== this.lastTool || editChanged || poseChanged || sculptChanged) {
       this.syncSelection(state.selection, state.tool);
       this.lastSel = state.selection;
@@ -2015,9 +2021,9 @@ export class Viewport {
       gm.attachToNode(has ? this.bonePivot : null);
       return;
     }
-    if (st.sculpt) {
-      // Sculpt mode: no gizmo, no outline: the brush is the tool.
-      for (const m of this.entries.get(st.sculpt.id)?.meshes ?? []) m.renderOutline = false;
+    if (st.sculpt || st.weightPaint) {
+      // Sculpt / Weight Paint: no gizmo, no outline: the brush is the tool.
+      for (const m of this.entries.get((st.sculpt ?? st.weightPaint)!.id)?.meshes ?? []) m.renderOutline = false;
       gm.positionGizmoEnabled = gm.rotationGizmoEnabled = gm.scaleGizmoEnabled = false;
       gm.attachToNode(null);
       return;
@@ -2079,6 +2085,33 @@ export class Viewport {
   // ---------------------------------------------------------------- public API
 
   /** Pick the object id under a canvas-relative CSS pixel position. */
+  // ---------------------------------------------------------------- weight paint
+
+  /** Weight Paint mode: the object's surfaces hide and a weight-coloured copy shows instead. */
+  private syncWeights(state: AppState) {
+    const wp = state.weightPaint;
+    const o = wp ? state.doc.objects[wp.id] : undefined;
+    const e = wp ? this.entries.get(wp.id) : undefined;
+    const vg = o?.vertexGroups;
+    const w = vg?.groups[vg.active]?.w ?? null;
+    const key = [wp, o?.mesh, w, e?.node];
+    if (key.length === this.lastWeightKey.length && key.every((k, i) => k === this.lastWeightKey[i])) return;
+    this.lastWeightKey = key;
+    for (const m of this.weightHidden) m.isVisible = true;
+    this.weightHidden = [];
+    if (!wp || !o?.mesh || !e) {
+      this.weightView?.hide();
+      return;
+    }
+    for (const m of e.meshes)
+      if (m.isVisible) {
+        m.isVisible = false;
+        this.weightHidden.push(m);
+      }
+    this.weightView ??= new WeightView(this.scene);
+    this.weightView.show(e.node, o.mesh, w && w.length === o.mesh.vertices.length ? w : null);
+  }
+
   // ---------------------------------------------------------------- sculpt
 
   private stroke: {
@@ -2097,21 +2130,27 @@ export class Viewport {
     last: { x: number; y: number };
     raf: number;
     pending: { x: number; y: number } | null;
+    /** Weight Paint: the group being painted and its weights so far. */
+    weights?: { group: string; w: number[] };
   } | null = null;
 
   private sculptPick(x: number, y: number, id: string) {
     const e = this.entries.get(id);
     if (!e) return null;
-    const pick = this.scene.pick(x, y, (m) => m === e.node || m.parent === e.node);
+    const wv = this.store.getState().weightPaint ? this.weightView?.node : null;
+    const pick = this.scene.pick(x, y, wv ? (m) => m === wv : (m) => m === e.node || m.parent === e.node);
     return pick?.hit && pick.pickedPoint ? pick.pickedPoint : null;
   }
 
   private sculptDown(ev: PointerEvent) {
     const st = this.store.getState();
-    if (!st.sculpt || this.stroke || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
-    const o = st.doc.objects[st.sculpt.id];
-    const e = this.entries.get(st.sculpt.id);
+    const target = st.sculpt?.id ?? st.weightPaint?.id;
+    if (!target || this.stroke || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
+    const o = st.doc.objects[target];
+    const e = this.entries.get(target);
     if (!o?.mesh || !e) return;
+    const group = st.weightPaint ? o.vertexGroups?.groups[o.vertexGroups.active] : undefined;
+    if (st.weightPaint && !group) return;
     const r = this.canvas.getBoundingClientRect();
     const x = ev.clientX - r.left, y = ev.clientY - r.top;
     const hit = this.sculptPick(x, y, o.id);
@@ -2142,6 +2181,7 @@ export class Viewport {
       last: { x, y },
       raf: 0,
       pending: { x, y },
+      ...(group ? { weights: { group: group.name, w: [...group.w] } } : {}),
     };
     this.sculptFlush();
   }
@@ -2162,6 +2202,16 @@ export class Viewport {
     const p = s.pending;
     s.pending = null;
     if (!p) return;
+    if (s.weights) {
+      const wb = this.store.getState().weightBrush;
+      const hit = this.sculptPick(p.x, p.y, s.id);
+      if (!hit) return;
+      const l = Vector3.TransformCoordinates(hit, s.worldInv);
+      s.weights.w = paintWeights(s.verts, s.weights.w, { mode: wb.mode, weight: wb.weight, strength: wb.strength, radius: wb.radius * s.mPerPx * s.localPerWorld, center: fromBabylonVec([l.x, l.y, l.z]), symmetryX: wb.symmetry }, s.ctx.neighbors);
+      s.last = p;
+      this.store.preview({ type: 'setWeights', id: s.id, group: s.weights.group, weights: s.weights.w });
+      return;
+    }
     const b = this.store.getState().sculptBrush;
     const radius = b.radius * s.mPerPx * s.localPerWorld;
     let opts: Parameters<typeof brushStep>[3];

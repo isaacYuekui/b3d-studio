@@ -166,6 +166,8 @@ export interface SceneObject {
   modifiers?: Modifiers;
   /** Shape keys (Basis + other shapes mixed by value); the mesh's vertices are the active key's shape. */
   shapeKeys?: import('./shapeKeys').ShapeKeys;
+  /** Vertex groups (weights 0..1 per vertex); ones named after bones skin the mesh (Weight Paint). */
+  vertexGroups?: import('./vertexGroups').VertexGroups;
   light?: LightData;
   /** Library model id, for type 'model'. */
   asset?: string;

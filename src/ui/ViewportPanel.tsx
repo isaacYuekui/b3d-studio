@@ -10,6 +10,7 @@ import type { ActionId } from './actions';
 import { Icon } from './icons';
 import type { ToolMode } from '../core/store';
 import type { SculptBrush } from '../core/mesh/sculpt';
+import type { WeightMode } from '../core/vertexGroups';
 import { adjustLastOp, canEdit, clearLastOp, getLastOp, subscribeLastOp } from './editing';
 import type { SelectMode } from '../core/mesh/select';
 import { NumberField } from './NumberField';
@@ -26,6 +27,13 @@ const EDIT_TOOLS: { action: ActionId; label: string; icon: () => ReactElement }[
   { action: 'mesh.bevel', label: 'Bevel (Ctrl/⌘ B)', icon: Icon.bevel },
   { action: 'mesh.loopcut', label: 'Loop Cut (Ctrl/⌘ R): select an edge first', icon: Icon.loopcut },
   { action: 'mesh.subdivide', label: 'Subdivide', icon: Icon.subdivide },
+];
+
+const WEIGHT_BRUSHES: { id: WeightMode; label: string; hint: string }[] = [
+  { id: 'draw', label: 'Draw', hint: 'Paint towards the chosen weight' },
+  { id: 'add', label: 'Add', hint: 'Raise the weight (more of this bone)' },
+  { id: 'subtract', label: 'Subtract', hint: 'Lower the weight (less of this bone)' },
+  { id: 'blur', label: 'Blur', hint: 'Smooth the weights between neighbours' },
 ];
 
 const BRUSH_LIST: { id: SculptBrush; label: string; hint: string }[] = [
@@ -60,6 +68,9 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
   const snap = useApp((s) => s.snap);
   const sculpt = useApp((s) => s.sculpt);
   const brush = useApp((s) => s.sculptBrush);
+  const weightPaint = useApp((s) => s.weightPaint);
+  const wbrush = useApp((s) => s.weightBrush);
+  const wgroups = useApp((s) => (s.weightPaint ? s.doc.objects[s.weightPaint.id]?.vertexGroups : undefined));
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const prop = useApp((s) => s.proportional);
   const addSelect = useApp((s) => s.addSelect);
@@ -148,7 +159,7 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
   const run = (id: ActionId) => runAction(ctx, id);
 
   return (
-    <section className={`viewport${edit ? ' editing' : ''}${sculpt ? ' sculpting' : ''}`} aria-label="3D Viewport">
+    <section className={`viewport${edit ? ' editing' : ''}${sculpt || weightPaint ? ' sculpting' : ''}`} aria-label="3D Viewport">
       <canvas
         ref={canvasRef}
         className="viewport-canvas"
@@ -156,27 +167,29 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
         tabIndex={-1}
         data-testid="viewport-canvas"
         onPointerMove={(e) => {
-          if (!sculpt) return;
+          if (!sculpt && !weightPaint) return;
           const r = e.currentTarget.getBoundingClientRect();
           setCursor({ x: e.clientX - r.left, y: e.clientY - r.top });
         }}
         onPointerLeave={() => setCursor(null)}
       />
-      {sculpt && cursor && <div className="brush-cursor" style={{ left: cursor.x, top: cursor.y, width: brush.radius * 2, height: brush.radius * 2 }} aria-hidden />}
+      {(sculpt || weightPaint) && cursor && <div className="brush-cursor" style={{ left: cursor.x, top: cursor.y, width: (weightPaint ? wbrush.radius : brush.radius) * 2, height: (weightPaint ? wbrush.radius : brush.radius) * 2 }} aria-hidden />}
 
       <div className="vp-header">
         <button
-          className={`vp-mode${edit ? ' editing' : posing ? ' posing' : sculpt ? ' sculpting' : ''}`}
+          className={`vp-mode${edit ? ' editing' : posing ? ' posing' : sculpt || weightPaint ? ' sculpting' : ''}`}
           data-testid="mode-toggle"
           aria-pressed={!!edit || !!posing}
           disabled={!edit && !posing && !selEditable && !selArmature}
           title={edit ? 'Back to Object Mode (Tab)' : posing ? 'Back to Object Mode (Tab)' : selArmature ? 'Pose Mode: pose the bones (Tab)' : 'Edit Mode: move vertices, edges and faces (Tab)'}
-          onClick={() => run(sculpt ? 'mode.sculpt' : 'mode.edit')}
+          onClick={() => run(sculpt ? 'mode.sculpt' : weightPaint ? 'mode.weight' : 'mode.edit')}
         >
-          {edit ? 'Edit Mode' : posing ? 'Pose Mode' : sculpt ? 'Sculpt Mode' : 'Object Mode'}
+          {edit ? 'Edit Mode' : posing ? 'Pose Mode' : sculpt ? 'Sculpt Mode' : weightPaint ? 'Weight Paint' : 'Object Mode'}
         </button>
         {posing && <span className="vp-info"><b data-testid="pose-bone">{posing.bone ?? 'Tap a bone'}</b></span>}
-        {sculpt ? (
+        {weightPaint ? (
+          <span className="vp-info muted">Drag on the model to paint weights · off it to turn the view</span>
+        ) : sculpt ? (
           <span className="vp-info muted">Drag on the model to sculpt · off it to turn the view</span>
         ) : edit ? (
           <>
@@ -220,6 +233,11 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
               Sculpt
             </button>
           )}
+          {selEditable && (
+            <button className="tool-btn text" title="Weight Paint: paint how much each bone (vertex group) moves each part" data-testid="weight-toggle" onClick={() => run('mode.weight')}>
+              Weights
+            </button>
+          )}
           <span className="vp-info">
             {selName ? <b>{selName}</b> : <span className="muted">Nothing selected</span>}
             <span className="muted"> · {count} object{count === 1 ? '' : 's'}</span>
@@ -249,6 +267,46 @@ export function ViewportPanel({ onReady }: { onReady: (v: Viewport | null) => vo
             <button className={`tool-btn text${brush.symmetry ? ' active' : ''}`} aria-pressed={brush.symmetry} title="Mirror strokes across X" data-testid="brush-sym" onClick={() => ctx.store.setSculptBrush({ symmetry: !brush.symmetry })}>X sym</button>
             <button className="tool-btn text" title="Subdivide for finer detail" data-testid="sculpt-detail" onClick={() => run('sculpt.detail')}>＋ Add detail</button>
             <button className="tool-btn text active" title="Back to Object Mode" data-testid="sculpt-done" onClick={() => run('mode.sculpt')}>Done</button>
+        </div>
+      )}
+
+      {weightPaint && (
+        <div className="sculpt-bar" role="toolbar" aria-label="Weight Paint brushes">
+          {wgroups && (
+            <label className="vp-slider" title="The vertex group (bone) being painted">
+              <span className="muted">Group</span>
+              <select aria-label="Paint group" data-testid="weight-group" value={wgroups.active} onChange={(e) => ctx.store.dispatch({ type: 'setActiveVertexGroup', id: weightPaint.id, index: Number(e.target.value) }, { select: false })}>
+                {wgroups.groups.map((g, i) => (
+                  <option key={i} value={i}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <div className="seg" role="radiogroup" aria-label="Weight brush">
+            {WEIGHT_BRUSHES.map((b) => (
+              <button key={b.id} role="radio" aria-checked={wbrush.mode === b.id} className={`tool-btn text${wbrush.mode === b.id ? ' active' : ''}`} title={b.hint} data-weight-brush={b.id} onClick={() => ctx.store.setWeightBrush({ mode: b.id })}>
+                {b.label}
+              </button>
+            ))}
+          </div>
+          {wbrush.mode === 'draw' && (
+            <label className="vp-slider" title="The weight Draw paints (0 blue … 1 red)">
+              <span className="muted">Weight {wbrush.weight.toFixed(2)}</span>
+              <input type="range" min={0} max={100} value={Math.round(wbrush.weight * 100)} aria-label="Weight" data-testid="weight-value" onChange={(e) => ctx.store.setWeightBrush({ weight: Number(e.target.value) / 100 })} />
+            </label>
+          )}
+          <label className="vp-slider" title="Brush size on screen">
+            <span className="muted">Size</span>
+            <input type="range" min={10} max={300} value={wbrush.radius} aria-label="Weight brush size" onChange={(e) => ctx.store.setWeightBrush({ radius: Number(e.target.value) })} />
+          </label>
+          <label className="vp-slider" title="Brush strength">
+            <span className="muted">Strength</span>
+            <input type="range" min={1} max={100} value={Math.round(wbrush.strength * 100)} aria-label="Weight brush strength" onChange={(e) => ctx.store.setWeightBrush({ strength: Number(e.target.value) / 100 })} />
+          </label>
+          <button className={`tool-btn text${wbrush.symmetry ? ' active' : ''}`} aria-pressed={wbrush.symmetry} title="Mirror strokes across X" onClick={() => ctx.store.setWeightBrush({ symmetry: !wbrush.symmetry })}>X sym</button>
+          <button className="tool-btn text active" title="Back to Object Mode" data-testid="weight-done" onClick={() => run('mode.weight')}>Done</button>
         </div>
       )}
 

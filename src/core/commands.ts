@@ -14,6 +14,8 @@ import type { KeyOp, KeyRef } from './dopesheet';
 import type { Animation, CameraFollow, Easing, PoseKey } from './animation';
 import { addShapeKey, carryShapeKeys, removeShapeKey, setActiveKey, validShapeKeys, MAX_SHAPE_KEYS } from './shapeKeys';
 import type { ShapeKeys } from './shapeKeys';
+import { MAX_GROUPS, carryGroups, uniqueGroupName, validGroups, weightsToGroups } from './vertexGroups';
+import type { VertexGroups } from './vertexGroups';
 import type { ArmatureData, Bone, BonePose, Background, CameraLens, FollowPath, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
@@ -105,6 +107,15 @@ export type Command =
   /** Keyframe a shape key's value (default: its value now). */
   | { type: 'keyShape'; id: string; key: string; frame: number; value?: number; easing?: Easing }
   | { type: 'unkeyShape'; id: string; key: string; frame: number }
+  /** Vertex groups (weights per vertex); groups named after bones skin the mesh. */
+  | { type: 'addVertexGroup'; id: string; name?: string }
+  | { type: 'setVertexGroup'; id: string; index: number; name: string }
+  | { type: 'setActiveVertexGroup'; id: string; index: number }
+  | { type: 'removeVertexGroup'; id: string; index: number }
+  /** Replace a group's weights (one per vertex), or set `value` on some `verts`. */
+  | { type: 'setWeights'; id: string; group: string; weights?: number[]; verts?: number[]; value?: number }
+  /** Turn the weights a skinned mesh uses now (automatic or library) into vertex groups to paint. */
+  | { type: 'groupsFromWeights'; id: string; weights: { bones: string[]; w: [number, number][][] } }
   /** The scene camera flies along a curve (null removes it). */
   | { type: 'setCameraFollow'; follow: CameraFollow | null }
   /** Curve Edit Mode tools on the control points. */
@@ -329,6 +340,10 @@ function carryShapes(before: SceneDoc, after: SceneDoc): SceneDoc {
   let objects = after.objects;
   for (const [id, o] of Object.entries(after.objects)) {
     const b = before.objects[id];
+    if (o.vertexGroups && o.mesh && b?.mesh && b.mesh !== o.mesh && b.mesh.vertices.length !== o.mesh.vertices.length && b.vertexGroups === o.vertexGroups) {
+      if (objects === after.objects) objects = { ...objects };
+      objects[id] = { ...objects[id], vertexGroups: carryGroups(b.mesh, o.mesh, o.vertexGroups) };
+    }
     if (!o.shapeKeys || !o.mesh || !b?.mesh || b.mesh === o.mesh || b.mesh.vertices === o.mesh.vertices) continue;
     let shapeKeys: ShapeKeys;
     try {
@@ -337,7 +352,7 @@ function carryShapes(before: SceneDoc, after: SceneDoc): SceneDoc {
       throw new CommandError(e instanceof Error ? e.message : String(e));
     }
     if (objects === after.objects) objects = { ...objects };
-    objects[id] = { ...o, shapeKeys };
+    objects[id] = { ...objects[id], shapeKeys };
   }
   return objects === after.objects ? after : { ...after, objects };
 }
@@ -776,6 +791,76 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       if (Object.keys(tracks).length) shapes[cmd.id] = tracks;
       else delete shapes[cmd.id];
       return { doc: { ...doc, animation: { ...a, shapes } }, created: [] };
+    }
+
+    case 'addVertexGroup': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      const vg = o.vertexGroups;
+      if ((vg?.groups.length ?? 0) >= MAX_GROUPS) throw new CommandError(`At most ${MAX_GROUPS} vertex groups`);
+      const g = { name: uniqueGroupName(vg, cmd.name), w: o.mesh!.vertices.map(() => 0) };
+      const groups = [...(vg?.groups ?? []), g];
+      return { doc: withObject(doc, { ...o, vertexGroups: { active: groups.length - 1, groups } }), created: [] };
+    }
+
+    case 'setVertexGroup': {
+      const o = requireObj(doc, cmd.id);
+      const vg = o.vertexGroups;
+      if (!vg?.groups[cmd.index]) throw new CommandError(`${o.name} has no vertex group ${cmd.index}`);
+      if (vg.groups.some((g, i) => i !== cmd.index && g.name === cmd.name)) throw new CommandError(`There is already a group called ${cmd.name}`);
+      return { doc: withObject(doc, { ...o, vertexGroups: { ...vg, groups: vg.groups.map((g, i) => (i === cmd.index ? { ...g, name: cmd.name } : g)) } }), created: [] };
+    }
+
+    case 'setActiveVertexGroup': {
+      const o = requireObj(doc, cmd.id);
+      if (!o.vertexGroups?.groups[cmd.index]) throw new CommandError(`${o.name} has no vertex group ${cmd.index}`);
+      return { doc: withObject(doc, { ...o, vertexGroups: { ...o.vertexGroups, active: cmd.index } }), created: [] };
+    }
+
+    case 'removeVertexGroup': {
+      const o = requireObj(doc, cmd.id);
+      const vg = o.vertexGroups;
+      if (!vg?.groups[cmd.index]) throw new CommandError(`${o.name} has no vertex group ${cmd.index}`);
+      const groups = vg.groups.filter((_, i) => i !== cmd.index);
+      if (!groups.length) {
+        const { vertexGroups: _v, ...rest } = o;
+        void _v;
+        return { doc: withObject(doc, rest), created: [] };
+      }
+      const active = Math.min(groups.length - 1, vg.active > cmd.index ? vg.active - 1 : vg.active);
+      return { doc: withObject(doc, { ...o, vertexGroups: { active, groups } }), created: [] };
+    }
+
+    case 'setWeights': {
+      const o = requireObj(doc, cmd.id);
+      const vg = o.vertexGroups;
+      const gi = vg?.groups.findIndex((g) => g.name === cmd.group) ?? -1;
+      if (!vg || gi < 0 || !o.mesh) throw new CommandError(`${o.name} has no vertex group ${cmd.group}`);
+      const n = o.mesh.vertices.length;
+      let w: number[];
+      if (cmd.weights) {
+        if (cmd.weights.length !== n) throw new CommandError(`${cmd.group} needs ${n} weights (one per point)`);
+        w = cmd.weights.map((x) => Math.round(Math.max(0, Math.min(1, x)) * 1000) / 1000);
+      } else {
+        w = [...vg.groups[gi].w];
+        const val = Math.max(0, Math.min(1, cmd.value ?? 1));
+        for (const v of cmd.verts ?? []) {
+          if (v >= n) throw new CommandError(`${o.name} has no point ${v}`);
+          w[v] = val;
+        }
+      }
+      return { doc: withObject(doc, { ...o, vertexGroups: { ...vg, groups: vg.groups.map((g, i) => (i === gi ? { ...g, w } : g)) } }), created: [] };
+    }
+
+    case 'groupsFromWeights': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      const n = o.mesh!.vertices.length;
+      if (cmd.weights.w.length !== n) throw new CommandError(`The weights don’t match ${o.name}’s ${n} points`);
+      const made = weightsToGroups(cmd.weights, n);
+      if (!made.groups.length) throw new CommandError('No weights to turn into groups');
+      // Keep groups that aren't bones (e.g. masks); bone groups are replaced.
+      const keep = (o.vertexGroups?.groups ?? []).filter((g) => !made.groups.some((m) => m.name === g.name));
+      const groups = [...made.groups, ...keep].slice(0, MAX_GROUPS);
+      return { doc: withObject(doc, { ...o, vertexGroups: { active: 0, groups } }), created: [] };
     }
 
     case 'setCameraFollow': {
@@ -1836,6 +1921,7 @@ export function validateSceneObject(raw: unknown): SceneObject {
   }
   if (obj.type === 'mesh') obj.mesh = validateMeshData(v.mesh);
   if (obj.type === 'mesh' && v.modifiers !== undefined) obj.modifiers = validateModifiers(v.modifiers);
+  if (obj.type === 'mesh' && v.vertexGroups !== undefined) obj.vertexGroups = validateVertexGroups(v.vertexGroups, obj.mesh!.vertices.length, String(v.id));
   if (obj.type === 'mesh' && v.shapeKeys !== undefined) obj.shapeKeys = validateShapeKeys(v.shapeKeys, obj.mesh!.vertices.length, String(v.id));
   if (obj.type === 'mesh' && v.text !== undefined) obj.text = validateText(v.text, false) as TextData;
   if (v.rigid !== undefined && (obj.type === 'mesh' || (PRIMITIVES as readonly string[]).includes(obj.type))) obj.rigid = validateRigid(v.rigid, false) as RigidBody;
@@ -2232,6 +2318,38 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (v.value !== undefined) cmd.value = inRange(v.value, -10, 10) ? (v.value as number) : fail('keyShape value must be -10..10');
       if (v.easing !== undefined) cmd.easing = isEasing(v.easing) ? v.easing : fail(`easing must be one of ${EASINGS.join(', ')}`);
       return cmd;
+    }
+    case 'addVertexGroup': {
+      if (!isId(v.id)) fail('addVertexGroup needs id');
+      const cmd: Extract<Command, { type: 'addVertexGroup' }> = { type: 'addVertexGroup', id: v.id };
+      if (v.name !== undefined) cmd.name = typeof v.name === 'string' && v.name.length >= 1 && v.name.length <= 64 ? v.name : fail('vertex group name must be 1..64 characters');
+      return cmd;
+    }
+    case 'setVertexGroup':
+      if (!isId(v.id) || !(Number.isInteger(v.index) && inRange(v.index, 0, MAX_GROUPS - 1)) || typeof v.name !== 'string' || !v.name || v.name.length > 64) fail('setVertexGroup needs id, index and name (1..64 characters)');
+      return { type: 'setVertexGroup', id: v.id, index: v.index as number, name: v.name };
+    case 'setActiveVertexGroup':
+    case 'removeVertexGroup':
+      if (!isId(v.id) || !(Number.isInteger(v.index) && inRange(v.index, 0, MAX_GROUPS - 1))) fail(`${v.type} needs id and index`);
+      return { type: v.type, id: v.id, index: v.index as number };
+    case 'setWeights': {
+      if (!isId(v.id) || typeof v.group !== 'string') fail('setWeights needs id and group (name)');
+      const cmd: Extract<Command, { type: 'setWeights' }> = { type: 'setWeights', id: v.id, group: v.group };
+      if (v.weights !== undefined) {
+        if (!Array.isArray(v.weights) || v.weights.length > LIMITS.vertices || !v.weights.every((x) => typeof x === 'number' && Number.isFinite(x))) fail('setWeights weights must be numbers, one per point');
+        cmd.weights = [...(v.weights as number[])];
+      } else {
+        if (!Array.isArray(v.verts) || !v.verts.every((x) => Number.isInteger(x) && x >= 0)) fail('setWeights needs weights, or verts (point indices) and value');
+        cmd.verts = [...(v.verts as number[])];
+        cmd.value = v.value === undefined ? 1 : inRange(v.value, 0, 1) ? (v.value as number) : fail('setWeights value must be 0..1');
+      }
+      return cmd;
+    }
+    case 'groupsFromWeights': {
+      if (!isId(v.id) || !isRecord(v.weights) || !Array.isArray(v.weights.bones) || !Array.isArray(v.weights.w)) fail('groupsFromWeights needs id and weights {bones, w}');
+      const bones = (v.weights.bones as unknown[]).map((b) => (typeof b === 'string' && b.length <= 64 ? b : fail('bone names must be strings')));
+      const w = (v.weights.w as unknown[]).map((pairs) => (Array.isArray(pairs) ? pairs.map((p) => (Array.isArray(p) && Number.isInteger(p[0]) && p[0] >= 0 && p[0] < bones.length && inRange(p[1], 0, 1) ? ([p[0], p[1]] as [number, number]) : fail('weights.w must be [bone index, weight] pairs'))) : fail('weights.w invalid')));
+      return { type: 'groupsFromWeights', id: v.id, weights: { bones, w } };
     }
     case 'unkeyShape':
       if (!isId(v.id) || typeof v.key !== 'string' || !isFrame(v.frame)) fail('unkeyShape needs id, key and frame');
@@ -2714,4 +2832,15 @@ function validateShapeKeys(v: unknown, vertexCount: number, id: string): ShapeKe
   const err = validShapeKeys(sk, vertexCount);
   if (err) fail(`object ${id}: ${err}`);
   return sk;
+}
+
+function validateVertexGroups(v: unknown, vertexCount: number, id: string): VertexGroups {
+  if (!isRecord(v) || !Array.isArray(v.groups)) fail(`object ${id}: vertexGroups invalid`);
+  const vg: VertexGroups = {
+    active: v.active as number,
+    groups: (v.groups as unknown[]).map((g) => (isRecord(g) ? { name: g.name as string, w: Array.isArray(g.w) ? [...(g.w as number[])] : [] } : fail(`object ${id}: vertex group invalid`))),
+  };
+  const err = validGroups(vg, vertexCount);
+  if (err) fail(`object ${id}: ${err}`);
+  return vg;
 }
