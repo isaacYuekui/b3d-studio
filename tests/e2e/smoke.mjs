@@ -1031,6 +1031,9 @@ const setNumber = async (page, scope, label, value) => {
     return { id: o.id, pts: o.mesh.vertices.length, curve: !!o.modifiers?.curve, tris: (e.node.getIndices()?.length ?? 0) / 3 };
   });
   check('v3.20: Add → Curve → Bezier makes a curve drawn as a tube', c.curve && c.pts === 4 && c.tris > 50, JSON.stringify(c));
+  await page.click('[data-prop-tab="data"]');
+  const bevelRow = await page.locator('.prop-section-head', { hasText: 'Curve' }).count();
+  check('v3.20: the Curve tab shows the curve settings', bevelRow === 1, String(bevelRow));
   await page.click('[data-testid="mode-toggle"]');
   await page.evaluate((id) => { const st = window.__b3d.store; st.setEdit({ id, mode: 'vert', sel: { verts: [3], edges: [], faces: [] } }); }, c.id);
   await page.mouse.move(640, 400);
