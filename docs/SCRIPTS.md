@@ -401,6 +401,31 @@ sound by building the events themselves.
 
 Loudness follows strength, size and distance to the scene camera.
 
+## Node materials (v3.19)
+
+```json
+{"type":"setMaterial","id":"ball","material":{"nodes":{
+  "nodes":[
+    {"id":"t","type":"texture","x":0,"y":20,"props":{"pattern":"voronoi","scale":2}},
+    {"id":"r","type":"ramp","x":240,"y":0,"props":{"c0":"#1a0a05","c1":"#ff7a1a","p0":0.2,"p1":0.6}},
+    {"id":"b","type":"bump","x":240,"y":200,"props":{"strength":0.8}},
+    {"id":"out","type":"principled","x":480,"y":20,"props":{"roughness":0.6}}],
+  "links":[
+    {"from":"t","out":"fac","to":"r","in":"fac"},
+    {"from":"r","out":"color","to":"out","in":"base"},
+    {"from":"t","out":"fac","to":"b","in":"height"},
+    {"from":"b","out":"normal","to":"out","in":"normal"}]}}}
+```
+
+- Node types and sockets: `principled` (in: base, metallic, roughness, emission, alpha, normal;
+  props also strength, repeat), `texture` (out fac, color; props pattern, scale 1–32, seed),
+  `image` (out color, alpha; props image = your `img-…` id or a library texture id, scale), `rgb`
+  (out color), `value` (out value), `mix` (in fac, a, b; mode), `ramp` (in fac; out color, alpha;
+  c0/p0, c1/p1), `math` (in a, b; op), `invert` (in/out color), `bump` (in height; out normal;
+  strength). Unconnected inputs use the prop of the same name.
+- Exactly one `principled`; no loops; at most 40 nodes. `"nodes": null` goes back to the plain
+  material settings.
+
 ## UV maps (v3.18)
 
 ```json

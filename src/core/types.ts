@@ -76,6 +76,8 @@ export interface Material {
   anisotropy?: number;
   /** Procedural pattern (used when no library texture is set). */
   pattern?: import('./patterns').Pattern | null;
+  /** Shader Editor node graph (Blender's Use Nodes): when set, it decides the surface. */
+  nodes?: import('./shaderNodes').ShaderGraph | null;
 }
 
 export interface LightData {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { DopeSheet } from './DopeSheet';
 import { GraphEditor } from './GraphEditor';
 import { UVEditor } from './UVEditor';
+import { ShaderEditor } from './ShaderEditor';
 import { useApp, useCtx } from './context';
 import { Icon } from './icons';
 import { NumberField } from './NumberField';
@@ -22,19 +23,19 @@ export function Timeline() {
   const selName = useApp((s) => (s.selection ? s.doc.objects[s.selection]?.name : null));
   const cameraView = useApp((s) => s.cameraView);
   // Which animation editor shows under the timeline: none, the Dope Sheet or the Graph Editor.
-  const [editor, setEditor] = useState<'' | 'sheet' | 'graph' | 'uv'>(() => {
+  const [editor, setEditor] = useState<'' | 'sheet' | 'graph' | 'uv' | 'shader'>(() => {
     try {
       const v = localStorage.getItem('b3d.dopesheet');
-      return v === '1' ? 'sheet' : v === 'graph' ? 'graph' : v === 'uv' ? 'uv' : '';
+      return v === '1' ? 'sheet' : v === 'graph' ? 'graph' : v === 'uv' ? 'uv' : v === 'shader' ? 'shader' : '';
     } catch {
       return '';
     }
   });
-  const showEditor = (which: 'sheet' | 'graph' | 'uv') => {
+  const showEditor = (which: 'sheet' | 'graph' | 'uv' | 'shader') => {
     const next = editor === which ? '' : which;
     setEditor(next);
     try {
-      localStorage.setItem('b3d.dopesheet', next === 'sheet' ? '1' : next === 'graph' ? 'graph' : next === 'uv' ? 'uv' : '0');
+      localStorage.setItem('b3d.dopesheet', next === 'sheet' ? '1' : next === 'graph' ? 'graph' : next === 'uv' ? 'uv' : next === 'shader' ? 'shader' : '0');
     } catch {
       /* per session only */
     }
@@ -105,6 +106,9 @@ export function Timeline() {
           <button className={`tl-btn${editor === 'uv' ? ' on' : ''}`} aria-pressed={editor === 'uv'} data-testid="tl-uv" title="UV Editor: the selected mesh's UV map over its image" onClick={() => showEditor('uv')}>
             ▦ UV
           </button>
+          <button className={`tl-btn${editor === 'shader' ? ' on' : ''}`} aria-pressed={editor === 'shader'} data-testid="tl-shader" title="Shader Editor: build the selected object's material from nodes" onClick={() => showEditor('shader')}>
+            ⬡ Shader
+          </button>
           <button className={`tl-btn${cameraView ? ' on' : ''}`} aria-pressed={cameraView} data-testid="tl-camview" title="Look through the scene camera (0)" onClick={() => (cameraView ? store.setCameraView(false) : runAction(ctx, 'view.camera'))}>
             🎥 Camera view
           </button>
@@ -143,6 +147,7 @@ export function Timeline() {
       {sheet && <DopeSheet />}
       {graph && <GraphEditor />}
       {editor === 'uv' && <UVEditor />}
+      {editor === 'shader' && <ShaderEditor />}
       <div className="tl-foot muted">
         {(end - start + 1) / fps < 60 ? `${((end - start + 1) / fps).toFixed(1)} s` : `${Math.floor((end - start + 1) / fps / 60)} min ${Math.round(((end - start + 1) / fps) % 60)} s`} at {fps} fps
         {keyFrames(animationOf({ animation: anim }), null).length ? ` · ${Object.keys(tracks).length} animated object${Object.keys(tracks).length === 1 ? '' : 's'}${camera.length ? ', animated camera' : ''}` : ' · no animation yet: select an object and press ◆ Key'}

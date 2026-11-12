@@ -32,6 +32,7 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Node } from '@babylonjs/core/node';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import type { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture';
 import { MultiMaterial } from '@babylonjs/core/Materials/multiMaterial';
 import { RawCubeTexture } from '@babylonjs/core/Materials/Textures/rawCubeTexture';
 import { HDRCubeTexture } from '@babylonjs/core/Materials/Textures/hdrCubeTexture';
@@ -69,6 +70,7 @@ import { babylonQuatToEulerDeg, clean, eulerDegToBabylonQuat, fromBabylonVec, to
 import { applyGeometry } from './geometry';
 import { validUv } from '../core/mesh/uv';
 import { isUserImage, userImageUrl } from './userImages';
+import { bakeMaps } from './nodeBake';
 import { subtree } from '../core/commands';
 import { EditOverlay } from './EditOverlay';
 import { rippleNormalTexture } from './water';
@@ -1548,7 +1550,9 @@ export class Viewport {
 
   /** A scene material on a Babylon PBR material (Principled-style settings, textures, patterns). */
   private applyMaterial(mat: PBRMaterial, m: SceneMaterial, prev?: SceneMaterial) {
-    this.applyTexture(mat, m, prev);
+    if (m.nodes) return this.applyNodes(mat, m);
+    if (prev?.nodes) this.dropNodeMaps(mat);
+    this.applyTexture(mat, m, prev?.nodes ? undefined : prev);
     mat.albedoColor = Color3.FromHexString(m.baseColor).toLinearSpace();
     // With a texture, metal/roughness come from its maps (scalars act as multipliers).
     mat.metallic = m.texture ? 1 : m.metallic;
@@ -1560,6 +1564,64 @@ export class Viewport {
     mat.transparencyMode = m.alpha < 1 ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
     // A pattern carries the colour itself.
     if (!m.texture && m.pattern) mat.albedoColor = Color3.White();
+    applyPrincipled(mat, m);
+  }
+
+  /** Node maps baked for a material (disposed when replaced). */
+  private nodeMaps = new WeakMap<PBRMaterial, RawTexture[]>();
+  private nodeKey = new WeakMap<PBRMaterial, string>();
+
+  private dropNodeMaps(mat: PBRMaterial) {
+    for (const t of this.nodeMaps.get(mat) ?? []) t.dispose();
+    this.nodeMaps.delete(mat);
+    this.nodeKey.delete(mat);
+    mat.albedoTexture = mat.bumpTexture = mat.metallicTexture = mat.emissiveTexture = null;
+    mat.useAlphaFromAlbedoTexture = false;
+    this.texWanted.delete(mat);
+  }
+
+  /** Shader Editor material: bake the node graph into maps and set the PBR inputs from it. */
+  private applyNodes(mat: PBRMaterial, m: SceneMaterial) {
+    this.texWanted.set(mat, m);
+    // Moving nodes around doesn't change the result: only rebake when the maths changed.
+    const key = JSON.stringify([m.nodes!.nodes.map((n) => [n.id, n.type, n.props]), m.nodes!.links]);
+    if (this.nodeKey.get(mat) !== key || !this.nodeMaps.has(mat)) {
+      // Old non-node textures go too.
+      for (const t of [mat.albedoTexture, mat.bumpTexture, mat.metallicTexture, mat.emissiveTexture]) if (t && !isSharedTexture(t) && !(this.nodeMaps.get(mat) ?? []).includes(t as RawTexture)) t.dispose();
+      this.dropNodeMaps(mat);
+      this.texWanted.set(mat, m);
+      this.nodeKey.set(mat, key);
+      const graph = m.nodes!;
+      const baked = bakeMaps(this.scene, graph, () => {
+        // An image arrived: bake again if this material still wants this graph.
+        if (this.nodeKey.get(mat) === key && mat.getScene()) {
+          const latest = this.texWanted.get(mat) ?? m;
+          this.dropNodeMaps(mat);
+          if (latest.nodes) this.applyNodes(mat, latest);
+        }
+      });
+      const maps = [baked.albedo, baked.arm, baked.emissive, baked.normal].filter((t): t is RawTexture => !!t);
+      this.nodeMaps.set(mat, maps);
+      const r = baked.result;
+      mat.albedoTexture = baked.albedo;
+      // A baked colour map carries the colour; a constant one is the albedo colour (an alpha-only map is white).
+      mat.albedoColor = typeof r.base === 'string' && !baked.albedo ? Color3.FromHexString(r.base).toLinearSpace() : Color3.White();
+      mat.useAlphaFromAlbedoTexture = typeof r.alpha !== 'number';
+      mat.metallicTexture = baked.arm;
+      mat.useAmbientOcclusionFromMetallicTextureRed = false;
+      mat.useRoughnessFromMetallicTextureGreen = mat.useMetallnessFromMetallicTextureBlue = !!baked.arm;
+      mat.metallic = typeof r.metallic === 'number' ? r.metallic : 1;
+      mat.roughness = typeof r.roughness === 'number' ? r.roughness : 1;
+      if (baked.arm && typeof r.metallic === 'number') mat.metallic = r.metallic;
+      if (baked.arm && typeof r.roughness === 'number') mat.roughness = r.roughness;
+      mat.emissiveTexture = baked.emissive;
+      mat.emissiveColor = baked.emissive ? new Color3(r.strength, r.strength, r.strength) : Color3.FromHexString(r.emission as string).toLinearSpace().scale(r.strength);
+      mat.bumpTexture = baked.normal;
+      mat.invertNormalMapX = mat.invertNormalMapY = false;
+      const alpha = typeof r.alpha === 'number' ? r.alpha : 1;
+      mat.alpha = alpha;
+      mat.transparencyMode = alpha < 1 || typeof r.alpha !== 'number' ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
+    }
     applyPrincipled(mat, m);
   }
 

@@ -638,3 +638,28 @@ button.vp-mode.posing { background: #1f4f7a; border-color: #4fb0ff; color: #fff;
 .uved-svg { width: min(320px, 70vw); aspect-ratio: 1; background: #2a2a2a; border-radius: 4px; touch-action: none; }
 .uv-face { fill: #ffffff10; stroke: #e8e8e8; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .uv-face.sel { fill: #ff8c2a55; stroke: #ffa040; }
+.shed { display: flex; flex-direction: column; gap: 4px; position: relative; }
+.shed-err { color: #ff8a80; font-size: 12px; }
+.shed-canvas { position: relative; height: min(46vh, 380px); overflow: hidden; background: #1d1d1d; background-image: radial-gradient(#ffffff14 1px, transparent 1px); background-size: 20px 20px; border-radius: 4px; touch-action: none; outline: none; }
+.shed-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.shed-links { position: absolute; pointer-events: none; overflow: visible; }
+.shed-node { position: absolute; background: #303030; border: 1px solid #111; border-radius: 6px; box-shadow: 0 2px 8px #0008; font-size: 12px; }
+.shed-node.sel { border-color: #ffa040; }
+.shed-head { height: 22px; line-height: 22px; padding: 0 8px; border-radius: 5px 5px 0 0; background: #4a4a4a; cursor: grab; touch-action: none; color: #eee; font-weight: 600; }
+.g-output .shed-head { background: #3c6e47; }
+.g-texture .shed-head { background: #7a4e2a; }
+.g-color .shed-head, .g-input .shed-head { background: #6b5a24; }
+.g-converter .shed-head { background: #2f5a7a; }
+.g-vector .shed-head { background: #423f78; }
+.shed-row { position: absolute; left: 0; right: 0; height: 24px; display: flex; align-items: center; gap: 6px; padding: 0 10px; color: #ddd; white-space: nowrap; }
+.shed-row > span { overflow: hidden; text-overflow: ellipsis; }
+.shed-row.out { justify-content: flex-end; }
+.shed-row input[type=number], .shed-row select { margin-left: auto; width: 76px; background: #222; color: #eee; border: 1px solid #111; border-radius: 3px; font-size: 11px; padding: 1px 3px; }
+.shed-row input[type=color] { margin-left: auto; width: 34px; height: 18px; padding: 0; border: 0; background: none; }
+.shed-sock { position: absolute; width: 12px; height: 12px; border-radius: 50%; border: 1px solid #111; top: 6px; cursor: crosshair; }
+.shed-row.out .shed-sock { right: -7px; }
+.shed-row.in .shed-sock { left: -7px; }
+.shed-sock::after { content: ''; position: absolute; inset: -8px; }
+.shed-add { display: flex; flex-wrap: wrap; gap: 8px; background: #2b2b2b; padding: 6px; border-radius: 4px; }
+.shed-add-group { display: flex; flex-direction: column; gap: 3px; }
+.shed-add-group b { font-size: 11px; color: var(--text-dim); }

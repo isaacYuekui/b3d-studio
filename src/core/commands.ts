@@ -21,6 +21,7 @@ import { fracturePieces } from './fracture';
 import { MAX_COLLECTIONS, collectionById, collectionsOf, uniqueCollectionName, withDescendants } from './collections';
 import type { Collection } from './collections';
 import { carryUv, smartUvProject } from './mesh/uv';
+import { validateGraph } from './shaderNodes';
 import { MAX_SLOTS, slotOf, surfaceSlots, transferMaterialIndex, usesSlots, validIndex, withMaterialIndex } from './mesh/materialIndex';
 import { DEFAULT_PARTICLES, PARTICLE_EMIT, PARTICLE_GROUND, PARTICLE_SHAPES } from './particles';
 import type { ParticleSettings } from './particles';
@@ -1299,6 +1300,7 @@ function validateMaterial(v: unknown, partial: boolean): Partial<Material> {
   const req = (k: keyof Material) => !partial && v[k] === undefined && fail(`material.${k} missing`);
   (['baseColor', 'metallic', 'roughness', 'emission', 'emissionStrength', 'alpha'] as const).forEach(req);
   if (v.texture !== undefined) m.texture = v.texture === null || (typeof v.texture === 'string' && ASSET_ID.test(v.texture)) ? (v.texture as string | null) : fail('material.texture must be a library texture id or null');
+  if (v.nodes !== undefined) m.nodes = v.nodes === null ? null : validateGraph(v.nodes, (msg) => fail(`material.nodes: ${msg}`));
   if (v.textureScale !== undefined) m.textureScale = inRange(v.textureScale, 0.01, 1000) ? v.textureScale : fail('material.textureScale must be 0.01..1000');
   if (v.baseColor !== undefined) m.baseColor = isColor(v.baseColor) ? v.baseColor : fail('material.baseColor must be #rrggbb');
   if (v.emission !== undefined) m.emission = isColor(v.emission) ? v.emission : fail('material.emission must be #rrggbb');
