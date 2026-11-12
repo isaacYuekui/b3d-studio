@@ -134,9 +134,11 @@ export function soundEvents(doc: SceneDoc, from: number, to: number, fps: number
             const fr = Math.round(from + t * fps);
             const cam = cameraAt(doc, fr);
             const pos = applyM4(worldMatrix(doc, id, fr), [0, 0, 0]);
-            env.push([t, cam ? 0.25 + 0.75 * nearness(dist(cam, pos), 30) : 0.3 + 0.7 * clamp01((t - s) / Math.max(0.1, se - s))]);
+            // Builds up as it comes in: faint at first, screaming just before it lands.
+            const progress = clamp01((t - s) / Math.max(0.1, se - s)) ** 2;
+            env.push([t, (0.12 + 0.88 * progress) * (cam ? 0.45 + 0.55 * nearness(dist(cam, pos), 20) : 1)]);
           }
-          if (env.length) out.push({ kind: 'whoosh', start: Math.max(0, s), end: Math.min(dur, se + 0.3), gain: clamp01(0.5 + p.count / 8000), env, source: o.name });
+          if (env.length) out.push({ kind: 'whoosh', start: Math.max(0, s), end: Math.min(dur, se + 0.15), gain: clamp01(0.35 + p.count / 12000), env, source: o.name });
         } else out.push({ kind: 'crackle', start: Math.max(0, s), end: Math.min(dur, e), gain: clamp01(0.25 + p.count / 4000), source: o.name });
       }
       if (p.shape === 'fire' && burst && p.count >= 300 && inRange(s, s + 3)) out.push({ kind: 'boom', start: s, end: s + 4, gain: clamp01(0.35 + p.count / 6000), source: o.name });

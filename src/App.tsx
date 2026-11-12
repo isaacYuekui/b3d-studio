@@ -102,7 +102,7 @@ function StatusBar() {
   return (
     <footer className="statusbar" aria-live="polite">
       <span className="status-notice">{notice ?? `Tool: ${tool[0].toUpperCase()}${tool.slice(1)}`}</span>
-      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v3.16</span>
+      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v3.16.1</span>
     </footer>
   );
 }
@@ -143,7 +143,20 @@ export function App() {
   );
   // Test/debug hook, only with ?debug in the URL.
   useEffect(() => {
-    if (new URLSearchParams(location.search).has('debug')) (window as unknown as Record<string, unknown>).__b3d = { ...ctx, prepare: prepareCommands, parseScript };
+    if (new URLSearchParams(location.search).has('debug')) (window as unknown as Record<string, unknown>).__b3d = {
+        ...ctx,
+        prepare: prepareCommands,
+        parseScript,
+        /** The video soundtrack for the timeline as a WAV blob (debug / tests). */
+        soundtrack: async () => {
+          const [{ soundEvents }, { renderSoundtrack, encodeWav }] = await Promise.all([import('./core/sound'), import('./engine/soundSynth')]);
+          const doc = ctx.store.getState().doc;
+          const a = doc.animation ?? { fps: 24, start: 1, end: 120 };
+          const events = soundEvents(doc, a.start, a.end, a.fps);
+          const buf = await renderSoundtrack(events, (a.end - a.start + 1) / a.fps);
+          return { events, wav: buf ? encodeWav(buf) : null };
+        },
+      };
   }, [ctx]);
   const answer = (v: boolean) => {
     ask?.resolve(v);

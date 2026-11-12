@@ -56,9 +56,9 @@ export async function renderSoundtrack(events: SoundEvent[], duration: number, s
 
   // Master: a compressor keeps a big explosion from clipping and lifts the quieter layers.
   const comp = ctx.createDynamicsCompressor();
-  comp.threshold.value = -20;
-  comp.knee.value = 12;
-  comp.ratio.value = 4;
+  comp.threshold.value = -14;
+  comp.knee.value = 10;
+  comp.ratio.value = 3;
   comp.attack.value = 0.004;
   comp.release.value = 0.3;
   const master = ctx.createGain();
@@ -115,7 +115,7 @@ export async function renderSoundtrack(events: SoundEvent[], duration: number, s
         osc.frequency.setValueAtTime(62, Math.max(0, t));
         osc.frequency.exponentialRampToValueAtTime(26, Math.max(0, t) + 1.6);
         const og = gain();
-        hit(og.gain, t, 1.3 * g, 2.4, 0.01);
+        hit(og.gain, t, 1.8 * g, 2.4, 0.01);
         osc.connect(og).connect(comp);
         osc.start(Math.max(0, t));
         osc.stop(Math.max(0, t) + 3);
@@ -124,7 +124,7 @@ export async function renderSoundtrack(events: SoundEvent[], duration: number, s
         lp.frequency.setValueAtTime(1400, Math.max(0, t));
         lp.frequency.exponentialRampToValueAtTime(140, Math.max(0, t) + 2.5);
         const bg = gain();
-        hit(bg.gain, t, 1.6 * g, 3.2);
+        hit(bg.gain, t, 2.2 * g, 3.2);
         src(brown, t, t + 4).connect(lp).connect(bg).connect(comp);
         // The crack at the start.
         const hp = filter('highpass', 900);
