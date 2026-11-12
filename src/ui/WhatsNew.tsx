@@ -2,6 +2,8 @@ import { useState } from 'react';
 
 /** Newest first. The first entry is the current version. */
 const CHANGES: { v: string; items: string[] }[] = [
+  { v: '3.22', items: ['Weight Paint (Weights button): paint how much each bone moves each part — Draw / Add / Subtract / Blur, vertex groups in Properties → Mesh'] },
+  { v: '3.21', items: ['Shape keys (Properties → Mesh): Basis + other shapes, shaped in Edit Mode or Sculpt, blended with an animatable value'] },
   { v: '3.20', items: ['Curves (Add → Curve): Bezier, Circle and Path, drawn as tubes — Tab to edit points, E to extend', 'Follow Path: objects and the camera move along a curve over a range of frames'] },
   { v: '3.19', items: ['Shader Editor (Timeline → Shader): build materials from nodes — Pattern / Image Texture, Mix, Color Ramp, Math, Invert, Bump → Principled BSDF'] },
   { v: '3.18', items: ['Your own pictures as textures: Material → Texture → Upload an image', 'UV unwrap: Smart UV Project (U in Edit Mode, or Object → UV) so the picture fits the model', 'UV Editor (Timeline → UV): select faces, drag, scale, rotate and fit their UVs over the image'] },

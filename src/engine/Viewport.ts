@@ -62,12 +62,14 @@ import { PRIMITIVES, isRenderable, worldOf } from '../core/types';
 import type { PrimitiveType } from '../core/types';
 import { primitiveMesh } from '../core/mesh/primitives';
 import { catalogNow, hdriUrl, loadCatalog, modelUrl, textureUrl } from './library';
-import { animationOf, sceneCameraAt, transformAt, transformEdit } from '../core/animation';
+import { animationOf, evaluateValue, sceneCameraAt, transformAt, transformEdit } from '../core/animation';
 import { guessUnitScale, isUserAsset, updateUserModelMeta, userModelMetaNow, userModelUrl } from './userModels';
 
 class MissingModel extends Error {}
 import { babylonQuatToEulerDeg, clean, eulerDegToBabylonQuat, fromBabylonVec, toBabylonVec } from './coords';
 import { applyGeometry } from './geometry';
+import { WeightView } from './weightView';
+import { paintWeights } from '../core/vertexGroups';
 import { validUv } from '../core/mesh/uv';
 import { isUserImage, userImageUrl } from './userImages';
 import { bakeMaps } from './nodeBake';
@@ -87,6 +89,7 @@ import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { apply as m4apply, rotEuler as rotEulerM, boneBase, invert as m4invert, m4ToQuat, mul as m4mul, poseAt, poseBones, poseEdit, quatToM4, rotationOnly, skinMesh, toEuler, worldMatrix } from '../core/rig';
 import { applyModifiers } from '../core/mesh/modifiers';
+import { hasShapeKeys, shapedMesh, shapeValuesAt } from '../core/shapeKeys';
 import { transformVerts } from '../core/mesh/ops';
 import { flush, pickElement, selectLoop } from '../core/mesh/select';
 import type { MeshSelection } from '../core/mesh/select';
@@ -137,6 +140,9 @@ export class Viewport {
   private lastDoc: SceneDoc | null = null;
   private lastSel: string | null | undefined = undefined;
   private lastSculpt: unknown = undefined;
+  private weightView: WeightView | null = null;
+  private weightHidden: AbstractMesh[] = [];
+  private lastWeightKey: unknown[] = [];
   private lastTool: ToolMode | null = null;
   private lastShading: Shading | null = null;
   private resizeObs: ResizeObserver;
@@ -256,7 +262,7 @@ export class Viewport {
       if (info.type !== PointerEventTypes.POINTERTAP) return;
       const ev = info.event as PointerEvent;
       if (ev.button !== 0) return;
-      if (this.store.getState().sculpt) return; // taps don't change the selection while sculpting
+      if (this.store.getState().sculpt || this.store.getState().weightPaint) return; // taps don't change the selection while sculpting / painting
       if (this.store.getState().pose) this.poseTap(scene.pointerX, scene.pointerY, ev.pointerType !== 'mouse');
       else if (this.store.getState().edit) this.editTap(scene.pointerX, scene.pointerY, ev.shiftKey || this.store.getState().addSelect, ev.altKey, ev.pointerType !== 'mouse');
       else this.store.select(this.pickAt(scene.pointerX, scene.pointerY));
@@ -410,11 +416,17 @@ export class Viewport {
     const editKey = state.edit ? `${state.edit.id}|${state.edit.mode}|${state.xray}` : '';
     const editChanged = editKey !== this.lastEditKey || state.edit !== this.lastEdit || (state.edit && docChanged);
     if (editChanged) this.syncEdit(state, editKey !== this.lastEditKey);
+    const shapeMode = `${state.edit?.id ?? ''}|${state.sculpt?.id ?? ''}`;
+    if (shapeMode !== this.lastShapeMode) {
+      this.lastShapeMode = shapeMode;
+      this.applyShapes(state);
+    }
     const poseChanged = state.pose !== this.lastPose;
     this.lastPose = state.pose;
     if (poseChanged) this.applyRigs(state);
-    const sculptChanged = state.sculpt !== this.lastSculpt;
+    const sculptChanged = state.sculpt !== this.lastSculpt || state.weightPaint !== this.lastWeightKey[0];
     this.lastSculpt = state.sculpt;
+    this.syncWeights(state);
     if (state.selection !== this.lastSel || state.tool !== this.lastTool || editChanged || poseChanged || sculptChanged) {
       this.syncSelection(state.selection, state.tool);
       this.lastSel = state.selection;
@@ -741,11 +753,45 @@ export class Viewport {
   private bonePivot!: TransformNode;
   private boneDrag: { arm: string; bone: string; startQ: Quaternion; startPos: Vector3; base: M4; armWorld: M4; rot0: [number, number, number]; loc0: [number, number, number] } | null = null;
   private bindCache = new Map<string, { key: unknown; weights: Weights; rel: string }>();
-  private evalCache = new Map<string, { mesh: unknown; mods: unknown; out: MeshData }>();
+  private evalCache = new Map<string, { mesh: unknown; mods: unknown; sig?: string; out: MeshData }>();
+  private shapeSig = new Map<string, { sig: string; mesh: unknown; mods: unknown; node: unknown }>();
+  private lastShapeMode = '';
+
+  /**
+   * Shape keys: Object Mode shows the mix at this frame (values may be keyframed); while the
+   * object is in Edit Mode or Sculpt Mode it shows the active key's own shape, which is what
+   * those tools change.
+   */
+  private applyShapes(state: AppState) {
+    const doc = state.doc;
+    const now = new Set<string>();
+    for (const id of doc.order) {
+      const o = doc.objects[id];
+      if (o.type !== 'mesh' || !o.mesh || !hasShapeKeys(o.shapeKeys) || (o.skin && doc.objects[o.skin.armature])) continue;
+      const e = this.entries.get(id);
+      if (!e || !(e.node instanceof Mesh)) continue;
+      now.add(id);
+      const own = state.edit?.id === id || state.sculpt?.id === id;
+      const values = own ? null : shapeValuesAt(o.shapeKeys, doc.animation?.shapes?.[id], state.frame, evaluateValue);
+      const sig = values ? values.map((v) => v.toFixed(4)).join(',') : 'own';
+      const prev = this.shapeSig.get(id);
+      if (prev && prev.sig === sig && prev.mesh === o.mesh && prev.mods === o.modifiers && prev.node === e.node) continue;
+      this.shapeSig.set(id, { sig, mesh: o.mesh, mods: o.modifiers, node: e.node });
+      this.updateDeformed(e.node, applyModifiers(values ? shapedMesh(o.mesh, o.shapeKeys, values) : o.mesh, o.modifiers));
+    }
+    for (const id of [...this.shapeSig.keys()]) {
+      if (now.has(id)) continue;
+      this.shapeSig.delete(id);
+      const o = doc.objects[id];
+      const e = this.entries.get(id);
+      if (o?.mesh && e?.node instanceof Mesh && !(o.skin && doc.objects[o.skin.armature])) applyGeometry(e.node, applyModifiers(o.mesh, o.modifiers));
+    }
+  }
   private skinned = new Set<string>();
 
   /** Draw bones (posed) and deform skinned meshes for the current frame. */
   private applyRigs(state: AppState) {
+    this.applyShapes(state);
     const doc = state.doc;
     const rendered = state.shading === 'rendered';
     for (const id of doc.order) {
@@ -775,8 +821,10 @@ export class Viewport {
       if (state.edit?.id === id) continue; // edit the rest shape
       now.add(id);
       let ev = this.evalCache.get(id);
-      if (!ev || ev.mesh !== o.mesh || ev.mods !== o.modifiers) {
-        ev = { mesh: o.mesh, mods: o.modifiers, out: applyModifiers(o.mesh, o.modifiers) };
+      const values = hasShapeKeys(o.shapeKeys) ? shapeValuesAt(o.shapeKeys, doc.animation?.shapes?.[id], state.frame, evaluateValue) : null;
+      const sig = values ? values.map((v) => v.toFixed(4)).join(',') : '';
+      if (!ev || ev.mesh !== o.mesh || ev.mods !== o.modifiers || ev.sig !== sig) {
+        ev = { mesh: o.mesh, mods: o.modifiers, sig, out: applyModifiers(values ? shapedMesh(o.mesh, o.shapeKeys, values) : o.mesh, o.modifiers) };
         this.evalCache.set(id, ev);
       }
       let explicit: Weights | null = null;
@@ -1973,9 +2021,9 @@ export class Viewport {
       gm.attachToNode(has ? this.bonePivot : null);
       return;
     }
-    if (st.sculpt) {
-      // Sculpt mode: no gizmo, no outline: the brush is the tool.
-      for (const m of this.entries.get(st.sculpt.id)?.meshes ?? []) m.renderOutline = false;
+    if (st.sculpt || st.weightPaint) {
+      // Sculpt / Weight Paint: no gizmo, no outline: the brush is the tool.
+      for (const m of this.entries.get((st.sculpt ?? st.weightPaint)!.id)?.meshes ?? []) m.renderOutline = false;
       gm.positionGizmoEnabled = gm.rotationGizmoEnabled = gm.scaleGizmoEnabled = false;
       gm.attachToNode(null);
       return;
@@ -2037,6 +2085,33 @@ export class Viewport {
   // ---------------------------------------------------------------- public API
 
   /** Pick the object id under a canvas-relative CSS pixel position. */
+  // ---------------------------------------------------------------- weight paint
+
+  /** Weight Paint mode: the object's surfaces hide and a weight-coloured copy shows instead. */
+  private syncWeights(state: AppState) {
+    const wp = state.weightPaint;
+    const o = wp ? state.doc.objects[wp.id] : undefined;
+    const e = wp ? this.entries.get(wp.id) : undefined;
+    const vg = o?.vertexGroups;
+    const w = vg?.groups[vg.active]?.w ?? null;
+    const key = [wp, o?.mesh, w, e?.node];
+    if (key.length === this.lastWeightKey.length && key.every((k, i) => k === this.lastWeightKey[i])) return;
+    this.lastWeightKey = key;
+    for (const m of this.weightHidden) m.isVisible = true;
+    this.weightHidden = [];
+    if (!wp || !o?.mesh || !e) {
+      this.weightView?.hide();
+      return;
+    }
+    for (const m of e.meshes)
+      if (m.isVisible) {
+        m.isVisible = false;
+        this.weightHidden.push(m);
+      }
+    this.weightView ??= new WeightView(this.scene);
+    this.weightView.show(e.node, o.mesh, w && w.length === o.mesh.vertices.length ? w : null);
+  }
+
   // ---------------------------------------------------------------- sculpt
 
   private stroke: {
@@ -2055,21 +2130,27 @@ export class Viewport {
     last: { x: number; y: number };
     raf: number;
     pending: { x: number; y: number } | null;
+    /** Weight Paint: the group being painted and its weights so far. */
+    weights?: { group: string; w: number[] };
   } | null = null;
 
   private sculptPick(x: number, y: number, id: string) {
     const e = this.entries.get(id);
     if (!e) return null;
-    const pick = this.scene.pick(x, y, (m) => m === e.node || m.parent === e.node);
+    const wv = this.store.getState().weightPaint ? this.weightView?.node : null;
+    const pick = this.scene.pick(x, y, wv ? (m) => m === wv : (m) => m === e.node || m.parent === e.node);
     return pick?.hit && pick.pickedPoint ? pick.pickedPoint : null;
   }
 
   private sculptDown(ev: PointerEvent) {
     const st = this.store.getState();
-    if (!st.sculpt || this.stroke || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
-    const o = st.doc.objects[st.sculpt.id];
-    const e = this.entries.get(st.sculpt.id);
+    const target = st.sculpt?.id ?? st.weightPaint?.id;
+    if (!target || this.stroke || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
+    const o = st.doc.objects[target];
+    const e = this.entries.get(target);
     if (!o?.mesh || !e) return;
+    const group = st.weightPaint ? o.vertexGroups?.groups[o.vertexGroups.active] : undefined;
+    if (st.weightPaint && !group) return;
     const r = this.canvas.getBoundingClientRect();
     const x = ev.clientX - r.left, y = ev.clientY - r.top;
     const hit = this.sculptPick(x, y, o.id);
@@ -2100,6 +2181,7 @@ export class Viewport {
       last: { x, y },
       raf: 0,
       pending: { x, y },
+      ...(group ? { weights: { group: group.name, w: [...group.w] } } : {}),
     };
     this.sculptFlush();
   }
@@ -2120,6 +2202,16 @@ export class Viewport {
     const p = s.pending;
     s.pending = null;
     if (!p) return;
+    if (s.weights) {
+      const wb = this.store.getState().weightBrush;
+      const hit = this.sculptPick(p.x, p.y, s.id);
+      if (!hit) return;
+      const l = Vector3.TransformCoordinates(hit, s.worldInv);
+      s.weights.w = paintWeights(s.verts, s.weights.w, { mode: wb.mode, weight: wb.weight, strength: wb.strength, radius: wb.radius * s.mPerPx * s.localPerWorld, center: fromBabylonVec([l.x, l.y, l.z]), symmetryX: wb.symmetry }, s.ctx.neighbors);
+      s.last = p;
+      this.store.preview({ type: 'setWeights', id: s.id, group: s.weights.group, weights: s.weights.w });
+      return;
+    }
     const b = this.store.getState().sculptBrush;
     const radius = b.radius * s.mPerPx * s.localPerWorld;
     let opts: Parameters<typeof brushStep>[3];

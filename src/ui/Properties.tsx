@@ -7,6 +7,7 @@ import { subtree } from '../core/commands';
 import type { Command, ModifierPatch } from '../core/commands';
 import type { FollowPath, LightType, Material as SceneMaterial, SceneObject, Vec3 } from '../core/types';
 import type { CameraFollow } from '../core/animation';
+import { evaluateValue } from '../core/animation';
 import { isRenderable } from '../core/types';
 import { pickFile, runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
@@ -114,7 +115,8 @@ export function Properties() {
     if (poseId) setTabState('data');
   }, [poseId]);
   useEffect(() => {
-    if (editId) setTabState('object');
+    // (Stays on the Mesh tab: shaping a shape key happens there.)
+    if (editId) setTabState((t) => (t === 'data' ? t : 'object'));
   }, [editId]);
 
   // Material slot shown in the Material tab (0 = main material).
@@ -192,7 +194,7 @@ export function Properties() {
   const tabs: [PropTab, string][] = [['scene', 'Scene'], ['object', 'Object']];
   if (canEdit(o)) tabs.push(['modifiers', 'Modifiers'], ['physics', 'Physics']);
   else if (o.type === 'empty') tabs.push(['physics', 'Physics']);
-  const dataLabel = o.text ? 'Text' : o.water ? 'Water' : o.light ? 'Light' : o.type === 'model' ? 'Model' : o.type === 'armature' ? 'Armature' : o.modifiers?.curve ? 'Curve' : null;
+  const dataLabel = o.text ? 'Text' : o.water ? 'Water' : o.light ? 'Light' : o.type === 'model' ? 'Model' : o.type === 'armature' ? 'Armature' : o.modifiers?.curve ? 'Curve' : canEdit(o) && !o.terrain ? 'Mesh' : null;
   if (dataLabel) tabs.push(['data', dataLabel]);
   if (isRenderable(o.type) && o.type !== 'model') tabs.push(['material', 'Material']);
   const cur: PropTab = tabs.some(([t]) => t === tab) ? tab : 'object';
@@ -272,6 +274,8 @@ export function Properties() {
       {cur === 'data' && o.text && <TextSection id={o.id} />}
       {cur === 'data' && o.modifiers?.curve && <CurveSection id={o.id} />}
       {cur === 'data' && o.water && <WaterSection id={o.id} />}
+      {cur === 'data' && canEdit(o) && !o.modifiers?.curve && !o.text && !o.water && !o.terrain && <VertexGroupsSection id={o.id} />}
+      {cur === 'data' && canEdit(o) && !o.modifiers?.curve && !o.text && !o.water && !o.terrain && <ShapeKeysSection id={o.id} />}
       {cur === 'modifiers' && <ModifiersSection id={o.id} />}
       {cur === 'physics' && o.type === 'empty' && <FieldSection id={o.id} />}
       {cur === 'physics' && o.type !== 'empty' && <PhysicsSection id={o.id} />}
@@ -570,6 +574,151 @@ function CameraFollowRows() {
 }
 
 /** Curve objects (Blender: Object Data → Shape / Geometry): the tube, smoothness, closed loop. */
+/** Vertex Groups (Blender's Object Data → Vertex Groups): the list, + / −, rename, Weight Paint. */
+function VertexGroupsSection({ id }: { id: string }) {
+  const ctx = useCtx();
+  const { store } = ctx;
+  const vg = useApp((s) => s.doc.objects[id]?.vertexGroups);
+  const skinned = useApp((s) => !!s.doc.objects[id]?.skin);
+  const painting = useApp((s) => s.weightPaint?.id === id);
+  const run = (cmd: Command) => store.dispatch(cmd, { select: false });
+  return (
+    <Section title="Vertex Groups" defaultOpen={!!vg || skinned}>
+      {vg && (
+        <div className="sk-list" data-testid="vertex-groups">
+          {vg.groups.map((g, i) => (
+            <div key={i} className={`sk-row${vg.active === i ? ' active' : ''}`} data-vg={i}>
+              <input type="radio" name={`vg-${id}`} aria-label={`Use ${g.name}`} checked={vg.active === i} onChange={() => run({ type: 'setActiveVertexGroup', id, index: i })} />
+              <input
+                className="sk-name"
+                aria-label="Vertex group name"
+                defaultValue={g.name}
+                key={g.name}
+                onBlur={(e) => e.target.value.trim() && e.target.value.trim() !== g.name && run({ type: 'setVertexGroup', id, index: i, name: e.target.value.trim().slice(0, 64) })}
+                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="prop-actions">
+        <button className="btn" data-testid="vg-add" onClick={() => run({ type: 'addVertexGroup', id })}>+ Group</button>
+        {vg && (
+          <button className="btn" data-testid="vg-remove" onClick={() => run({ type: 'removeVertexGroup', id, index: vg.active })}>
+            − Group
+          </button>
+        )}
+        <button className="btn" data-testid="vg-paint" onClick={() => runAction(ctx, 'mode.weight')}>{painting ? 'Stop painting' : 'Weight Paint'}</button>
+      </div>
+      <p className="prop-hint">
+        {skinned
+          ? 'Groups named after bones decide how much each bone moves each part (red 1 = fully, blue 0 = not at all). Weight Paint starts from the automatic weights.'
+          : 'A vertex group is a weight 0..1 on every point. Name groups after an armature’s bones to skin this mesh by hand.'}
+      </p>
+    </Section>
+  );
+}
+
+/**
+ * Shape Keys (Blender's Object Data → Shape Keys): the list with the active key, each key's
+ * value slider (◆ keyframes it at this frame), + / − and the edit hint.
+ */
+function ShapeKeysSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const sk = useApp((s) => s.doc.objects[id]?.shapeKeys);
+  const tracks = useApp((s) => s.doc.animation?.shapes?.[id]);
+  const frame = useApp((s) => s.frame);
+  const editing = useApp((s) => s.edit?.id === id);
+  const run = (cmd: Command) => store.dispatch(cmd, { select: false });
+  const valueNow = (i: number) => {
+    const k = sk!.keys[i];
+    const t = tracks?.[k.name];
+    return t?.length ? (evaluateValue(t, frame) ?? k.value) : k.value;
+  };
+  const setValue = (i: number, v: number, preview: boolean) => {
+    const k = sk!.keys[i];
+    const val = Math.max(k.min ?? 0, Math.min(k.max ?? 1, Math.round(v * 1000) / 1000));
+    // Animated values: changing it keys it at this frame (auto-key), like transforms.
+    const cmd: Command = tracks?.[k.name]?.length ? { type: 'keyShape', id, key: k.name, frame, value: val } : { type: 'setShapeKey', id, index: i, value: val };
+    if (preview) store.preview(cmd);
+    else run(cmd);
+  };
+  return (
+    <Section title="Shape Keys">
+      {sk && (
+        <div className="sk-list" data-testid="shape-keys">
+          {sk.keys.map((k, i) => {
+            const keyed = !!tracks?.[k.name]?.some((x) => x.frame === frame);
+            return (
+              <div key={i} className={`sk-row${sk.active === i ? ' active' : ''}`} data-sk={i}>
+                <input type="radio" name={`sk-${id}`} aria-label={`Edit ${k.name}`} checked={sk.active === i} onChange={() => run({ type: 'setActiveShapeKey', id, index: i })} />
+                <input
+                  className="sk-name"
+                  aria-label="Shape key name"
+                  defaultValue={k.name}
+                  key={k.name}
+                  onBlur={(e) => e.target.value.trim() && e.target.value.trim() !== k.name && run({ type: 'setShapeKey', id, index: i, name: e.target.value.trim().slice(0, 64) })}
+                  onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                />
+                {i > 0 && (
+                  <>
+                    <input
+                      type="range"
+                      className="sk-slider"
+                      aria-label={`${k.name} value`}
+                      min={k.min ?? 0}
+                      max={k.max ?? 1}
+                      step={0.01}
+                      value={valueNow(i)}
+                      onChange={(e) => setValue(i, Number(e.target.value), true)}
+                      onPointerUp={() => store.commitPreview()}
+                      onKeyUp={() => store.commitPreview()}
+                      onBlur={() => store.commitPreview()}
+                    />
+                    <span className="sk-val">{valueNow(i).toFixed(2)}</span>
+                    <button
+                      className={`sk-key${keyed ? ' on' : tracks?.[k.name]?.length ? ' anim' : ''}`}
+                      aria-label={`Keyframe ${k.name}`}
+                      title={keyed ? 'Remove the keyframe at this frame' : 'Insert a keyframe at this frame'}
+                      onClick={() => run(keyed ? { type: 'unkeyShape', id, key: k.name, frame } : { type: 'keyShape', id, key: k.name, frame, value: valueNow(i) })}
+                    >
+                      ◆
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div className="prop-actions">
+        <button className="btn" data-testid="sk-add" title="Add a shape key (the first one is the Basis)" onClick={() => run({ type: 'addShapeKey', id })}>
+          + {sk ? 'Shape key' : 'Add Basis'}
+        </button>
+        {sk && sk.keys.length > 1 && (
+          <button className="btn" data-testid="sk-from-mix" title="A new key from the current mix of keys" onClick={() => run({ type: 'addShapeKey', id, fromMix: true })}>
+            New from Mix
+          </button>
+        )}
+        {sk && (
+          <button className="btn" data-testid="sk-remove" title={sk.active === 0 ? 'Remove all shape keys (keeps the Basis shape)' : 'Remove the active shape key'} onClick={() => run({ type: 'removeShapeKey', id, index: sk.active })}>
+            − {sk.active === 0 ? 'All' : 'Key'}
+          </button>
+        )}
+      </div>
+      <p className="prop-hint">
+        {!sk
+          ? 'Shape keys store other shapes of this mesh (a smile, a blink, a squash) and blend them in with a slider you can animate.'
+          : sk.active === 0
+            ? 'Editing the Basis: changes here move every key with it. Pick a key above, then Tab (or Sculpt) to shape it.'
+            : editing
+              ? `Editing “${sk.keys[sk.active].name}”: move points to make this shape. Adding or removing points needs the Basis.`
+              : `Tab (or Sculpt) to shape “${sk.keys[sk.active].name}”. Slide its value to blend it in; ◆ keyframes the value.`}
+      </p>
+    </Section>
+  );
+}
+
 function CurveSection({ id }: { id: string }) {
   const { store } = useCtx();
   const c = useApp((s) => s.doc.objects[id]?.modifiers?.curve);

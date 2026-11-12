@@ -13,7 +13,8 @@ import { bakePhysics, freePhysics } from './physicsUi';
 import { FIELD_PRESETS } from '../core/fields';
 import { canQuick, quickExplode, quickFloat, quickParticles } from './quickEffects';
 import { canEdit, enterEdit, exitEdit, runMeshOp, selectCmd, setSelectMode, setSmooth, setSubdivision, toggleEdit, togglePose } from './editing';
-import { poseAt } from '../core/rig';
+import { currentWeights, poseAt } from '../core/rig';
+import { humanWeights } from '../core/humans';
 import { subtree } from '../core/commands';
 import { catmullClark } from '../core/mesh/modifiers';
 import type { CameraMoveKind } from '../core/cameraMoves';
@@ -307,6 +308,7 @@ export const actions = {
     run: (c) => {
       const st = c.store.getState();
       if (st.sculpt) return c.store.setSculpt(null);
+      if (st.weightPaint) c.store.setWeightPaint(null);
       const o = st.selection ? st.doc.objects[st.selection] : null;
       if (!o) return c.store.notify('Select an object to sculpt');
       if (o.skin) return c.store.notify('Skinned characters can’t be sculpted yet');
@@ -318,6 +320,34 @@ export const actions = {
       c.store.setSculpt(o.id);
       const n = c.store.getState().doc.objects[o.id]?.mesh?.vertices.length ?? 0;
       c.store.notify(n < 3000 ? `Sculpt Mode. Only ${n} points: tap “Add detail” for smoother sculpting` : 'Sculpt Mode: drag on the model to sculpt, drag off it to turn the view');
+    },
+  },
+  'mode.weight': {
+    id: 'mode.weight',
+    label: 'Toggle Weight Paint',
+    enabled: (c) => !!c.store.getState().weightPaint || editable(c),
+    run: (c) => {
+      const st = c.store.getState();
+      if (st.weightPaint) return c.store.setWeightPaint(null);
+      const o = st.selection ? st.doc.objects[st.selection] : null;
+      if (!o) return c.store.notify('Select a mesh to weight paint');
+      try {
+        if (o.type !== 'mesh') c.store.dispatch({ type: 'convertToMesh', id: o.id }, { select: false });
+        const cur = c.store.getState().doc;
+        const obj = cur.objects[o.id];
+        const arm = obj.skin ? cur.objects[obj.skin.armature]?.armature : undefined;
+        const boneGroups = !!arm && !!obj.vertexGroups?.groups.some((g) => arm.bones.some((b) => b.name === g.name));
+        if (arm && !boneGroups) {
+          // Start from the weights the character uses now (Blender: Automatic Weights), one group per bone.
+          const w = currentWeights(cur, o.id, st.frame, obj.skin?.weights ? humanWeights(obj.skin.weights) : null);
+          if (w) c.store.dispatch({ type: 'groupsFromWeights', id: o.id, weights: w }, { select: false });
+        } else if (!obj.vertexGroups) c.store.dispatch({ type: 'addVertexGroup', id: o.id }, { select: false });
+      } catch (e) {
+        return c.store.notify(e instanceof Error ? e.message : String(e));
+      }
+      c.store.setWeightPaint(o.id);
+      const vg = c.store.getState().doc.objects[o.id].vertexGroups;
+      c.store.notify(`Weight Paint: painting “${vg?.groups[vg.active]?.name}”. Red = 1 (fully moved by it), blue = 0`);
     },
   },
   'sculpt.detail': {

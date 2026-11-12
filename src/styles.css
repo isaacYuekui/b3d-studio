@@ -663,3 +663,16 @@ button.vp-mode.posing { background: #1f4f7a; border-color: #4fb0ff; color: #fff;
 .shed-add { display: flex; flex-wrap: wrap; gap: 8px; background: #2b2b2b; padding: 6px; border-radius: 4px; }
 .shed-add-group { display: flex; flex-direction: column; gap: 3px; }
 .shed-add-group b { font-size: 11px; color: var(--text-dim); }
+
+/* Shape keys list (Properties → Mesh) */
+.sk-list { display: flex; flex-direction: column; gap: 2px; padding: 4px 6px; }
+.sk-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px; min-height: 32px; }
+.sk-row.active { background: rgba(70, 120, 200, 0.28); }
+.sk-row input[type='radio'] { margin: 0; width: 16px; height: 16px; flex: none; }
+.sk-name { flex: 1 1 70px; min-width: 50px; background: transparent; border: 1px solid transparent; color: inherit; font: inherit; padding: 3px 4px; border-radius: 3px; }
+.sk-name:focus { border-color: #4a7bd0; background: rgba(0, 0, 0, 0.25); outline: none; }
+.sk-slider { flex: 1 1 80px; min-width: 60px; accent-color: #4a7bd0; }
+.sk-val { width: 34px; text-align: right; font-variant-numeric: tabular-nums; opacity: 0.85; }
+.sk-key { flex: none; width: 28px; height: 28px; border: none; background: transparent; color: #8a8a8a; font-size: 14px; border-radius: 4px; cursor: pointer; }
+.sk-key.anim { color: #b9c94a; }
+.sk-key.on { color: #f0c330; }

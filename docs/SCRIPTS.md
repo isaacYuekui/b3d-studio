@@ -572,3 +572,41 @@ A curve is a mesh object whose vertices are the control points (no faces) with a
 - `setCameraFollow`: `look` is `"ahead"` (along the path) or an object id to keep in view; `height` lifts the camera above the path.
 - `editCurve`: `{"type":"editCurve","id":"road","op":"extrude"|"subdivide"|"delete","points":[3]}`.
 - `applyModifiers` turns the tube into a real mesh.
+
+## Shape keys (v3.21)
+
+```json
+{"type":"batch","commands":[
+  {"type":"add","primitive":"sphere","id":"ball"},
+  {"type":"addShapeKey","id":"ball"},
+  {"type":"addShapeKey","id":"ball","name":"Squash"},
+  {"type":"editMesh","id":"ball","steps":[{"op":"scale","select":{"mode":"vert"},"by":[1.3,1.3,0.6]}]},
+  {"type":"setActiveShapeKey","id":"ball","index":0},
+  {"type":"keyShape","id":"ball","key":"Squash","frame":1,"value":0},
+  {"type":"keyShape","id":"ball","key":"Squash","frame":12,"value":1}
+]}
+```
+
+- The first `addShapeKey` makes the Basis; each later one adds a key (a copy of the Basis, or `fromMix: true`) and makes it active.
+- While a key is active, mesh edits (`editMesh`, `setMesh`, sculpting) change that key; on the Basis they move every key with it. Adding or removing points is refused unless the Basis is active.
+- `setShapeKey`: `{id, index, name?, value?, min?, max?, mute?}`; renaming keeps its keyframes.
+- `removeShapeKey` with `index: 0` removes them all (the mesh keeps the Basis shape).
+- `keyShape` `{id, key, frame, value?, easing?}` / `unkeyShape` `{id, key, frame}`; saved under `animation.shapes`.
+
+## Vertex groups and weights (v3.22)
+
+A vertex group is one weight (0..1) per mesh point. On a mesh skinned to an armature (`setSkin`), groups named after deforming bones replace the automatic weights: each point follows its (up to 4) heaviest bones, normalised. Points with no weight in any bone group don't move.
+
+```json
+{"type":"batch","commands":[
+  {"type":"addVertexGroup","id":"pole","name":"root"},
+  {"type":"addVertexGroup","id":"pole","name":"top"},
+  {"type":"setWeights","id":"pole","group":"root","verts":[0,1,2,3],"value":1},
+  {"type":"setWeights","id":"pole","group":"top","verts":[4,5,6,7],"value":1}
+]}
+```
+
+- `setWeights`: `{id, group, weights}` (one per point) or `{id, group, verts, value}`.
+- `setVertexGroup` `{id, index, name}` renames, `setActiveVertexGroup` picks the one Weight Paint paints, `removeVertexGroup` `{id, index}`.
+- `groupsFromWeights` `{id, weights: {bones, w}}` turns skinning weights into groups (what Weight Paint does the first time).
+- Adding geometry keeps weights: new points take the weight of the old point at the same place, or the nearest.

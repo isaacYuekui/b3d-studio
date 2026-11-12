@@ -30,6 +30,15 @@ export interface SculptSettings {
   symmetry: boolean;
 }
 
+/** Weight Paint brush (Blender's Draw / Add / Subtract / Blur, weight 0..1). */
+export interface WeightSettings {
+  mode: import('./vertexGroups').WeightMode;
+  weight: number;
+  radius: number;
+  strength: number;
+  symmetry: boolean;
+}
+
 export const QUALITIES = ['fast', 'balanced', 'best'] as const;
 export type Quality = (typeof QUALITIES)[number];
 const QUALITY_KEY = 'b3d.quality';
@@ -86,6 +95,9 @@ export interface AppState {
   sculpt: SculptState | null;
   /** Brush settings kept between sculpt sessions (per device). */
   sculptBrush: SculptSettings;
+  /** Weight Paint mode on a mesh (paints its active vertex group). */
+  weightPaint: { id: string } | null;
+  weightBrush: WeightSettings;
   /** Snap moves / rotations / scales to increments (0.25 m, 15°, 0.1). Saved per device. */
   snap: boolean;
   /** Edit mode: proportional editing, nearby vertices follow within `radius` metres. Saved per device. */
@@ -139,6 +151,8 @@ export class Store {
       xray: false,
       snap: loadPref('b3d.snap', false),
       sculpt: null,
+      weightPaint: null,
+      weightBrush: loadPref('b3d.weight', { mode: 'draw', weight: 1, radius: 50, strength: 0.5, symmetry: true } as WeightSettings),
       sculptBrush: loadPref('b3d.sculpt', { brush: 'draw', radius: 60, strength: 0.5, invert: false, symmetry: true } as SculptSettings),
       proportional: loadPref('b3d.proportional', { on: false, radius: 1 }),
       addSelect: false,
@@ -290,7 +304,7 @@ export class Store {
   reset(doc: SceneDoc, notice?: string) {
     this.past = [];
     this.future = [];
-    this.set({ doc, selection: null, edit: null, pose: null, activeCollection: null, canUndo: false, canRedo: false, notice: notice ?? null });
+    this.set({ doc, selection: null, edit: null, pose: null, sculpt: null, weightPaint: null, activeCollection: null, canUndo: false, canRedo: false, notice: notice ?? null });
   }
 
   private fixSel(doc: SceneDoc) {
@@ -303,6 +317,7 @@ export class Store {
     // Picking another object (Outliner) leaves edit mode, like Blender.
     if (this.state.edit && id !== this.state.edit.id) this.set({ edit: null, boxMode: false });
     if (this.state.sculpt && id !== this.state.sculpt.id) this.set({ sculpt: null });
+    if (this.state.weightPaint && id !== this.state.weightPaint.id) this.set({ weightPaint: null });
     if (this.state.pose && id !== this.state.pose.id) this.set({ pose: null });
     if (id !== this.state.selection) this.set({ selection: id });
   }
@@ -356,11 +371,24 @@ export class Store {
 
   /** Enter / leave edit mode, or change the edit selection / select mode. */
   setEdit(edit: EditState | null) {
-    this.set({ edit, ...(edit ? { sculpt: null } : {}) });
+    this.set({ edit, ...(edit ? { sculpt: null, weightPaint: null } : {}) });
   }
 
   setSculpt(id: string | null) {
-    this.set({ sculpt: id ? { id } : null, ...(id ? { edit: null, pose: null, selection: id } : {}) });
+    this.set({ sculpt: id ? { id } : null, ...(id ? { edit: null, pose: null, weightPaint: null, selection: id } : {}) });
+  }
+
+  setWeightPaint(id: string | null) {
+    this.set({ weightPaint: id ? { id } : null, ...(id ? { edit: null, pose: null, sculpt: null, selection: id } : {}) });
+  }
+
+  setWeightBrush(patch: Partial<WeightSettings>) {
+    const v = { ...this.state.weightBrush, ...patch };
+    v.radius = Math.min(400, Math.max(5, v.radius));
+    v.strength = Math.min(1, Math.max(0.01, v.strength));
+    v.weight = Math.min(1, Math.max(0, v.weight));
+    savePref('b3d.weight', v);
+    this.set({ weightBrush: v });
   }
 
   setSculptBrush(patch: Partial<SculptSettings>) {
@@ -387,7 +415,7 @@ export class Store {
   }
 
   setPose(pose: AppState['pose']) {
-    this.set({ pose, ...(pose ? { selection: pose.id, edit: null } : {}) });
+    this.set({ pose, ...(pose ? { selection: pose.id, edit: null, sculpt: null, weightPaint: null } : {}) });
   }
 
   setAddSelect(addSelect: boolean) {

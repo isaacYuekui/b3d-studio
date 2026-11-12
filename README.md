@@ -5,6 +5,21 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Weight Paint and vertex groups (v3.22)
+
+- **Weights** (viewport header, next to Sculpt) enters **Weight Paint** like Blender's: the mesh shows its active vertex group from blue (0) to red (1)
+- On a skinned character the first visit turns the automatic weights into one group per bone, so you start from what it does now; groups named after bones then decide how much each bone moves each part
+- Brushes: **Draw** (towards a weight), **Add**, **Subtract**, **Blur**, with size, strength and X symmetry; each stroke is one undo step
+- **Properties → Mesh → Vertex Groups**: add, rename, pick, remove groups
+- Scripts: `addVertexGroup`, `setVertexGroup`, `setActiveVertexGroup`, `removeVertexGroup`, `setWeights`, `groupsFromWeights`
+
+## Shape keys (v3.21)
+
+- **Properties → Mesh → Shape Keys**, like Blender's: **+** makes the **Basis**, then more keys (a smile, a blink, a squash); **New from Mix** saves the current blend as a key
+- Pick a key, **Tab** (or Sculpt) and move points: that changes only this key. Editing the Basis moves every key with it; adding or removing points needs the Basis
+- Each key's **value** slider blends it in; **◆** keyframes the value at the current frame (changing an animated value keys it), so shapes play back in videos
+- Scripts: `addShapeKey`, `setShapeKey`, `setActiveShapeKey`, `removeShapeKey`, `keyShape`, `unkeyShape`
+
 ## Curves and Follow Path (v3.20)
 
 - **Add → Curve**: Bezier, Circle and Path. A curve is a smooth line through its points (auto handles), drawn as a round tube; set **Bevel depth**, **Resolution**, **Sides** and **Cyclic** on the Data tab, or **Convert to Mesh**
