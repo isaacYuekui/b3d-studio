@@ -55,6 +55,8 @@ export const DEFAULT_RIGID: RigidBody = { type: 'active', shape: 'auto', mass: 1
 export const GRAVITY = 9.81;
 /** Physics steps per second, fixed whatever the frame rate (Blender: 10 substeps at 24 fps). */
 export const STEP_HZ = 240;
+/** Most a body's speed can grow in one step (m/s) from contacts alone (≈ 240 m/s², 25 g). */
+const SPEED_GAIN = 1;
 
 export class PhysicsError extends Error {}
 
@@ -95,6 +97,12 @@ function hullShape(Cn: Cannon, geo: MeshData, s: Vec3): CannonNS.ConvexPolyhedro
   // corners on a straight line removed and each face turned outwards: cannon reads a face's
   // normal from its first corners.
   const cen = [0, 1, 2].map((k) => pts.reduce((a, p) => a + p[k], 0) / pts.length);
+  // A small collision margin: the hull is pulled in by 1% (at most 2 cm) all round, so pieces
+  // that start out touching (the cells of a fracture) don't count as overlapping and get flung.
+  let size = 0;
+  for (const p of pts) size = Math.max(size, Math.abs(p[0] - cen[0]), Math.abs(p[1] - cen[1]), Math.abs(p[2] - cen[2]));
+  const k = size > 0 ? 1 - Math.min(0.01 * size, 0.02) / size : 1;
+  pts = pts.map((p) => [cen[0] + (p[0] - cen[0]) * k, cen[1] + (p[1] - cen[1]) * k, cen[2] + (p[2] - cen[2]) * k] as Vec3);
   const cross = (o: Vec3, a: Vec3, b: Vec3) => {
     const u = [a[0] - o[0], a[1] - o[1], a[2] - o[2]], v = [b[0] - o[0], b[1] - o[1], b[2] - o[2]];
     return [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
@@ -219,6 +227,7 @@ export function simulate(doc: SceneDoc, start: number, end: number, fps: number)
   for (let f = start + 1; f <= end; f++) {
     // Force fields push the active bodies during this frame (Blender's Force Field effectors).
     const fields = hasFields ? activeFields(doc, f) : [];
+    const pushed = new Set<string>();
     for (let i = 0; i < sub; i++) {
       // Animated passive bodies follow their keys; their velocity is what pushes others.
       for (const m of movers) {
@@ -242,10 +251,22 @@ export function simulate(doc: SceneDoc, start: number, end: number, fps: number)
           const p = a.body.position;
           const acc = fieldAcceleration(fields, [p.x, p.y, p.z]);
           if (!acc[0] && !acc[1] && !acc[2]) continue;
+          pushed.add(a.id);
           if (a.body.sleepState === C.Body.SLEEPING) a.body.wakeUp();
           a.body.applyForce(new C.Vec3(acc[0] * a.body.mass, acc[1] * a.body.mass, acc[2] * a.body.mass));
         }
+      const before = actives.map((a) => a.body.velocity.length());
       world.step(dt);
+      // Cannon can resolve a deep box-on-box overlap with a huge kick that flings light debris
+      // into the air. Real knocks don't add speed that fast, so a body's speed may grow by at
+      // most SPEED_GAIN per step — unless a force field is pushing it (explosions are meant to).
+      actives.forEach((a, j) => {
+        const v = a.body.velocity;
+        const len = v.length();
+        const max = before[j] + SPEED_GAIN;
+        if (len <= max || (fields.length && pushed.has(a.id))) return;
+        v.scale(max / len, v);
+      });
     }
     record(f);
   }

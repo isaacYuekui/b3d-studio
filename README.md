@@ -10,6 +10,7 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 - **Render video** now adds a **soundtrack made from the scene**, like a Foley artist watching the cut: explosion fields boom (with debris landing after), camera shakes rumble, a giant wave roars louder as it reaches the camera, fire crackles, a flying meteor whooshes, rain hisses, stormy seas wash, and baked physics pieces crash where they land
 - The dialog lists what it will hear; **Save sound (.wav)** gives the soundtrack on its own for editing apps (and for browsers that can't put sound in the MP4 — Safari needs iOS / iPadOS / macOS 26 or newer for that)
 - Synthesised on the device (no sound files, no servers), the same every time for the same scene
+- Physics fix: broken pieces settling in a pile no longer get flung into the air now and then (contact kicks are capped; force fields still blast at full strength)
 - New example: **Volcano eruption** — a night eruption above a village with lit windows: lava channels glowing on the cone (one mesh, rock + lava material slots), a tremor, a blast with a light flash, a fire fountain, lava bombs and an ash column — and its own rumble, boom and fire sounds when rendered
 
 ## Material slots (v3.15)
