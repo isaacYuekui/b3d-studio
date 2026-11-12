@@ -1,11 +1,12 @@
 // Rigid body bake / free, shared by the Animation menu and the Physics panels.
+import { isShown } from '../core/collections';
 import type { Store } from '../core/store';
 import { animationOf } from '../core/animation';
 import { loadPhysics, rigidProblem } from '../core/physics';
 
 export async function bakePhysics(store: Store) {
   const doc = store.getState().doc;
-  const actives = Object.values(doc.objects).filter((o) => o.rigid?.type === 'active' && o.visible);
+  const actives = Object.values(doc.objects).filter((o) => o.rigid?.type === 'active' && isShown(doc, o));
   if (!actives.length) {
     store.notify('Nothing to simulate: select an object and turn on Physics → Rigid body');
     return;

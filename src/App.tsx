@@ -9,7 +9,7 @@ import type { OpenMenu } from './ui/TopBar';
 import { Menu, ADD_ITEMS } from './ui/Menu';
 import type { MenuItem } from './ui/Menu';
 import { ViewportPanel } from './ui/ViewportPanel';
-import { Outliner } from './ui/Outliner';
+import { MoveToCollectionMenu, Outliner } from './ui/Outliner';
 import { Properties } from './ui/Properties';
 import { Timeline } from './ui/Timeline';
 import { Help } from './ui/Help';
@@ -102,7 +102,7 @@ function StatusBar() {
   return (
     <footer className="statusbar" aria-live="polite">
       <span className="status-notice">{notice ?? `Tool: ${tool[0].toUpperCase()}${tool.slice(1)}`}</span>
-      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v3.16.1</span>
+      <span className="muted">{count} objects · autosaves in this browser · B3D Studio v3.17</span>
     </footer>
   );
 }
@@ -294,6 +294,7 @@ export function App() {
           {script && <ScriptDialog onClose={() => setScript(false)} />}
           {library && <LibraryDialog onClose={() => setLibrary(false)} />}
           {video && <VideoDialog onClose={() => setVideo(false)} />}
+          <MoveToCollectionMenu />
           {ask && (
             <div className="modal-backdrop" onClick={() => answer(false)}>
               <div className="modal confirm" role="alertdialog" aria-label="Confirm" onClick={(e) => e.stopPropagation()}>

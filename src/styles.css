@@ -287,6 +287,18 @@ button.vp-mode.editing { background: #7a4a12; border-color: var(--select); color
 .ol-name { overflow: hidden; text-overflow: ellipsis; }
 .ol-rename { flex: 1; min-width: 0; background: var(--bg-field); border: 1px solid var(--accent); border-radius: 3px; padding: 1px 4px; user-select: text; }
 .ol-empty { padding: 10px 14px; color: var(--text-dim); }
+.ol-collection.active, .ol-coll-row.active { box-shadow: inset 2px 0 0 var(--accent); }
+.ol-coll-row { color: var(--text); }
+.ol-coll-row.hidden .ol-name { opacity: .45; }
+.ol-coll-icon.coll { color: #c8c8c8; font-size: 13px; }
+.ol-count { color: var(--text-dim); font-size: 11px; }
+.ol-cam { margin-left: 0; }
+.ol-cam.off { opacity: .55; }
+.ol-add { font-size: 16px; line-height: 1; }
+.ol-menu-catch { position: fixed; inset: 0; z-index: 49; }
+.move-coll { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: #0006; }
+.move-coll-menu { position: static !important; min-width: 240px; }
+.menu-item.current span { color: var(--select); }
 
 /* ---------- properties ---------- */
 .properties { padding-bottom: 12px; }

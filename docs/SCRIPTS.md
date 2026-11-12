@@ -401,6 +401,23 @@ sound by building the events themselves.
 
 Loudness follows strength, size and distance to the scene camera.
 
+## Collections (v3.17)
+
+```json
+{"type":"addCollection","id":"town","name":"Town"}
+{"type":"add","primitive":"cube","id":"house","collection":"town"}
+{"type":"moveToCollection","ids":["car"],"collection":"town"}
+{"type":"setCollection","id":"town","visible":false,"render":true,"name":"Old town"}
+{"type":"removeCollection","id":"town","deleteObjects":false}
+```
+
+- Objects belong to one collection (or none = the Scene Collection); `moveToCollection` takes
+  children along; `collection: null` moves back to the Scene Collection.
+- `visible: false` hides the collection in the viewport and switches off its physics, fields and
+  particles; `render: false` keeps it in the viewport but leaves it out of videos.
+- Removing a collection moves its objects to the Scene Collection, or deletes them with
+  `deleteObjects: true`.
+
 ## Material slots (v3.15)
 
 ```json

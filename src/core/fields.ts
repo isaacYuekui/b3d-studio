@@ -3,6 +3,7 @@
 // (swirls around it). They act on rigid bodies during the physics bake; give a short frame window
 // and a big strength for an explosion.
 
+import { isShown } from './collections';
 import { transformAt } from './animation';
 import { apply as applyM4, rotEuler } from './rig';
 import type { SceneDoc, Vec3 } from './types';
@@ -59,7 +60,7 @@ export function activeFields(doc: SceneDoc, frame: number): { field: ForceField;
   for (const id of doc.order) {
     const o = doc.objects[id];
     const f = o?.field;
-    if (!f || !o.visible) continue;
+    if (!f || !isShown(doc, o)) continue;
     if (f.start !== undefined && frame < f.start) continue;
     if (f.end !== undefined && frame > f.end) continue;
     const t = transformAt(doc, id, frame) ?? o.transform;

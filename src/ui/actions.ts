@@ -427,6 +427,27 @@ export const actions = {
       if (id) c.store.dispatch({ type: 'applyModifiers', id }, { select: false });
     },
   },
+  'object.moveToCollection': {
+    id: 'object.moveToCollection',
+    label: 'Move to Collection…',
+    shortcut: 'M',
+    enabled: (c) => hasSel(c) && !editing(c),
+    run: (c) => c.store.setMoveMenu(true),
+  },
+  'object.newCollection': {
+    id: 'object.newCollection',
+    label: 'New Collection',
+    run: (c) => {
+      const id = `coll-${Math.random().toString(36).slice(2, 8)}`;
+      const sel = c.store.getState().selection;
+      // With an object selected it moves into the new collection (Blender: M → New Collection).
+      c.store.dispatch(
+        { type: 'batch', commands: [{ type: 'addCollection', id }, ...(sel && !c.store.getState().edit ? [{ type: 'moveToCollection' as const, ids: [sel], collection: id }] : [])] },
+        { select: false },
+      );
+      c.store.setActiveCollection(id);
+    },
+  },
   'edit.hide': {
     id: 'edit.hide',
     label: 'Hide Selected',
@@ -851,6 +872,7 @@ export function shortcutFor(e: KeyboardEvent, editMode = false): ActionId | null
     case 'Delete':
     case 'Backspace': return 'edit.delete';
     case 'KeyH': return 'edit.hide';
+    case 'KeyM': return 'object.moveToCollection';
     case 'Escape': return 'edit.deselect';
     case 'Digit1':
     case 'Numpad1': return 'view.front';

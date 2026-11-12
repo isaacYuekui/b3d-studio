@@ -3,6 +3,7 @@
 // It never mutates the doc directly: viewport edits (gizmo drags) are dispatched as commands.
 
 // Deep imports keep the bundle much smaller than importing '@babylonjs/core' root.
+import { isRendered, isShown } from '../core/collections';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -526,7 +527,7 @@ export class Viewport {
     for (const id of doc.order) {
       const o = doc.objects[id];
       const e = this.entries.get(id);
-      if (!o?.particles || !o.visible) continue;
+      if (!o?.particles || !this.shownNow(o)) continue;
       live.add(id);
       const s = o.particles;
       const key = `${s.shape}|${s.color}|${s.glow}`;
@@ -678,7 +679,7 @@ export class Viewport {
     for (const [id, e] of this.entries) {
       const o = doc.objects[id];
       const surfaces = e.meshes;
-      if (!on || !o || !o.visible) {
+      if (!on || !o || !isShown(doc, o)) {
         for (const m of surfaces) m.visibility = 1;
         continue;
       }
@@ -757,7 +758,7 @@ export class Viewport {
           e.pick.parent = e.node;
           e.bonesKey = key;
         }
-        e.pick?.setEnabled(!rendered && o.visible);
+        e.pick?.setEnabled(!rendered && isShown(doc, o));
       }
     }
     // Skinned meshes
@@ -1193,6 +1194,9 @@ export class Viewport {
 
   private syncDoc(doc: SceneDoc) {
     let structure = false;
+    const collectionsChanged = doc.collections !== this.lastCollections;
+    this.lastCollections = doc.collections;
+    this.docNow = doc;
     for (const [id, e] of this.entries) {
       if (!doc.objects[id]) {
         this.disposeEntry(e);
@@ -1219,7 +1223,11 @@ export class Viewport {
         this.entries.set(id, e);
         structure = true;
       }
-      if (e.last === o) continue;
+      if (e.last === o) {
+        // A collection hidden / shown: the object itself didn't change.
+        if (collectionsChanged) e.node.setEnabled(this.shownNow(o));
+        continue;
+      }
       this.updateEntry(e, o, e.last);
       if (o.terrain && e.node instanceof Mesh && (e.last?.terrain !== o.terrain || e.last?.mesh !== o.mesh)) this.applyTerrain(e, o);
       if (o.type === 'scatter' && e.last && e.last.scatter !== o.scatter) this.applyScatterItems(e, o);
@@ -1671,10 +1679,31 @@ export class Viewport {
     }
   }
 
+  private lastCollections: SceneDoc['collections'];
+  private docNow: SceneDoc | null = null;
+  /** While rendering a video: objects in collections left out of renders. */
+  private renderOnly = false;
+
+  /** Videos leave out collections whose camera is off (and put them back after). */
+  private setRenderOnly(on: boolean) {
+    this.renderOnly = on;
+    const doc = this.store.getState().doc;
+    for (const [id, e] of this.entries) {
+      const o = doc.objects[id];
+      if (o) e.node.setEnabled(this.shownNow(o));
+    }
+  }
+
+  /** Whether an object is drawn now (its own Hide, its collection's eye — and its camera, in videos). */
+  private shownNow(o: SceneObject): boolean {
+    const doc = this.docNow ?? this.store.getState().doc;
+    return this.renderOnly ? isRendered(doc, o) : isShown(doc, o);
+  }
+
   private updateEntry(e: Entry, o: SceneObject, prev?: SceneObject) {
     const n = e.node;
     n.name = o.name;
-    n.setEnabled(o.visible);
+    n.setEnabled(this.shownNow(o));
     if (!(this.dragging && o.id === this.store.getState().selection)) this.applyTransform(n, o);
 
     if (e.material && o.material !== prev?.material) this.applyMaterial(e.material, o.material, prev?.material);
@@ -2188,6 +2217,7 @@ export class Viewport {
     // Videos always render at Best (soft shadows, full AO and bloom), whatever this device's setting.
     this.recording = true;
     this.forceBest = true;
+    this.setRenderOnly(true);
     this.sync(this.store.getState());
     const hasCamera = !!st0.doc.camera || (st0.doc.animation?.camera.length ?? 0) > 0;
 
@@ -2261,6 +2291,7 @@ export class Viewport {
     } finally {
       this.forceBest = false;
       this.recording = false;
+      this.setRenderOnly(false);
       this.sync(this.store.getState());
       this.engine.setHardwareScalingLevel(restore.scaling);
       this.engine.resize();

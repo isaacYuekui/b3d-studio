@@ -96,6 +96,10 @@ export interface AppState {
   boxMode: boolean;
   /** Pose Mode on an armature, with the selected bone. */
   pose: { id: string; bone: string | null } | null;
+  /** Collection new objects go into (null = Scene Collection), like Blender's active collection. */
+  activeCollection: string | null;
+  /** The Move to Collection (M) popup is open. */
+  moveMenu: boolean;
 }
 
 interface Snapshot {
@@ -140,6 +144,8 @@ export class Store {
       addSelect: false,
       boxMode: false,
       pose: null,
+      activeCollection: null,
+      moveMenu: false,
     };
   }
 
@@ -182,7 +188,9 @@ export class Store {
   dispatch(cmd: Command, opts: { select?: boolean } = {}): string[] {
     this.commitPreview();
     try {
-      const { doc, created } = applyCommand(this.state.doc, cmd, this.idGen);
+      const r = applyCommand(this.state.doc, cmd, this.idGen);
+      const { created } = r;
+      const doc = this.intoActiveCollection(r.doc, created);
       if (doc === this.state.doc) return created;
       this.pushPast(this.snap());
       let selection = this.state.selection;
@@ -194,6 +202,25 @@ export class Store {
       this.set({ notice: e instanceof Error ? e.message : String(e) });
       return [];
     }
+  }
+
+  /** New objects without a collection go into the active one (same undo step). */
+  private intoActiveCollection(doc: SceneDoc, created: string[]): SceneDoc {
+    const coll = this.state.activeCollection;
+    if (!coll || !created.length || !doc.collections?.some((c) => c.id === coll)) return doc;
+    const fresh = created.filter((id) => doc.objects[id] && !doc.objects[id].collection);
+    if (!fresh.length) return doc;
+    const objects = { ...doc.objects };
+    for (const id of fresh) objects[id] = { ...objects[id], collection: coll };
+    return { ...doc, objects };
+  }
+
+  setActiveCollection(id: string | null) {
+    this.set({ activeCollection: id });
+  }
+
+  setMoveMenu(open: boolean) {
+    this.set({ moveMenu: open });
   }
 
   // ---- transient edits (live preview while scrubbing a field) -------------
@@ -263,7 +290,7 @@ export class Store {
   reset(doc: SceneDoc, notice?: string) {
     this.past = [];
     this.future = [];
-    this.set({ doc, selection: null, edit: null, pose: null, canUndo: false, canRedo: false, notice: notice ?? null });
+    this.set({ doc, selection: null, edit: null, pose: null, activeCollection: null, canUndo: false, canRedo: false, notice: notice ?? null });
   }
 
   private fixSel(doc: SceneDoc) {

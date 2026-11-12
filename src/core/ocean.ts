@@ -2,6 +2,7 @@
 // by a few Gerstner waves (rolling crests, flatter troughs). Worked out from the frame time, so
 // every frame of a video is exact and scrubbing matches playback.
 
+import { isShown } from './collections';
 import type { SceneDoc, Transform, Vec3 } from './types';
 import { animationOf, transformAt } from './animation';
 
@@ -105,7 +106,7 @@ export function floatTransform(doc: SceneDoc, id: string, frame: number): Transf
   const t = frame / animationOf(doc).fps;
   for (const wid of doc.order) {
     const w = doc.objects[wid];
-    if (!w?.water || !w.mesh?.vertices.length || !w.visible || wid === id) continue;
+    if (!w?.water || !w.mesh?.vertices.length || !isShown(doc, w) || wid === id) continue;
     const wt = transformAt(doc, wid, frame) ?? w.transform;
     const sx = wt.scale[0] || 1, sy = wt.scale[1] || 1;
     const lx = (base.position[0] - wt.position[0]) / sx, ly = (base.position[1] - wt.position[1]) / sy;

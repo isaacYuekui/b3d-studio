@@ -18,6 +18,8 @@ import { applyModifiers } from './mesh/modifiers';
 import { ALIGNS, DEFAULT_TEXT, FONTS, MAX_TEXT_LENGTH, textMesh } from './text';
 import { DEFAULT_RIGID, RIGID_SHAPES, RIGID_TYPES, simulate } from './physics';
 import { fracturePieces } from './fracture';
+import { MAX_COLLECTIONS, collectionById, collectionsOf, uniqueCollectionName, withDescendants } from './collections';
+import type { Collection } from './collections';
 import { MAX_SLOTS, slotOf, surfaceSlots, transferMaterialIndex, usesSlots, validIndex, withMaterialIndex } from './mesh/materialIndex';
 import { DEFAULT_PARTICLES, PARTICLE_EMIT, PARTICLE_GROUND, PARTICLE_SHAPES } from './particles';
 import type { ParticleSettings } from './particles';
@@ -65,6 +67,8 @@ export interface AddCommand {
   /** Shorthand for material.baseColor. */
   color?: string;
   material?: Partial<Material>;
+  /** Collection to put it in (none = Scene Collection). */
+  collection?: string;
   /** More materials for mesh faces (mesh.materialIndex picks them: 1 = the first of these). */
   materialSlots?: Partial<Material>[];
   params?: PrimitiveParams;
@@ -92,6 +96,14 @@ export type Command =
   | { type: 'removeMaterialSlot'; id: string; slot: number }
   | { type: 'setLight'; id: string; light: Partial<LightData> }
   | { type: 'setVisible'; id: string; visible: boolean }
+  /** New collection (Outliner folder). */
+  | { type: 'addCollection'; id?: string; name?: string }
+  /** Rename / hide / leave out of renders. */
+  | { type: 'setCollection'; id: string; name?: string; visible?: boolean; render?: boolean }
+  /** Remove a collection: its objects go to the Scene Collection, or are deleted too. */
+  | { type: 'removeCollection'; id: string; deleteObjects?: boolean }
+  /** Move objects (with their children) into a collection; null = the Scene Collection (Blender: M). */
+  | { type: 'moveToCollection'; ids: string[]; collection: string | null }
   /** Replace an object's geometry. A primitive becomes an editable 'mesh' object. */
   | { type: 'setMesh'; id: string; mesh: MeshData }
   /** Turn a primitive into an editable polygon mesh (Blender topology). */
@@ -418,6 +430,7 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
           ),
           material: o.material,
           ...(slots.length ? { materialSlots: slots } : {}),
+          ...(o.collection ? { collection: o.collection } : {}),
           parentId: o.parentId,
           transform: { position: [p[0] + off[0], p[1] + off[1], p[2] + off[2]].map((x) => Math.round(x * 1e5) / 1e5) as Vec3, rotation: [...o.transform.rotation], scale: [...sc] },
         });
@@ -476,6 +489,7 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
         material: { ...DEFAULT_MATERIAL, ...(cmd.color ? { baseColor: cmd.color } : {}), ...cmd.material },
       };
       if (cmd.params) obj.params = { ...cmd.params };
+      if (cmd.collection && collectionById(doc, cmd.collection)) obj.collection = cmd.collection;
       if (cmd.materialSlots?.length) obj.materialSlots = cmd.materialSlots.map((m) => ({ ...DEFAULT_MATERIAL, ...m }));
       if (cmd.primitive === 'mesh' && cmd.mesh) obj.mesh = clone(cmd.mesh);
       if (cmd.primitive === 'light') obj.light = { ...DEFAULT_LIGHT[lightType], ...cmd.light, type: lightType };
@@ -626,6 +640,55 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
     case 'setVisible': {
       const o = requireObj(doc, cmd.id);
       return { doc: withObject(doc, { ...o, visible: cmd.visible }), created: [] };
+    }
+
+    case 'addCollection': {
+      const list = collectionsOf(doc);
+      if (list.length >= MAX_COLLECTIONS) throw new CommandError(`At most ${MAX_COLLECTIONS} collections`);
+      const id = cmd.id ?? `coll-${idGen()}`;
+      if (list.some((c) => c.id === id)) throw new CommandError(`A collection ${id} already exists`);
+      const c: Collection = { id, name: cmd.name?.trim() || uniqueCollectionName(doc), visible: true, render: true };
+      return { doc: { ...doc, collections: [...list, c] }, created: [] };
+    }
+
+    case 'setCollection': {
+      const list = collectionsOf(doc);
+      const c = list.find((x) => x.id === cmd.id);
+      if (!c) throw new CommandError(`No collection ${cmd.id}`);
+      const next: Collection = { ...c, ...(cmd.name?.trim() ? { name: cmd.name.trim() } : {}), ...(cmd.visible !== undefined ? { visible: cmd.visible } : {}), ...(cmd.render !== undefined ? { render: cmd.render } : {}) };
+      return { doc: { ...doc, collections: list.map((x) => (x.id === cmd.id ? next : x)) }, created: [] };
+    }
+
+    case 'removeCollection': {
+      const list = collectionsOf(doc);
+      if (!list.some((x) => x.id === cmd.id)) throw new CommandError(`No collection ${cmd.id}`);
+      const members = doc.order.filter((id) => doc.objects[id].collection === cmd.id);
+      let next: SceneDoc = { ...doc, collections: list.filter((x) => x.id !== cmd.id) };
+      if (!next.collections!.length) delete next.collections;
+      if (cmd.deleteObjects) next = applyCommandInner(next, { type: 'delete', ids: members }, idGen).doc;
+      else {
+        const objects = { ...next.objects };
+        for (const id of members) {
+          const { collection: _c, ...rest } = objects[id];
+          void _c;
+          objects[id] = rest;
+        }
+        next = { ...next, objects };
+      }
+      return { doc: next, created: [] };
+    }
+
+    case 'moveToCollection': {
+      if (cmd.collection && !collectionById(doc, cmd.collection)) throw new CommandError(`No collection ${cmd.collection}`);
+      const ids = withDescendants(doc, cmd.ids.filter((id) => doc.objects[id]));
+      if (!ids.length) return { doc, created: [] };
+      const objects = { ...doc.objects };
+      for (const id of ids) {
+        const { collection: _c, ...rest } = objects[id];
+        void _c;
+        objects[id] = cmd.collection ? { ...rest, collection: cmd.collection } : rest;
+      }
+      return { doc: { ...doc, objects }, created: [] };
     }
 
     case 'setMesh': {
@@ -1524,6 +1587,7 @@ export function validateSceneObject(raw: unknown): SceneObject {
     material: { ...DEFAULT_MATERIAL, ...validateMaterial(v.material, false) },
   };
   if (v.params !== undefined) obj.params = validateParams(v.params);
+  if (v.collection !== undefined) obj.collection = isId(v.collection) ? v.collection : fail(`object ${v.id}: collection invalid`);
   if (v.materialSlots !== undefined) {
     const slots = validateSlots(v.materialSlots, false);
     if (slots.length) obj.materialSlots = slots;
@@ -1591,6 +1655,17 @@ export function validateSceneDoc(v: unknown): SceneDoc {
     }
   }
   const doc: SceneDoc = { objects, order };
+  if (v.collections !== undefined) {
+    if (!Array.isArray(v.collections) || v.collections.length > MAX_COLLECTIONS) fail(`collections must be a list (up to ${MAX_COLLECTIONS})`);
+    const cols: Collection[] = [];
+    for (const c of v.collections as unknown[]) {
+      if (!isRecord(c) || !isId(c.id) || typeof c.name !== 'string' || cols.some((x) => x.id === c.id)) fail('collection needs a unique id and a name');
+      cols.push({ id: c.id, name: c.name.slice(0, 64), visible: c.visible !== false, render: c.render !== false });
+    }
+    if (cols.length) doc.collections = cols;
+  }
+  // Objects in a collection that isn't there go back to the Scene Collection.
+  for (const o of Object.values(objects)) if (o.collection && !doc.collections?.some((c) => c.id === o.collection)) delete o.collection;
   if (v.world !== undefined) doc.world = { ...DEFAULT_WORLD, ...validateWorld(v.world) };
   if (v.animation !== undefined) doc.animation = validateAnimation(v.animation, objects);
   if (v.camera !== undefined) {
@@ -1828,6 +1903,7 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (transform) cmd.transform = transform;
       if (v.material !== undefined) cmd.material = validateMaterial(v.material, true);
       if (v.materialSlots !== undefined) cmd.materialSlots = validateSlots(v.materialSlots, true);
+      if (v.collection !== undefined) cmd.collection = isId(v.collection) ? v.collection : fail('add collection must be a collection id');
       if (v.params !== undefined) cmd.params = validateParams(v.params);
       if (cmd.primitive === 'mesh') cmd.mesh = validateMeshData(v.mesh);
       if (cmd.primitive === 'model') cmd.asset = typeof v.asset === 'string' && ASSET_ID.test(v.asset) ? v.asset : fail('model needs an asset id from the library (see docs/LIBRARY.md)');
@@ -1872,6 +1948,27 @@ export function validateCommand(v: unknown, depth = 0): Command {
     case 'setVisible':
       if (!isId(v.id) || typeof v.visible !== 'boolean') fail('setVisible needs id and boolean');
       return { type: 'setVisible', id: v.id, visible: v.visible };
+    case 'addCollection': {
+      const cmd: Extract<Command, { type: 'addCollection' }> = { type: 'addCollection' };
+      if (v.id !== undefined) cmd.id = isId(v.id) ? v.id : fail('addCollection id invalid');
+      if (v.name !== undefined) cmd.name = typeof v.name === 'string' && v.name.length <= 64 ? v.name : fail('addCollection name must be text (up to 64)');
+      return cmd;
+    }
+    case 'setCollection': {
+      if (!isId(v.id)) fail('setCollection needs id');
+      const cmd: Extract<Command, { type: 'setCollection' }> = { type: 'setCollection', id: v.id };
+      if (v.name !== undefined) cmd.name = typeof v.name === 'string' && v.name.length <= 64 ? v.name : fail('setCollection name must be text (up to 64)');
+      if (v.visible !== undefined) cmd.visible = typeof v.visible === 'boolean' ? v.visible : fail('setCollection visible must be true/false');
+      if (v.render !== undefined) cmd.render = typeof v.render === 'boolean' ? v.render : fail('setCollection render must be true/false');
+      return cmd;
+    }
+    case 'removeCollection':
+      if (!isId(v.id)) fail('removeCollection needs id');
+      return { type: 'removeCollection', id: v.id, ...(v.deleteObjects === true ? { deleteObjects: true } : {}) };
+    case 'moveToCollection':
+      if (!Array.isArray(v.ids) || !v.ids.every(isId) || v.ids.length > LIMITS.objects) fail('moveToCollection ids must be a list of object ids');
+      if (v.collection !== null && !isId(v.collection)) fail('moveToCollection collection must be a collection id or null (Scene Collection)');
+      return { type: 'moveToCollection', ids: [...(v.ids as string[])], collection: (v.collection as string | null) ?? null };
     case 'setMesh':
       if (!isId(v.id)) fail('setMesh needs id');
       return { type: 'setMesh', id: v.id, mesh: validateMeshData(v.mesh) };

@@ -143,6 +143,7 @@ export const OBJECT_CONTEXT: MenuItem[] = [
   'edit.duplicate',
   'edit.delete',
   'edit.hide',
+  'object.moveToCollection',
   '-',
   'mesh.smooth',
   'mesh.flat',

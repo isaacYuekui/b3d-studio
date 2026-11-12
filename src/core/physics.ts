@@ -3,6 +3,7 @@
 // (cannon-es, MIT) and its result is written as ordinary keyframes, so it plays, scrubs and
 // renders to video like any other animation. Blender space: metres, Z up, gravity −Z.
 
+import { isShown } from './collections';
 import type * as CannonNS from 'cannon-es';
 import type { TransformKey } from './animation';
 import { transformAt } from './animation';
@@ -157,7 +158,7 @@ export function simulate(doc: SceneDoc, start: number, end: number, fps: number)
   let count = 0;
   for (const id of doc.order) {
     const o = doc.objects[id];
-    if (!o?.rigid || !o.visible || rigidProblem(o)) continue;
+    if (!o?.rigid || !isShown(doc, o) || rigidProblem(o)) continue;
     const geo = localGeometry(o);
     if (!geo?.vertices.length) continue;
     const r = o.rigid;

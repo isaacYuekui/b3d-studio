@@ -2,6 +2,7 @@
 // into dense camera keys (linear between keys) so curved paths stay smooth, with an optional
 // ease-in/out applied along the whole move. Blender coordinates (metres, Z up).
 
+import { isShown } from './collections';
 import type { SceneDoc, SceneObject, Vec3 } from './types';
 import { applyModifiers } from './mesh/modifiers';
 
@@ -140,7 +141,7 @@ export function sceneObstacles(doc: SceneDoc): Obstacle[] {
       for (const [x, y, z, , k] of o.scatter.items) out.push({ x: x + f.cx * k, y: y + f.cy * k, r: f.r * k, top: z + b.max[2] * src.transform.scale[2] * k });
       continue;
     }
-    if (o.parentId || o.visible === false) continue;
+    if (o.parentId || !isShown(doc, o)) continue;
     const b = localBounds(doc, o, kids);
     if (!b) continue;
     const { position: P, scale: S } = o.transform;
