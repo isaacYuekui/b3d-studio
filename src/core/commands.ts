@@ -18,7 +18,7 @@ import { applyModifiers } from './mesh/modifiers';
 import { ALIGNS, DEFAULT_TEXT, FONTS, MAX_TEXT_LENGTH, textMesh } from './text';
 import { DEFAULT_RIGID, RIGID_SHAPES, RIGID_TYPES, simulate } from './physics';
 import { fracturePieces } from './fracture';
-import { DEFAULT_PARTICLES, PARTICLE_GROUND, PARTICLE_SHAPES } from './particles';
+import { DEFAULT_PARTICLES, PARTICLE_EMIT, PARTICLE_GROUND, PARTICLE_SHAPES } from './particles';
 import type { ParticleSettings } from './particles';
 import type { FloatSettings, Surge, WaterSettings } from './ocean';
 import { DEFAULT_SURGE } from './ocean';
@@ -1546,6 +1546,7 @@ export function validateParticles(v: unknown, partial: boolean): Partial<Particl
     wind: [(x) => isVec3In(x, 100), '[x, y, z] m/s², each -100..100'],
     hideEmitter: [(x) => typeof x === 'boolean', 'true/false'],
     seed: [(x) => Number.isInteger(x) && inRange(x, 0, 99999), 'a whole number 0..99999'],
+    emit: [(x) => (PARTICLE_EMIT as readonly unknown[]).includes(x), PARTICLE_EMIT.join(', ')],
   };
   const out: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(v)) {

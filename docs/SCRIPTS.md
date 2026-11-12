@@ -342,6 +342,13 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   length, m), `from` (m along the water's `direction` from the water object's origin; negative = behind).
   A sech² wall that leans forward a little. Floating objects (`setFloat`) are lifted and carried while
   it passes, and stop at the water's edge. Combine with `addCameraShake` for the impact.
+- Spray (v3.14): particles on the water object with `"emit":"crest"` are born on top of (and just
+  ahead of) the giant wave wherever it is at that frame, and are thrown up (`speed`) and forward
+  with it. Soft white `smoke` puffs read as spray and mist:
+
+```json
+{"type":"setParticles","id":"sea","particles":{"emit":"crest","count":14000,"start":24,"end":192,"lifetime":30,"speed":6,"random":2.5,"gravity":0.7,"size":2.4,"shape":"smoke","color":"#eef3f5","hideEmitter":false}}
+```
 
 ## Camera shake and floating (v3.7)
 

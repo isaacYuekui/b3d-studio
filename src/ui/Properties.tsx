@@ -16,7 +16,7 @@ import { ALIGNS, FONTS, FONT_LABEL, MAX_TEXT_LENGTH, isFontLoaded, missingChars 
 import type { FontId, TextData } from '../core/text';
 import { loadFont } from '../engine/fonts';
 import { RIGID_SHAPES, RIGID_TYPES } from '../core/physics';
-import { PARTICLE_PRESETS, PARTICLE_SHAPES } from '../core/particles';
+import { PARTICLE_PRESETS, PARTICLE_SHAPES, crestFrames } from '../core/particles';
 import type { ParticleSettings } from '../core/particles';
 import type { Surge, WaterSettings } from '../core/ocean';
 import { DEFAULT_SURGE } from '../core/ocean';
@@ -871,7 +871,17 @@ function ParticlesSection({ id }: { id: string }) {
   const { store } = useCtx();
   const p = useApp((s) => s.doc.objects[id].particles);
   const frame = useApp((s) => s.frame);
+  const surge = useApp((s) => !!s.doc.objects[id].water?.surge);
   const set = (particles: Partial<ParticleSettings> | null) => store.dispatch({ type: 'setParticles', id, particles }, { select: false });
+  // Wave spray runs while the giant wave is over the water; other presets come from the surface.
+  const applyPreset = (pr: (typeof PARTICLE_PRESETS)[number]) => {
+    if (pr.settings.emit === 'crest') {
+      const st = store.getState();
+      const span = crestFrames(st.doc.objects[id], st.doc.animation?.fps ?? 24);
+      return set({ ...pr.settings, ...(span ?? {}) });
+    }
+    set(pr.burst ? { emit: undefined, ...pr.settings, start: frame, end: frame + pr.burst } : { emit: undefined, ...pr.settings });
+  };
   const num = (key: 'count' | 'start' | 'end' | 'lifetime' | 'speed' | 'random' | 'gravity' | 'size' | 'sizeRandom' | 'glow', label: string, lo: number, hi: number, step: number, suffix = '', int = false) => (
     <NumberField
       label={label}
@@ -896,8 +906,8 @@ function ParticlesSection({ id }: { id: string }) {
       <div className="prop-row wrap">
         <span>Presets</span>
         <div className="seg-text" role="group" aria-label="Particle presets">
-          {PARTICLE_PRESETS.map((pr) => (
-            <button key={pr.id} data-particle-preset={pr.id} onClick={() => set(pr.burst ? { ...pr.settings, start: frame, end: frame + pr.burst } : pr.settings)} title={pr.burst ? `Bursts at the current frame (${frame})` : undefined}>
+          {PARTICLE_PRESETS.filter((pr) => surge || pr.settings.emit !== 'crest').map((pr) => (
+            <button key={pr.id} data-particle-preset={pr.id} onClick={() => applyPreset(pr)} title={pr.burst ? `Bursts at the current frame (${frame})` : pr.settings.emit === 'crest' ? 'Spray off the top of the giant wave while it crosses the water' : undefined}>
               {pr.label}
             </button>
           ))}
@@ -905,6 +915,15 @@ function ParticlesSection({ id }: { id: string }) {
       </div>
       {p && (
         <>
+          {surge && (
+            <label className="prop-row">
+              <span>Emit from</span>
+              <select aria-label="Emit from" value={p.emit ?? 'surface'} onChange={(e) => set({ emit: e.target.value === 'crest' ? 'crest' : undefined })}>
+                <option value="surface">Surface</option>
+                <option value="crest">Giant wave crest (spray)</option>
+              </select>
+            </label>
+          )}
           {num('count', 'Number', 1, 20000, 50, '', true)}
           {num('start', 'Start frame', -100000, 100000, 1, '', true)}
           {num('end', 'End frame', -100000, 100000, 1, '', true)}
@@ -1227,6 +1246,15 @@ function SurgeRows({ id }: { id: string }) {
           {num('width', 'Length', 1, 1000, 1, ' m')}
           {num('from', 'Starts from', -10000, 10000, 5, ' m')}
           <p className="prop-hint">A single wall of water that runs across the sea in the Direction above, lifting and carrying anything that floats. It starts "Starts from" metres behind the centre — move it further back to see it come in.</p>
+          <div className="prop-actions">
+            <button className="btn" data-testid="surge-spray" onClick={() => {
+              const pr = PARTICLE_PRESETS.find((x) => x.id === 'spray')!;
+              const st = store.getState();
+              const span = crestFrames(st.doc.objects[id], st.doc.animation?.fps ?? 24);
+              store.dispatch({ type: 'setParticles', id, particles: { ...pr.settings, ...(span ?? {}) } }, { select: false });
+              store.notify('Spray added on the wave crest (Physics → Particles to tune it)');
+            }}>{w.surge && store.getState().doc.objects[id].particles?.emit === 'crest' ? 'Reset spray' : 'Add spray on the crest'}</button>
+          </div>
         </>
       )}
     </>

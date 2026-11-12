@@ -110,3 +110,42 @@ describe('tsunami surge', () => {
     expect(() => validateCommand({ type: 'setWater', id: 'sea', water: { surge: { height: 500 } } })).toThrow(/surge.height/);
   });
 });
+
+describe('wave spray (v3.14)', () => {
+  it('is thrown off the top of the giant wave while it crosses the water', async () => {
+    const { particlesAt, crestFrames } = await import('../src/core/particles');
+    let doc = createDefaultDoc();
+    doc = applyCommand(doc, validateCommand({ type: 'delete', ids: [...doc.order] })).doc;
+    for (const c of [
+      { type: 'addWater', id: 'sea', size: [100, 60], level: 0, direction: 0 },
+      { type: 'setWater', id: 'sea', water: { surge: { height: 8, start: 10, speed: 12, width: 16, from: -80 } } },
+    ])
+      doc = applyCommand(doc, validateCommand(c)).doc;
+    const span = crestFrames(doc.objects.sea, 24)!;
+    // front reaches x = -50 after 30 m → 2.5 s = 60 frames after frame 9; leaves x = 50 after 130 m.
+    expect(span.start).toBe(69);
+    expect(span.end).toBe(269);
+    const spray = PARTICLE_PRESETS.find((p) => p.id === 'spray')!;
+    doc = applyCommand(doc, validateCommand({ type: 'setParticles', id: 'sea', particles: { ...spray.settings, ...span, seed: 3 } })).doc;
+    expect(doc.objects.sea.particles?.emit).toBe('crest');
+    expect(particlesAt(doc, 'sea', 60, 24).positions.length).toBe(0);
+    const at = (f: number) => particlesAt(doc, 'sea', f, 24);
+    const f = 150;
+    const front = -80 + 12 * ((f - 9) / 24);
+    const ps = at(f);
+    expect(ps.positions.length).toBeGreaterThan(100);
+    const young = ps.positions.filter((_, i) => ps.life[i] < 0.05);
+    expect(young.length).toBeGreaterThan(5);
+    for (const p of young) {
+      expect(Math.abs(p[0] - front)).toBeLessThan(12); // near the crest
+      expect(p[2]).toBeGreaterThan(3); // up on the wave
+      expect(Math.abs(p[1])).toBeLessThan(31); // across the water
+    }
+    // On average the spray moves forward with the wave.
+    const meanX = (r: { positions: number[][] }) => r.positions.reduce((s, p) => s + p[0], 0) / r.positions.length;
+    expect(meanX(at(f + 12))).toBeGreaterThan(meanX(ps));
+    // Not on water / no surge: crest falls back to nothing special.
+    expect(validateCommand({ type: 'setParticles', id: 'sea', particles: { emit: 'surface' } }).type).toBe('setParticles');
+    expect(() => validateCommand({ type: 'setParticles', id: 'sea', particles: { emit: 'sky' } })).toThrow(/emit/);
+  });
+});

@@ -32,6 +32,8 @@ C.append({"type": "setAnimation", "fps": 24, "start": 1, "end": 192})
 # under the town, hidden below the shore until the wave lifts it over the quay: that's the flood.
 C.append({"type": "addWater", "id": "sea", "name": "Harbour sea", "size": [140, 150], "level": 0, "position": [0, -15], "color": "#1f4e5a", "clarity": 0.25, "waves": 1.6, "height": 0.35, "direction": 90})
 C.append({"type": "setWater", "id": "sea", "water": {"surge": {"height": 8, "start": 24, "speed": 14, "width": 15, "from": -60}}})
+# Spray thrown off the top of the wave as it runs in (v3.14: particles emitted from the crest).
+C.append({"type": "setParticles", "id": "sea", "particles": {"emit": "crest", "count": 14000, "start": 24, "end": 192, "lifetime": 30, "speed": 6, "random": 2.5, "gravity": 0.7, "size": 2.4, "sizeRandom": 0.6, "shape": "smoke", "color": "#eef3f5", "glow": 0, "ground": "none", "hideEmitter": False, "seed": 4}})
 
 SAND = {"baseColor": "#b9a882", "roughness": 0.95}
 CONCRETE = {"baseColor": "#9a9a95", "roughness": 0.85}

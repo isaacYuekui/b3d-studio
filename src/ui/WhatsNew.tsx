@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 /** Newest first. The first entry is the current version. */
 const CHANGES: { v: string; items: string[] }[] = [
+  { v: '3.14', items: ['Spray off the top of a tsunami: Water tab → Add spray on the crest (example: Tsunami harbour)'] },
   { v: '3.13', items: ['Lit windows at night: Glow on patterns, towns light up after dark', 'Explosions flash light on everything around them (Force Field → Light flash)'] },
   { v: '3.12', items: ['Add → Town: village, town or city with windows and roofs, ready to blow up'] },
   { v: '3.11', items: ['Object → Quick Effects: Quick Explode, Fire, Smoke, Float — one tap each'] },

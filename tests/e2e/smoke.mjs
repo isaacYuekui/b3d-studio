@@ -1013,6 +1013,36 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Wave spray (v3.14): Water → Giant wave → Add spray on the crest.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'setAnimation', start: 1, end: 120 },
+      { type: 'addWater', id: 'sea', size: [80, 80], level: 0, direction: 90 },
+      { type: 'setWater', id: 'sea', water: { surge: { height: 8, start: 10, speed: 14, width: 15, from: -60 } } },
+    ] });
+    s.select('sea');
+  });
+  await page.click('[data-prop-tab="data"]');
+  await page.click('[data-testid="surge-spray"]');
+  const sp = await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const p = s.getState().doc.objects.sea.particles;
+    s.setShading('rendered');
+    s.setFrame(60);
+    return { emit: p?.emit, start: p?.start, end: p?.end, hide: p?.hideEmitter, shape: p?.shape };
+  });
+  // Front reaches y = -40 (water edge) at frame 9 + 20/14 s; leaves y = 40 at 9 + 100/14 s.
+  check('v3.14: Add spray on the crest sets crest particles for the time the wave is over the water', sp.emit === 'crest' && sp.start === 43 && sp.end === 181 && sp.hide === false && sp.shape === 'smoke', JSON.stringify(sp));
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: `${shots}/spray.png` });
+  check('v3.14: no errors (spray)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Night lights (v3.13): pattern Glow (lit windows), towns light up after dark, explosion flash.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });
