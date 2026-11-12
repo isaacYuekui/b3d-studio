@@ -114,8 +114,11 @@ C.append({"type": "add", "primitive": "plane", "id": "fountain", "name": "Fire f
 C.append({"type": "setParticles", "id": "fountain", "particles": {"count": 6000, "start": ERUPT, "end": 168, "lifetime": 40, "speed": 30, "random": 6, "gravity": 0.9, "size": 5.5, "sizeRandom": 0.5, "shape": "fire", "color": "#ff7a1a", "glow": 1, "ground": "none", "hideEmitter": True, "seed": 5}})
 C.append({"type": "add", "primitive": "plane", "id": "bombs", "name": "Lava bombs", "transform": {"position": TOP, "scale": [3, 3, 1]}})
 C.append({"type": "setParticles", "id": "bombs", "particles": {"count": 700, "start": ERUPT, "end": ERUPT + 40, "lifetime": 110, "speed": 28, "random": 14, "gravity": 1, "size": 1.4, "sizeRandom": 0.6, "shape": "sphere", "color": "#ff5a10", "glow": 1, "ground": "stop", "hideEmitter": True, "seed": 8}})
-C.append({"type": "add", "primitive": "plane", "id": "ash", "name": "Ash column", "transform": {"position": [0, 0, H + 8], "scale": [6, 6, 1]}})
-C.append({"type": "setParticles", "id": "ash", "particles": {"count": 2000, "start": ERUPT + 4, "end": 168, "lifetime": 160, "speed": 16, "random": 4, "gravity": -0.12, "size": 11, "sizeRandom": 0.5, "shape": "smoke", "color": "#4a3e39", "glow": 0.15, "ground": "none", "wind": [2.2, 0.6, 0], "hideEmitter": True, "seed": 11}})
+C.append({"type": "add", "primitive": "plane", "id": "ash", "name": "Ash column", "transform": {"position": [0, 0, H + 6], "scale": [7, 7, 1]}})
+C.append({"type": "setParticles", "id": "ash", "particles": {"count": 2800, "start": ERUPT + 3, "end": 168, "lifetime": 170, "speed": 9, "random": 5, "gravity": -0.1, "size": 14, "sizeRandom": 0.5, "shape": "smoke", "color": "#2a2422", "glow": 0, "ground": "none", "wind": [2.0, 0.6, 0], "hideEmitter": True, "seed": 11}})
+# The bottom of the column glows orange, lit by the fountain inside it.
+C.append({"type": "add", "primitive": "plane", "id": "ash-glow", "name": "Lit ash", "transform": {"position": [0, 0, H + 4], "scale": [6, 6, 1]}})
+C.append({"type": "setParticles", "id": "ash-glow", "particles": {"count": 1400, "start": ERUPT + 1, "end": 168, "lifetime": 36, "speed": 10, "random": 5, "gravity": -0.1, "size": 12, "sizeRandom": 0.5, "shape": "smoke", "color": "#8a3a14", "glow": 0.7, "ground": "none", "hideEmitter": True, "seed": 13}})
 
 # The ground shakes: a tremor first, then the blast.
 C.append({"type": "addCameraShake", "start": 18, "end": 44, "strength": 0.25, "frequency": 9})
