@@ -18,6 +18,7 @@ import { applyModifiers } from './mesh/modifiers';
 import { ALIGNS, DEFAULT_TEXT, FONTS, MAX_TEXT_LENGTH, textMesh } from './text';
 import { DEFAULT_RIGID, RIGID_SHAPES, RIGID_TYPES, simulate } from './physics';
 import { fracturePieces } from './fracture';
+import { MAX_SLOTS, slotOf, surfaceSlots, transferMaterialIndex, usesSlots, validIndex, withMaterialIndex } from './mesh/materialIndex';
 import { DEFAULT_PARTICLES, PARTICLE_EMIT, PARTICLE_GROUND, PARTICLE_SHAPES } from './particles';
 import type { ParticleSettings } from './particles';
 import type { FloatSettings, Surge, WaterSettings } from './ocean';
@@ -64,6 +65,8 @@ export interface AddCommand {
   /** Shorthand for material.baseColor. */
   color?: string;
   material?: Partial<Material>;
+  /** More materials for mesh faces (mesh.materialIndex picks them: 1 = the first of these). */
+  materialSlots?: Partial<Material>[];
   params?: PrimitiveParams;
   mesh?: MeshData;
   light?: Partial<LightData>;
@@ -82,7 +85,11 @@ export type Command =
   | { type: 'rename'; id: string; name: string }
   | { type: 'setParent'; id: string; parentId: string | null }
   | { type: 'setColor'; id: string; color: string }
-  | { type: 'setMaterial'; id: string; material: Partial<Material> }
+  | { type: 'setMaterial'; id: string; material: Partial<Material>; slot?: number }
+  /** Faces (by index) use material slot `slot` (0 = main material) — Blender's Assign in Edit Mode. */
+  | { type: 'assignMaterial'; id: string; slot: number; faces: number[] }
+  /** Remove material slot `slot` (1..); its faces go back to the main material. */
+  | { type: 'removeMaterialSlot'; id: string; slot: number }
   | { type: 'setLight'; id: string; light: Partial<LightData> }
   | { type: 'setVisible'; id: string; visible: boolean }
   /** Replace an object's geometry. A primitive becomes an editable 'mesh' object. */
@@ -155,7 +162,7 @@ export type Command =
   /** Particle system on an object (null removes it). */
   | { type: 'setParticles'; id: string; particles: Partial<ParticleSettings> | null }
   /** Cell Fracture: break an object into about `pieces` Voronoi pieces, each an active rigid body (convex hull). */
-  | { type: 'fracture'; id: string; pieces: number; seed?: number }
+  | { type: 'fracture'; id: string; pieces: number; seed?: number; /** Material of the broken surfaces inside (false = same as outside). */ inner?: Partial<Material> | false }
   /** Simulate the rigid bodies from start to end and write the result as keyframes (Bake to Keyframes). */
   | { type: 'bakePhysics'; start?: number; end?: number }
   /** Camera lens: focal length (mm), depth of field, f-stop, focus distance (m). null clears a setting. */
@@ -273,8 +280,45 @@ const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
 export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = defaultIdGen): ApplyResult {
   const r = applyCommandInner(doc, cmd, idGen);
-  if (r.doc === doc || cmd.type === 'setText' || cmd.type === 'addText' || cmd.type === 'batch') return r;
-  return { ...r, doc: dropStaleText(doc, r.doc) };
+  if (r.doc === doc || cmd.type === 'batch') return r;
+  const after = cmd.type === 'setText' || cmd.type === 'addText' ? r.doc : dropStaleText(doc, r.doc);
+  // Commands that set the per-face slots themselves are left as they are.
+  if (cmd.type === 'assignMaterial' || cmd.type === 'removeMaterialSlot') return { ...r, doc: after };
+  return { ...r, doc: carrySlots(doc, after) };
+}
+
+/**
+ * Mesh edits keep each face's material slot: tools that don't know about slots leave the old
+ * per-face list (or none) behind, so it's rebuilt from the faces before the edit.
+ */
+function carrySlots(before: SceneDoc, after: SceneDoc): SceneDoc {
+  let objects = after.objects;
+  for (const [id, o] of Object.entries(after.objects)) {
+    const b = before.objects[id]?.mesh;
+    const m = o.mesh;
+    if (!m || !b || b === m || !usesSlots(b)) continue;
+    let index: number[] | undefined;
+    if (m.faces === b.faces) {
+      if (m.materialIndex) continue; // same faces, slots kept (or changed on purpose)
+      index = b.materialIndex; // same faces, a tool dropped them
+    } else if (m.materialIndex && m.materialIndex !== b.materialIndex && validIndex(m)) continue; // the command set them
+    else index = transferMaterialIndex(b, m);
+    if (objects === after.objects) objects = { ...objects };
+    objects[id] = { ...o, mesh: withMaterialIndex(m, index) };
+  }
+  return objects === after.objects ? after : { ...after, objects };
+}
+
+/**
+ * What the inside of a broken object looks like: rough, unlit, a little darker — broken concrete
+ * for a building with windows, the same wood for a wooden crate, rough stone for plain colours.
+ */
+export function innerMaterial(m: Material): Material {
+  const dark = (hex: string, k: number) => `#${[1, 3, 5].map((i) => Math.round(parseInt(hex.slice(i, i + 2), 16) * k).toString(16).padStart(2, '0')).join('')}`;
+  const inner: Material = { ...m, emission: '#000000', emissionStrength: 0, roughness: Math.max(0.85, m.roughness), metallic: 0, alpha: 1 };
+  if (m.texture) return inner; // a library texture (wood, stone…) looks right inside too
+  const base = m.pattern ? m.pattern.colorB : m.baseColor;
+  return { ...inner, baseColor: dark(base, 0.8), pattern: { type: 'noise', colorA: dark(base, 0.5), colorB: dark(base, 0.85), scale: 2.5, bump: 0.6 } };
 }
 
 /** A text object whose mesh was changed by anything but setText is now a plain mesh (Blender: Convert to Mesh). */
@@ -347,6 +391,13 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       const R = rotEuler(o.transform.rotation);
       const sc = o.transform.scale;
       const base = { ...DEFAULT_RIGID, ...o.rigid, type: 'active' as const, shape: 'hull' as const };
+      // The broken surfaces inside get their own material (Blender's Cell Fracture: interior material).
+      const slots = [...(o.materialSlots ?? [])];
+      let innerSlot = 0;
+      if (cmd.inner !== false && slots.length < MAX_SLOTS) {
+        slots.push({ ...innerMaterial(o.material), ...(typeof cmd.inner === 'object' ? cmd.inner : {}) });
+        innerSlot = slots.length;
+      }
       const ids: string[] = [];
       const commands: Command[] = [];
       pieces.forEach((pc, i) => {
@@ -361,8 +412,12 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
           id,
           name: `${o.name} piece ${i + 1}`,
           // Keep the texture where it was on the whole object (windows stay lined up on the pieces).
-          mesh: { ...pc.mesh, uvOffset: [0, 1, 2].map((k) => Math.round(((geo.uvOffset?.[k] ?? 0) + pc.center[k]) * 1e5) / 1e5) as Vec3 },
+          mesh: withMaterialIndex(
+            { ...pc.mesh, uvOffset: [0, 1, 2].map((k) => Math.round(((geo.uvOffset?.[k] ?? 0) + pc.center[k]) * 1e5) / 1e5) as Vec3 },
+            surfaceSlots(geo, { ...pc.mesh, vertices: pc.mesh.vertices.map((v) => [v[0] + pc.center[0], v[1] + pc.center[1], v[2] + pc.center[2]] as Vec3) }, innerSlot),
+          ),
           material: o.material,
+          ...(slots.length ? { materialSlots: slots } : {}),
           parentId: o.parentId,
           transform: { position: [p[0] + off[0], p[1] + off[1], p[2] + off[2]].map((x) => Math.round(x * 1e5) / 1e5) as Vec3, rotation: [...o.transform.rotation], scale: [...sc] },
         });
@@ -421,6 +476,7 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
         material: { ...DEFAULT_MATERIAL, ...(cmd.color ? { baseColor: cmd.color } : {}), ...cmd.material },
       };
       if (cmd.params) obj.params = { ...cmd.params };
+      if (cmd.materialSlots?.length) obj.materialSlots = cmd.materialSlots.map((m) => ({ ...DEFAULT_MATERIAL, ...m }));
       if (cmd.primitive === 'mesh' && cmd.mesh) obj.mesh = clone(cmd.mesh);
       if (cmd.primitive === 'light') obj.light = { ...DEFAULT_LIGHT[lightType], ...cmd.light, type: lightType };
       if (cmd.primitive === 'model') obj.asset = cmd.asset;
@@ -529,7 +585,36 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
 
     case 'setMaterial': {
       const o = requireObj(doc, cmd.id);
-      return { doc: withObject(doc, { ...o, material: { ...o.material, ...cmd.material } }), created: [] };
+      const slot = cmd.slot ?? 0;
+      if (!slot) return { doc: withObject(doc, { ...o, material: { ...o.material, ...cmd.material } }), created: [] };
+      // Extra slots (2, 3… in Blender): set an existing one, or add the next one.
+      const slots = [...(o.materialSlots ?? [])];
+      if (slot > slots.length + 1) throw new CommandError(`${o.name} has ${slots.length + 1} material slot(s): add slot ${slots.length + 1} first`);
+      if (slot > MAX_SLOTS) throw new CommandError(`At most ${MAX_SLOTS + 1} materials per object`);
+      slots[slot - 1] = { ...(slots[slot - 1] ?? o.material), ...cmd.material };
+      return { doc: withObject(doc, { ...o, materialSlots: slots }), created: [] };
+    }
+
+    case 'assignMaterial': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      const m = o.mesh!;
+      if (cmd.slot > (o.materialSlots?.length ?? 0)) throw new CommandError(`${o.name} has no material slot ${cmd.slot + 1}`);
+      const idx = validIndex(m) ? [...m.materialIndex!] : m.faces.map(() => 0);
+      for (const f of cmd.faces) {
+        if (f >= m.faces.length) throw new CommandError(`${o.name} has no face ${f}`);
+        idx[f] = cmd.slot;
+      }
+      return { doc: withObject(doc, { ...o, mesh: withMaterialIndex(m, idx) }), created: [] };
+    }
+
+    case 'removeMaterialSlot': {
+      const o = requireObj(doc, cmd.id);
+      const slots = o.materialSlots ?? [];
+      if (cmd.slot < 1 || cmd.slot > slots.length) throw new CommandError(`${o.name} has no material slot ${cmd.slot + 1}`);
+      const next: SceneObject = { ...o, materialSlots: slots.filter((_, i) => i !== cmd.slot - 1) };
+      if (!next.materialSlots!.length) delete next.materialSlots;
+      if (o.mesh && validIndex(o.mesh)) next.mesh = withMaterialIndex(o.mesh, o.mesh.materialIndex!.map((s) => (s === cmd.slot ? 0 : s > cmd.slot ? s - 1 : s)));
+      return { doc: withObject(doc, next), created: [] };
     }
 
     case 'setLight': {
@@ -794,12 +879,18 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       }
       if (!groups.length) throw new CommandError(`${o.name} is all one piece: nothing to separate`);
       const taken = new Set(groups.flat());
-      let next = withObject(doc, { ...o, mesh: compact({ ...m, faces: m.faces.filter((_, i) => !taken.has(i)) }).mesh });
+      // Each part keeps its faces' material slots (and the texture placement).
+      const part = (fs: number[]): MeshData => {
+        const c = compact({ ...m, faces: fs.map((i) => m.faces[i]) }, usesSlots(m) ? fs.map((i) => m.materialIndex![i]) : undefined).mesh;
+        return m.uvOffset ? { ...c, uvOffset: m.uvOffset } : c;
+      };
+      const rest = m.faces.map((_, i) => i).filter((i) => !taken.has(i));
+      let next = withObject(doc, { ...o, mesh: part(rest) });
       const created: string[] = [];
       for (const g of groups) {
         const newId = idGen();
-        const part: SceneObject = { ...clone(o), id: newId, name: uniqueName(next, o.name), mesh: compact({ ...m, faces: g.map((i) => m.faces[i]) }).mesh };
-        next = { ...next, objects: { ...next.objects, [newId]: part }, order: [...next.order, newId] };
+        const part2: SceneObject = { ...clone(o), id: newId, name: uniqueName(next, o.name), mesh: part(g) };
+        next = { ...next, objects: { ...next.objects, [newId]: part2 }, order: [...next.order, newId] };
         created.push(newId);
       }
       return { doc: next, created };
@@ -816,15 +907,30 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       const inv = invertM4(worldMatrix(doc, t.id, 1));
       const vertices = [...t.mesh!.vertices];
       const faces = [...t.mesh!.faces];
+      // Materials come along as slots (Blender: Join keeps each part's material); equal ones are shared.
+      const mats: Material[] = [t.material, ...(t.materialSlots ?? [])];
+      const slotFor = (m: Material) => {
+        const k = JSON.stringify(m);
+        let i = mats.findIndex((x) => JSON.stringify(x) === k);
+        if (i < 0 && mats.length <= MAX_SLOTS) i = mats.push(m) - 1;
+        return Math.max(0, i);
+      };
+      const index = t.mesh!.faces.map((_, f) => slotOf(t.mesh!, f));
       for (const o of others) {
         const M = mulM4(inv, worldMatrix(doc, o.id, 1));
         const om = applyModifiers(o.mesh!, o.modifiers);
+        const own = [o.material, ...(o.materialSlots ?? [])].map(slotFor);
         const base = vertices.length;
         for (const v of om.vertices) vertices.push(applyM4(M, v).map((x) => Math.round(x * 1e5) / 1e5) as Vec3);
-        for (const f of om.faces) faces.push(f.map((i) => i + base));
+        om.faces.forEach((f, fi) => {
+          faces.push(f.map((i) => i + base));
+          index.push(own[slotOf(om, fi)] ?? 0);
+        });
       }
       if (vertices.length > LIMITS.vertices || faces.length > LIMITS.faces) throw new CommandError('The joined mesh would be too large');
-      const joined = withObject(doc, { ...t, mesh: { ...t.mesh!, vertices, faces } });
+      const target: SceneObject = { ...t, mesh: withMaterialIndex({ ...t.mesh!, vertices, faces }, index) };
+      if (mats.length > 1) target.materialSlots = mats.slice(1);
+      const joined = withObject(doc, target);
       return applyCommand(joined, { type: 'delete', ids: others.map((o) => o.id) }, idGen);
     }
 
@@ -837,11 +943,14 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       const cm = applyModifiers(c.mesh!, c.modifiers);
       const cutter: MeshData = { ...cm, vertices: cm.vertices.map((v) => applyM4(M, v)) };
       let mesh: MeshData;
+      const tm = applyModifiers(t.mesh!, t.modifiers);
       try {
-        mesh = meshBoolean(applyModifiers(t.mesh!, t.modifiers), cutter, cmd.op, [t.name, c.name]);
+        mesh = meshBoolean(tm, cutter, cmd.op, [t.name, c.name]);
       } catch (e) {
         throw new CommandError(e instanceof Error ? e.message : String(e));
       }
+      // Faces left from the object keep their material slots; new cut faces use the main material.
+      if (usesSlots(tm)) mesh = withMaterialIndex(mesh, surfaceSlots(tm, mesh, 0));
       if (mesh.vertices.length > LIMITS.vertices || mesh.faces.length > LIMITS.faces) throw new CommandError(`${t.name}: boolean result too large`);
       const next: SceneObject = { ...t, mesh };
       delete next.modifiers;
@@ -1185,7 +1294,18 @@ export function validateMeshData(v: unknown): MeshData {
   });
   const out: MeshData = { vertices, faces, smooth: v.smooth === true };
   if (v.uvOffset !== undefined) out.uvOffset = isVec3(v.uvOffset) ? ([...v.uvOffset] as Vec3) : fail('mesh uvOffset must be [x,y,z]');
+  if (v.materialIndex !== undefined) {
+    const mi = v.materialIndex;
+    if (!Array.isArray(mi) || mi.length !== faces.length || !mi.every((s) => Number.isInteger(s) && s >= 0 && s <= MAX_SLOTS)) fail(`mesh materialIndex must list one slot (0..${MAX_SLOTS}) per face`);
+    if ((mi as number[]).some((s) => s > 0)) out.materialIndex = [...(mi as number[])];
+  }
   return out;
+}
+
+/** Extra material slots (full materials when `partial` is false, as stored in a scene). */
+function validateSlots(v: unknown, partial: boolean): Material[] {
+  if (!Array.isArray(v) || v.length > MAX_SLOTS) fail(`materialSlots must be a list of up to ${MAX_SLOTS} materials`);
+  return (v as unknown[]).map((m) => (partial ? (validateMaterial(m, true) as Material) : { ...DEFAULT_MATERIAL, ...validateMaterial(m, false) }));
 }
 
 function validateSkin(v: unknown, at: string): NonNullable<SceneObject['skin']> {
@@ -1404,6 +1524,10 @@ export function validateSceneObject(raw: unknown): SceneObject {
     material: { ...DEFAULT_MATERIAL, ...validateMaterial(v.material, false) },
   };
   if (v.params !== undefined) obj.params = validateParams(v.params);
+  if (v.materialSlots !== undefined) {
+    const slots = validateSlots(v.materialSlots, false);
+    if (slots.length) obj.materialSlots = slots;
+  }
   if (obj.type === 'mesh') obj.mesh = validateMeshData(v.mesh);
   if (obj.type === 'mesh' && v.modifiers !== undefined) obj.modifiers = validateModifiers(v.modifiers);
   if (obj.type === 'mesh' && v.text !== undefined) obj.text = validateText(v.text, false) as TextData;
@@ -1703,6 +1827,7 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (v.parentId !== undefined) cmd.parentId = v.parentId as string | null;
       if (transform) cmd.transform = transform;
       if (v.material !== undefined) cmd.material = validateMaterial(v.material, true);
+      if (v.materialSlots !== undefined) cmd.materialSlots = validateSlots(v.materialSlots, true);
       if (v.params !== undefined) cmd.params = validateParams(v.params);
       if (cmd.primitive === 'mesh') cmd.mesh = validateMeshData(v.mesh);
       if (cmd.primitive === 'model') cmd.asset = typeof v.asset === 'string' && ASSET_ID.test(v.asset) ? v.asset : fail('model needs an asset id from the library (see docs/LIBRARY.md)');
@@ -1726,9 +1851,21 @@ export function validateCommand(v: unknown, depth = 0): Command {
     case 'setColor':
       if (!isId(v.id) || !isColor(v.color)) fail('setColor needs id and #rrggbb color');
       return { type: 'setColor', id: v.id, color: v.color };
-    case 'setMaterial':
+    case 'setMaterial': {
       if (!isId(v.id)) fail('setMaterial needs id');
-      return { type: 'setMaterial', id: v.id, material: validateMaterial(v.material, true) };
+      const cmd: Extract<Command, { type: 'setMaterial' }> = { type: 'setMaterial', id: v.id, material: validateMaterial(v.material, true) };
+      if (v.slot !== undefined) cmd.slot = Number.isInteger(v.slot) && inRange(v.slot, 0, MAX_SLOTS) ? (v.slot as number) : fail(`setMaterial slot must be 0 (main) .. ${MAX_SLOTS}`);
+      return cmd;
+    }
+    case 'assignMaterial': {
+      if (!isId(v.id)) fail('assignMaterial needs id');
+      if (!(Number.isInteger(v.slot) && inRange(v.slot, 0, MAX_SLOTS))) fail(`assignMaterial slot must be 0 (main) .. ${MAX_SLOTS}`);
+      if (!Array.isArray(v.faces) || v.faces.length > LIMITS.faces || !v.faces.every((f) => Number.isInteger(f) && f >= 0)) fail('assignMaterial faces must be a list of face indices');
+      return { type: 'assignMaterial', id: v.id, slot: v.slot as number, faces: [...(v.faces as number[])] };
+    }
+    case 'removeMaterialSlot':
+      if (!isId(v.id) || !(Number.isInteger(v.slot) && inRange(v.slot, 1, MAX_SLOTS))) fail(`removeMaterialSlot needs id and slot 1..${MAX_SLOTS}`);
+      return { type: 'removeMaterialSlot', id: v.id, slot: v.slot as number };
     case 'setLight':
       if (!isId(v.id)) fail('setLight needs id');
       return { type: 'setLight', id: v.id, light: validateLight(v.light, true) };
@@ -2017,6 +2154,7 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (!(Number.isInteger(v.pieces) && inRange(v.pieces, 2, 100))) fail('fracture pieces must be a whole number 2..100');
       const cmd: Extract<Command, { type: 'fracture' }> = { type: 'fracture', id: v.id, pieces: v.pieces as number };
       if (v.seed !== undefined) cmd.seed = Number.isInteger(v.seed) && inRange(v.seed, 0, 99999) ? (v.seed as number) : fail('fracture seed must be a whole number 0..99999');
+      if (v.inner !== undefined) cmd.inner = v.inner === false ? false : validateMaterial(v.inner, true);
       return cmd;
     }
     case 'bakePhysics': {

@@ -91,10 +91,11 @@ export function runs(face: number[], a: number, b: number): boolean {
  * consecutive indices, and unused vertices. Returns the cleaned mesh and an old→new
  * vertex index map (-1 = removed).
  */
-export function compact(mesh: MeshData): { mesh: MeshData; map: number[] } {
+export function compact(mesh: MeshData, index?: number[]): { mesh: MeshData; map: number[] } {
   const faces: number[][] = [];
+  const kept: number[] = [];
   const seen = new Set<string>();
-  for (const f of mesh.faces) {
+  for (const [fi, f] of mesh.faces.entries()) {
     const g: number[] = [];
     for (const v of f) if (g[g.length - 1] !== v) g.push(v);
     while (g.length > 1 && g[0] === g[g.length - 1]) g.pop();
@@ -103,6 +104,7 @@ export function compact(mesh: MeshData): { mesh: MeshData; map: number[] } {
     if (seen.has(key)) continue; // exact duplicate face (e.g. after merging)
     seen.add(key);
     faces.push(g);
+    kept.push(index?.[fi] ?? 0);
   }
   const used = new Array(mesh.vertices.length).fill(false);
   for (const f of faces) for (const v of f) used[v] = true;
@@ -114,7 +116,10 @@ export function compact(mesh: MeshData): { mesh: MeshData; map: number[] } {
       vertices.push(p);
     } else map[i] = -1;
   });
-  return { mesh: { vertices, faces: faces.map((f) => f.map((v) => map[v])), smooth: mesh.smooth }, map };
+  const out: MeshData = { vertices, faces: faces.map((f) => f.map((v) => map[v])), smooth: mesh.smooth };
+  // Material slots per face, when given (aligned with mesh.faces), follow the faces that are kept.
+  if (index && kept.some((s) => s > 0)) out.materialIndex = kept;
+  return { mesh: out, map };
 }
 
 /**

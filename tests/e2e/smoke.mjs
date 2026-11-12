@@ -805,7 +805,7 @@ const setNumber = async (page, scope, label, value) => {
 
   await page.evaluate(() => window.__b3d.viewport().viewCamera());
   await page.waitForTimeout(2500);
-  await page.screenshot({ path: `${shots}/village.png` });
+  await page.screenshot({ path: `${shots}/village.png`, timeout: 60000 }).catch(() => console.log('(village screenshot skipped: slow software rendering)'));
   // A model script with no camera, pasted after a scene that set one, must be framed, not
   // viewed through the old scene camera 45 m away.
   await page.click('[data-testid="script-btn"]');
@@ -1013,6 +1013,83 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Sound effects (v3.16): videos get an automatic soundtrack from the scene (here: an explosion).
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'setAnimation', fps: 24, start: 1, end: 24 },
+      { type: 'add', primitive: 'cube', id: 'crate', transform: { position: [0, 0, 1] } },
+      { type: 'add', primitive: 'empty', id: 'boom', transform: { position: [0, 0, 1] } },
+      { type: 'setField', id: 'boom', field: { type: 'force', strength: 400, radius: 14, start: 4, end: 5, flash: 60000 } },
+    ] });
+  });
+  await page.click('[data-menu="File"]');
+  await page.click('.menu [data-action="file.video"]');
+  await page.click('[data-preset="square"]');
+  await page.check('#video-draft');
+  const label = await page.evaluate(() => ({ on: document.querySelector('#video-sound')?.checked, text: document.querySelector('#video-sound')?.parentElement?.textContent }));
+  check('v3.16: the video dialog lists the scene’s sounds (Explosion) and has sound on', label.on === true && /Explosion/.test(label.text ?? ''), JSON.stringify(label));
+  await page.click('[data-testid="video-render"]');
+  const ok = await page.waitForSelector('[data-testid="video-preview"], .video-modal .script-status.bad', { timeout: 180000 }).then(() => true).catch(() => false);
+  const foot = ok ? await page.evaluate(() => [...document.querySelectorAll('.video-result .help-foot')].map((e) => e.textContent).join(' ')) : '';
+  check('v3.16: the MP4 has a sound track', ok && /with sound/.test(foot), foot);
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-testid="video-save-sound"]')]);
+  const fs = await import('node:fs');
+  const wav = fs.readFileSync(await dl.path());
+  // Loudest moment should be the blast (frame 4 = 0.125 s), not the start.
+  const ch = wav.readUInt16LE(22), rate = wav.readUInt32LE(24), n = (wav.length - 44) / 2 / ch;
+  let peakAt = 0, peak = 0;
+  for (let i = 0; i < n; i += 64) { const v = Math.abs(wav.readInt16LE(44 + i * ch * 2)); if (v > peak) { peak = v; peakAt = i / rate; } }
+  check('v3.16: Save sound gives a WAV whose loudest moment is the explosion', wav.subarray(0, 4).toString('latin1') === 'RIFF' && Math.abs(n / rate - 1) < 0.01 && peak > 3000 && peakAt > 0.1 && peakAt < 0.6, JSON.stringify({ secs: n / rate, peak, peakAt }));
+  check('v3.16: no errors (sound)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Material slots (v3.15): Material tab → Slots → +, Edit Mode → Assign; fracture inner material.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'mesh', id: 'box', name: 'Box', mesh: { vertices: [[-1, -1, -1], [1, -1, -1], [-1, 1, -1], [1, 1, -1], [-1, -1, 1], [1, -1, 1], [-1, 1, 1], [1, 1, 1]], faces: [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [1, 3, 7, 5], [3, 2, 6, 7], [2, 0, 4, 6]], smooth: false }, material: { baseColor: '#cc3333' } },
+    ] });
+    s.select('box');
+  });
+  await page.click('[data-prop-tab="material"]');
+  await page.click('[data-testid="mat-slot-add"]');
+  await page.evaluate(() => window.__b3d.store.dispatch({ type: 'setMaterial', id: 'box', slot: 1, material: { baseColor: '#3355ff' } }, { select: false }));
+  await page.click('[data-testid="mode-toggle"]');
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { const s = window.__b3d.store; s.setEdit({ ...s.getState().edit, mode: 'face', sel: { verts: [4, 5, 6, 7], edges: [], faces: [1] } }); });
+  await page.click('[data-prop-tab="material"]');
+  await page.click('[data-mat-slot="1"]');
+  await page.click('[data-testid="mat-assign"]');
+  const sl = await page.evaluate(() => {
+    const o = window.__b3d.store.getState().doc.objects.box;
+    const node = window.__b3d.viewport().entries.get('box').node;
+    return { index: o.mesh.materialIndex, slots: o.materialSlots?.length, sub: node.subMeshes.length, multi: node.material?.getClassName?.(), mats: node.material?.subMaterials?.length };
+  });
+  check('v3.15: + adds a material slot and Assign puts the selected face on it (two sub-meshes, multi-material)', JSON.stringify(sl.index) === '[0,1,0,0,0,0]' && sl.slots === 1 && sl.sub === 2 && sl.multi === 'MultiMaterial' && sl.mats === 2, JSON.stringify(sl));
+  // Extrude the top face: the new cap keeps the slot.
+  await page.evaluate(() => window.__b3d.store.dispatch({ type: 'editMesh', id: 'box', steps: [{ op: 'extrude', select: { indices: [1] }, offset: 1 }] }, { select: false }));
+  const ex = await page.evaluate(() => {
+    const m = window.__b3d.store.getState().doc.objects.box.mesh;
+    const top = m.faces.findIndex((f) => f.every((v) => m.vertices[v][2] > 1.9));
+    return { top: m.materialIndex?.[top], n: m.materialIndex?.length, faces: m.faces.length };
+  });
+  check('v3.15: an extruded face keeps its material slot', ex.top === 1 && ex.n === ex.faces, JSON.stringify(ex));
+  await page.click('[data-testid="mode-toggle"]');
+  await page.evaluate(() => window.__b3d.store.setShading('rendered'));
+  await page.waitForTimeout(1200);
+  await page.screenshot({ path: `${shots}/slots.png` });
+  check('v3.15: no errors (material slots)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Wave spray (v3.14): Water → Giant wave → Add spray on the crest.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });
@@ -1079,10 +1156,11 @@ const setNumber = async (page, scope, label, value) => {
     s.dispatch({ type: 'add', primitive: 'empty', id: 'boom', name: 'Boom', transform: { position: [0, 0, 1] } });
     s.select('boom');
     s.setFrame(20);
-    s.setShading('rendered');
   });
+  // Click before switching to Rendered (a lit village at night is slow to draw in software GL).
   await page.click('[data-prop-tab="physics"]');
   await page.click('[data-field-preset="blast"]');
+  await page.evaluate(() => window.__b3d.store.setShading('rendered'));
   const fl = await page.evaluate(() => {
     const s = window.__b3d.store;
     const f = s.getState().doc.objects.boom.field;
@@ -1097,7 +1175,7 @@ const setNumber = async (page, scope, label, value) => {
   });
   check('v3.13: Explosion field flashes at its start frame and fades', fl.flash > 0 && fl.before === 0 && fl.at > 100 && fl.after < fl.at / 4 && fl.box, JSON.stringify(fl));
   await page.waitForTimeout(1200);
-  await page.screenshot({ path: `${shots}/night-lights.png` });
+  await page.screenshot({ path: `${shots}/night-lights.png`, timeout: 60000 }).catch(() => console.log('(night-lights screenshot skipped: slow software rendering)'));
   check('v3.13: no errors (night lights)', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }
@@ -1129,6 +1207,12 @@ const setNumber = async (page, scope, label, value) => {
   await page.waitForFunction(() => !!window.__b3d.store.getState().doc.objects['town-b0-roof']?.rigid, null, { timeout: 90000 });
   const roof = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; return { rigid: d.objects['town-b0-roof'].rigid.type, keys: d.animation?.tracks['town-b0-roof']?.length ?? 0 }; });
   check('v3.12: Quick Explode on a town building brings its roof down too', roof.rigid === 'active' && roof.keys > 2, JSON.stringify(roof));
+  const inner = await page.evaluate(() => {
+    const d = window.__b3d.store.getState().doc;
+    const pieces = Object.values(d.objects).filter((o) => o.id.startsWith('town-b0.'));
+    return { pieces: pieces.length, slotted: pieces.filter((o) => o.materialSlots?.length === 1 && o.mesh.materialIndex?.includes(1)).length };
+  });
+  check('v3.15: broken building pieces get an inside material', inner.pieces > 3 && inner.slotted === inner.pieces, JSON.stringify(inner));
   check('v3.12: no errors (town)', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }

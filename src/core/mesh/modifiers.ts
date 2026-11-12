@@ -6,6 +6,7 @@ import type { MeshData, Modifiers } from '../types';
 import type { V } from './topology';
 import { add, compact, ek, edgeMap, newell, scale } from './topology';
 import { bevel as bevelOp } from './ops';
+import { transferMaterialIndex, usesSlots, withMaterialIndex } from './materialIndex';
 import { vertexNormals } from './sculpt';
 
 export const MAX_SUBDIV_FACES = 400_000;
@@ -43,7 +44,9 @@ export function applyModifiers(mesh: MeshData, mods?: Modifiers): MeshData {
     const edges = sharpEdges(out, mods!.bevel.angle);
     if (edges.size) {
       try {
+        const before = out;
         out = bevelOp(out, { verts: [], edges: [...edges], faces: [] }, mods!.bevel.width, Math.max(1, Math.min(6, Math.round(mods!.bevel.segments)))).mesh;
+        if (usesSlots(before)) out = withMaterialIndex(out, transferMaterialIndex(before, out));
       } catch {
         /* geometry the bevel can't handle (e.g. non-manifold): leave it unbevelled */
       }
@@ -120,7 +123,12 @@ export function arrayModifier(mesh: MeshData, count: number, relative: V, consta
       target.push(c > 0 && match[i] >= 0 ? target[(c - 1) * nv + match[i]] : c * nv + i);
     });
   let faces: number[][] = [];
-  for (let c = 0; c < n; c++) for (const f of mesh.faces) faces.push(f.map((v) => target[c * nv + v]));
+  let index: number[] | undefined = usesSlots(mesh) ? [] : undefined;
+  for (let c = 0; c < n; c++)
+    mesh.faces.forEach((f, fi) => {
+      faces.push(f.map((v) => target[c * nv + v]));
+      index?.push(mesh.materialIndex![fi]);
+    });
   if (merge) {
     // Faces where two copies touch now use the same corners: drop both.
     const seen = new Map<string, number>();
@@ -129,9 +137,11 @@ export function arrayModifier(mesh: MeshData, count: number, relative: V, consta
       const k = keyOf(f);
       seen.set(k, (seen.get(k) ?? 0) + 1);
     }
-    faces = faces.filter((f) => seen.get(keyOf(f)) === 1);
+    const keep = faces.map((f) => seen.get(keyOf(f)) === 1);
+    faces = faces.filter((_, i) => keep[i]);
+    index = index?.filter((_, i) => keep[i]);
   }
-  return compact({ vertices, faces, smooth: mesh.smooth }).mesh;
+  return compact({ vertices, faces, smooth: mesh.smooth }, index).mesh;
 }
 
 /**
@@ -153,6 +163,8 @@ export function solidify(mesh: MeshData, thickness: number, offset = -1, rim = t
   const outer = mesh.faces.map((f) => (flip ? [...f].reverse() : [...f]));
   const inner = mesh.faces.map((f) => (flip ? f.map((v) => v + nv) : [...f].reverse().map((v) => v + nv)));
   const faces = [...outer, ...inner];
+  const mi = usesSlots(mesh) ? mesh.materialIndex! : null;
+  const index = mi ? [...mi, ...mi] : null;
   if (rim)
     for (const e of edgeMap(mesh).values()) {
       if (e.faces.length !== 1) continue;
@@ -162,8 +174,9 @@ export function solidify(mesh: MeshData, thickness: number, offset = -1, rim = t
       const [p, q] = f[(i + 1) % f.length] === e.b ? [e.a, e.b] : [e.b, e.a];
       const quad = [q, p, p + nv, q + nv];
       faces.push(flip ? quad.reverse() : quad);
+      index?.push(mi![e.faces[0]]);
     }
-  return { vertices, faces, smooth: mesh.smooth };
+  return withMaterialIndex({ vertices, faces, smooth: mesh.smooth }, index ?? undefined);
 }
 
 // Value noise on a lattice, hashed from integer coordinates (deterministic, no tables).
@@ -209,7 +222,7 @@ export function displace(mesh: MeshData, strength: number, scale: number, seed =
     const d = fbm3(v[0] * s, v[1] * s, v[2] * s, seed) * strength;
     return [v[0] + normals[i][0] * d, v[1] + normals[i][1] * d, v[2] + normals[i][2] * d] as V;
   });
-  return { vertices, faces: mesh.faces, smooth: mesh.smooth };
+  return { ...mesh, vertices };
 }
 
 /** Edges whose two faces meet at more than `angle` degrees (0 = every edge between two faces). */
@@ -247,7 +260,8 @@ export function mirror(mesh: MeshData, axis: 0 | 1 | 2, merge = 0.001): MeshData
     }
   });
   const faces = [...mesh.faces, ...mesh.faces.map((f) => [...f].reverse().map((v) => map[v]))];
-  return compact({ vertices, faces, smooth: mesh.smooth }).mesh;
+  const index = usesSlots(mesh) ? [...mesh.materialIndex!, ...mesh.materialIndex!] : undefined;
+  return compact({ vertices, faces, smooth: mesh.smooth }, index).mesh;
 }
 
 /** One Catmull–Clark step. Boundary edges and vertices use the standard crease rules. */
@@ -325,8 +339,10 @@ export function catmullClarkCreased(mesh: MeshData, creases?: Set<string>): { me
   const fpBase = out.length;
   out.push(...fp);
   const faces: number[][] = [];
+  const index: number[] | undefined = usesSlots(mesh) ? [] : undefined;
   mesh.faces.forEach((f, fi) => {
     for (let i = 0; i < f.length; i++) {
+      index?.push(mesh.materialIndex![fi]);
       const v = f[i];
       const next = f[(i + 1) % f.length];
       const prev = f[(i - 1 + f.length) % f.length];
@@ -344,5 +360,5 @@ export function catmullClarkCreased(mesh: MeshData, creases?: Set<string>): { me
       next.add(ek(e.b, ep));
     }
   }
-  return { mesh: { vertices: out, faces, smooth: mesh.smooth }, creases: next };
+  return { mesh: withMaterialIndex({ vertices: out, faces, smooth: mesh.smooth }, index), creases: next };
 }

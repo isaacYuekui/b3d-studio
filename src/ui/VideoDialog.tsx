@@ -1,6 +1,7 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useApp, useCtx } from './context';
 import { animationOf } from '../core/animation';
+import { SOUND_LABEL, soundEvents } from '../core/sound';
 import { downloadBlob } from './actions';
 
 const PRESETS = [
@@ -18,7 +19,17 @@ export function VideoDialog({ onClose }: { onClose: () => void }) {
   const [preset, setPreset] = useState<(typeof PRESETS)[number]['id']>('landscape');
   const [draft, setDraft] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [result, setResult] = useState<{ url: string; name: string; size: number; blob: Blob } | null>(null);
+  const [result, setResult] = useState<{ url: string; name: string; size: number; blob: Blob; audio: string | null; sound: AudioBuffer | null } | null>(null);
+  const [sound, setSound] = useState(() => {
+    try {
+      return localStorage.getItem('b3d.videoSound') !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const doc = useApp((s) => s.doc);
+  // What the soundtrack will have (worked out from the scene: explosions, waves, fire…).
+  const heard = useMemo(() => [...new Set(soundEvents(doc, start, end, fps).map((e) => SOUND_LABEL[e.kind]))], [doc, start, end, fps]);
   const [error, setError] = useState<string | null>(null);
   const cancel = useRef(false);
   const t0 = useRef(0);
@@ -35,10 +46,10 @@ export function VideoDialog({ onClose }: { onClose: () => void }) {
     t0.current = performance.now();
     setProgress({ done: 0, total: frames });
     try {
-      const out = await vp.renderVideo({ width: p.w * k, height: p.h * k, start, end, fps, onProgress: (done, total) => setProgress({ done, total }), isCancelled: () => cancel.current });
+      const out = await vp.renderVideo({ width: p.w * k, height: p.h * k, start, end, fps, sound: sound && heard.length > 0, onProgress: (done, total) => setProgress({ done, total }), isCancelled: () => cancel.current });
       if (out) {
         const name = `b3d-${preset}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.mp4`;
-        setResult({ url: URL.createObjectURL(out.blob), name, size: out.blob.size, blob: out.blob });
+        setResult({ url: URL.createObjectURL(out.blob), name, size: out.blob.size, blob: out.blob, audio: out.audio, sound: out.sound });
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -72,6 +83,23 @@ export function VideoDialog({ onClose }: { onClose: () => void }) {
               <input id="video-draft" type="checkbox" checked={draft} onChange={(e) => setDraft(e.target.checked)} />
               Draft quality ({Math.round(p.w * k)}×{Math.round(p.h * k)}, renders faster)
             </label>
+            <label className="script-clear">
+              <input
+                id="video-sound"
+                type="checkbox"
+                checked={sound && heard.length > 0}
+                disabled={!heard.length}
+                onChange={(e) => {
+                  setSound(e.target.checked);
+                  try {
+                    localStorage.setItem('b3d.videoSound', e.target.checked ? '1' : '0');
+                  } catch {
+                    /* per session only */
+                  }
+                }}
+              />
+              Sound effects{heard.length ? `: ${heard.join(', ')}` : ' (nothing in this scene makes a sound yet: explosions, waves, fire, rain, crashes)'}
+            </label>
             <p className="help-foot">
               Frames {start}–{end} at {fps} fps: {(frames / fps).toFixed(1)} s of video, {Math.round(p.w * k)}×{Math.round(p.h * k)}.
               {hasCamera ? ' Rendered through the scene camera.' : ' No scene camera yet: the current view is used. Set one with Animation > Key Camera or View > Set Scene Camera.'}
@@ -100,9 +128,24 @@ export function VideoDialog({ onClose }: { onClose: () => void }) {
         {result && (
           <div className="video-result">
             <video src={result.url} controls playsInline muted loop autoPlay className={`video-preview ${preset}`} data-testid="video-preview" />
-            <p className="help-foot">{result.name} · {result.size < 1e6 ? `${Math.max(1, Math.round(result.size / 1e3))} KB` : `${(result.size / 1e6).toFixed(1)} MB`}</p>
+            <p className="help-foot">
+              {result.name} · {result.size < 1e6 ? `${Math.max(1, Math.round(result.size / 1e3))} KB` : `${(result.size / 1e6).toFixed(1)} MB`}
+              {result.audio ? ' · with sound (unmute the preview to hear it)' : result.sound ? ' · this browser can’t put sound in the video: save the sound separately below' : ''}
+            </p>
             <div className="prop-actions" style={{ padding: 0 }}>
               <button className="btn" onClick={() => setResult(null)}>Render again</button>
+              {result.sound && (
+                <button
+                  className="btn"
+                  data-testid="video-save-sound"
+                  onClick={async () => {
+                    const { encodeWav } = await import('../engine/soundSynth');
+                    downloadBlob(result.name.replace(/\.mp4$/, '-sound.wav'), encodeWav(result.sound!));
+                  }}
+                >
+                  Save sound (.wav)
+                </button>
+              )}
               <button className="btn primary" data-testid="video-save" onClick={() => downloadBlob(result.name, result.blob)}>Save video</button>
             </div>
             <p className="help-foot">

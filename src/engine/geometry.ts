@@ -2,8 +2,39 @@
 // Kept free of scene/engine state so it can be unit-tested in Node.
 
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
+import { SubMesh } from '@babylonjs/core/Meshes/subMesh';
+import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { MeshData, Vec3 } from '../core/types';
 import { faceNormal, triangulate } from '../core/mesh/topology';
+import { usesSlots } from '../core/mesh/materialIndex';
+
+/** Index ranges per material slot (faces are ordered by slot), for multi-material meshes. */
+export type SlotGroups = { slot: number; start: number; count: number }[];
+
+/** Faces in slot order (stable), and the slot ranges — or the faces as they are when one material. */
+function slotOrder(mesh: MeshData): { order: number[]; slots: number[] | null } {
+  const order = mesh.faces.map((_, i) => i);
+  if (!usesSlots(mesh)) return { order, slots: null };
+  const mi = mesh.materialIndex!;
+  order.sort((a, b) => mi[a] - mi[b] || a - b);
+  return { order, slots: mi };
+}
+
+/** Index ranges per slot, after building `vd` with slotOrder. */
+function groupsOf(starts: { slot: number; start: number }[], total: number): SlotGroups {
+  return starts.map((s, i) => ({ slot: s.slot, start: s.start, count: (starts[i + 1]?.start ?? total) - s.start })).filter((g) => g.count > 0);
+}
+
+/** Put mesh data on a Babylon mesh, with one sub-mesh per material slot it uses. */
+export function applyGeometry(node: Mesh, mesh: MeshData): void {
+  const vd = buildVertexData(mesh);
+  vd.applyToMesh(node, true);
+  const groups = (vd as VertexData & { groups?: SlotGroups }).groups;
+  const nv = node.getTotalVertices();
+  node.subMeshes = [];
+  if (!groups) new SubMesh(0, 0, nv, 0, vd.indices?.length ?? 0, node);
+  else for (const gr of groups) new SubMesh(gr.slot, 0, nv, gr.start, gr.count, node);
+}
 import { toBabylonVec } from './coords';
 
 /**
@@ -18,20 +49,31 @@ export function buildVertexData(mesh: MeshData): VertexData {
   const positions: number[] = [];
   const indices: number[] = [];
   const vd = new VertexData();
+  const { order, slots } = slotOrder(mesh);
+  const starts: { slot: number; start: number }[] = [];
+  const mark = (fi: number) => {
+    if (slots && (!starts.length || starts[starts.length - 1].slot !== slots[fi])) starts.push({ slot: slots[fi], start: indices.length });
+  };
   if (mesh.smooth) {
     for (const v of mesh.vertices) positions.push(...toBabylonVec(v));
-    for (const face of mesh.faces) for (const t of triangulate(mesh.vertices, face)) indices.push(...t);
+    for (const fi of order) {
+      mark(fi);
+      for (const t of triangulate(mesh.vertices, mesh.faces[fi])) indices.push(...t);
+    }
     const normals: number[] = [];
     VertexData.ComputeNormals(positions, indices, normals);
     vd.positions = positions;
     vd.indices = indices;
     vd.normals = normals;
     vd.uvs = boxUVs(mesh, normals);
+    if (slots) (vd as VertexData & { groups?: SlotGroups }).groups = groupsOf(starts, indices.length);
     return vd;
   }
   const normals: number[] = [];
   const uvs: number[] = [];
-  for (const face of mesh.faces) {
+  for (const fi of order) {
+    const face = mesh.faces[fi];
+    mark(fi);
     const n = faceNormal(mesh.vertices, face);
     const bn = toBabylonVec(n);
     const base = positions.length / 3;
@@ -50,6 +92,7 @@ export function buildVertexData(mesh: MeshData): VertexData {
   vd.indices = indices;
   vd.normals = normals;
   vd.uvs = uvs;
+  if (slots) (vd as VertexData & { groups?: SlotGroups }).groups = groupsOf(starts, indices.length);
   return vd;
 }
 

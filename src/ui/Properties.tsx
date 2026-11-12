@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useApp, useCtx } from './context';
 import { NumberField } from './NumberField';
 import { Icon } from './icons';
 import { subtree } from '../core/commands';
 import type { Command, ModifierPatch } from '../core/commands';
-import type { LightType, Material as SceneMaterial, Vec3 } from '../core/types';
+import type { LightType, Material as SceneMaterial, SceneObject, Vec3 } from '../core/types';
 import { isRenderable } from '../core/types';
 import { runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
@@ -38,6 +38,8 @@ import { canEdit, setSmooth, setSubdivision, togglePose } from './editing';
 import { poseAt, poseEdit } from '../core/rig';
 import { transformVerts } from '../core/mesh/ops';
 import { centroid } from '../core/mesh/topology';
+import { MAX_SLOTS, slotOf } from '../core/mesh/materialIndex';
+import { convertMode, flush } from '../core/mesh/select';
 
 const AXES = ['x', 'y', 'z'] as const;
 
@@ -111,6 +113,9 @@ export function Properties() {
     if (editId) setTabState('object');
   }, [editId]);
 
+  // Material slot shown in the Material tab (0 = main material).
+  const [matSlot, setMatSlot] = useState(0);
+
   // Every field edit goes through preview+commit so scrubs and typed values are one undo step each.
   const commit = (cmd: Command) => {
     store.preview(cmd);
@@ -125,6 +130,10 @@ export function Properties() {
       </div>
     );
   }
+
+  // The material being edited: the main one, or a slot (2, 3… in Blender's list).
+  const slot = Math.min(matSlot, o.materialSlots?.length ?? 0);
+  const mat = slot ? o.materialSlots![slot - 1] : o.material;
 
   // Animated objects show (and edit, via auto-key) their pose at the current frame.
   const shown = transformAt(doc, o.id, frame) ?? o.transform;
@@ -264,14 +273,15 @@ export function Properties() {
 
       {cur === 'material' && (
         <Section title="Material">
+          {o.type === 'mesh' && <SlotsBar o={o} slot={slot} setSlot={setMatSlot} />}
           <label className="prop-row">
             <span>Texture</span>
             <select
               id="mat-texture"
               aria-label="Texture"
-              value={o.material.texture ?? ''}
+              value={mat.texture ?? ''}
               onChange={(e) =>
-                store.dispatch({ type: 'setMaterial', id: o.id, material: e.target.value ? { texture: e.target.value, baseColor: '#ffffff' } : { texture: null } }, { select: false })
+                store.dispatch({ type: 'setMaterial', id: o.id, slot, material: e.target.value ? { texture: e.target.value, baseColor: '#ffffff' } : { texture: null } }, { select: false })
               }
             >
               <option value="">None (plain colour)</option>
@@ -280,17 +290,17 @@ export function Properties() {
               ))}
             </select>
           </label>
-          {o.material.texture && scalar('Repeat', o.material.textureScale, 0.01, 1000, (v) => ({ type: 'setMaterial', id: o.id, material: { textureScale: v } }), 0.1)}
-          {!o.material.texture && (
+          {mat.texture && scalar('Repeat', mat.textureScale, 0.01, 1000, (v) => ({ type: 'setMaterial', id: o.id, slot, material: { textureScale: v } }), 0.1)}
+          {!mat.texture && (
             <label className="prop-row">
               <span>Pattern</span>
               <select
                 id="mat-pattern"
                 aria-label="Procedural pattern"
-                value={o.material.pattern?.type ?? ''}
+                value={mat.pattern?.type ?? ''}
                 onChange={(e) => {
                   const t = e.target.value as PatternType | '';
-                  store.dispatch({ type: 'setMaterial', id: o.id, material: { pattern: t ? { ...PATTERN_DEFAULTS[t], ...(o.material.pattern ? keepPatternLook(o.material.pattern) : {}), type: t } : null } }, { select: false });
+                  store.dispatch({ type: 'setMaterial', id: o.id, slot, material: { pattern: t ? { ...PATTERN_DEFAULTS[t], ...(mat.pattern ? keepPatternLook(mat.pattern) : {}), type: t } : null } }, { select: false });
                 }}
               >
                 <option value="">None</option>
@@ -300,9 +310,9 @@ export function Properties() {
               </select>
             </label>
           )}
-          {!o.material.texture && o.material.pattern && (() => {
-            const p = o.material.pattern;
-            const setP = (patch: Partial<Pattern>): Command => ({ type: 'setMaterial', id: o.id, material: { pattern: { ...p, ...patch } } });
+          {!mat.texture && mat.pattern && (() => {
+            const p = mat.pattern;
+            const setP = (patch: Partial<Pattern>): Command => ({ type: 'setMaterial', id: o.id, slot, material: { pattern: { ...p, ...patch } } });
             return (
               <>
                 <label className="prop-row">
@@ -330,47 +340,47 @@ export function Properties() {
               type="color"
               id="mat-base"
               aria-label="Base color"
-              value={o.material.baseColor}
-              onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, material: { baseColor: e.target.value } })}
+              value={mat.baseColor}
+              onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, slot, material: { baseColor: e.target.value } })}
               onBlur={() => store.commitPreview()}
             />
           </label>
-          {scalar('Metallic', o.material.metallic, 0, 1, (v) => ({ type: 'setMaterial', id: o.id, material: { metallic: v } }))}
-          {scalar('Roughness', o.material.roughness, 0, 1, (v) => ({ type: 'setMaterial', id: o.id, material: { roughness: v } }))}
-          {scalar('Alpha', o.material.alpha, 0, 1, (v) => ({ type: 'setMaterial', id: o.id, material: { alpha: v } }))}
+          {scalar('Metallic', mat.metallic, 0, 1, (v) => ({ type: 'setMaterial', id: o.id, slot, material: { metallic: v } }))}
+          {scalar('Roughness', mat.roughness, 0, 1, (v) => ({ type: 'setMaterial', id: o.id, slot, material: { roughness: v } }))}
+          {scalar('Alpha', mat.alpha, 0, 1, (v) => ({ type: 'setMaterial', id: o.id, slot, material: { alpha: v } }))}
           <label className="prop-row">
             <span>Emission</span>
             <input
               type="color"
               id="mat-emission"
               aria-label="Emission color"
-              value={o.material.emission}
-              onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, material: { emission: e.target.value, emissionStrength: o.material.emissionStrength || 1 } })}
+              value={mat.emission}
+              onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, slot, material: { emission: e.target.value, emissionStrength: mat.emissionStrength || 1 } })}
               onBlur={() => store.commitPreview()}
             />
           </label>
-          {scalar('Strength', o.material.emissionStrength, 0, 100, (v) => ({ type: 'setMaterial', id: o.id, material: { emissionStrength: v } }), 0.1)}
-          <details className="mat-more" open={!!(o.material.clearcoat || o.material.sheen || o.material.transmission || o.material.subsurface || o.material.anisotropy)}>
+          {scalar('Strength', mat.emissionStrength, 0, 100, (v) => ({ type: 'setMaterial', id: o.id, slot, material: { emissionStrength: v } }), 0.1)}
+          <details className="mat-more" open={!!(mat.clearcoat || mat.sheen || mat.transmission || mat.subsurface || mat.anisotropy)}>
             <summary>More: clearcoat, glass, sheen, skin…</summary>
             {(['clearcoat', 'clearcoatRoughness', 'transmission', 'sheen', 'subsurface', 'anisotropy'] as const).map((k) =>
-              scalar(EXTRA_LABEL[k], o.material[k] ?? (k === 'clearcoatRoughness' ? 0.03 : 0), 0, 1, (v) => ({ type: 'setMaterial', id: o.id, material: { [k]: v } })),
+              scalar(EXTRA_LABEL[k], mat[k] ?? (k === 'clearcoatRoughness' ? 0.03 : 0), 0, 1, (v) => ({ type: 'setMaterial', id: o.id, slot, material: { [k]: v } })),
             )}
-            {(o.material.transmission ?? 0) > 0 && scalar('IOR', o.material.ior ?? 1.5, 1, 3, (v) => ({ type: 'setMaterial', id: o.id, material: { ior: v } }))}
-            {(o.material.sheen ?? 0) > 0 && (
+            {(mat.transmission ?? 0) > 0 && scalar('IOR', mat.ior ?? 1.5, 1, 3, (v) => ({ type: 'setMaterial', id: o.id, slot, material: { ior: v } }))}
+            {(mat.sheen ?? 0) > 0 && (
               <label className="prop-row">
                 <span>Sheen colour</span>
-                <input type="color" aria-label="Sheen colour" value={o.material.sheenColor ?? '#ffffff'} onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, material: { sheenColor: e.target.value } })} onBlur={() => store.commitPreview()} />
+                <input type="color" aria-label="Sheen colour" value={mat.sheenColor ?? '#ffffff'} onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, slot, material: { sheenColor: e.target.value } })} onBlur={() => store.commitPreview()} />
               </label>
             )}
-            {(o.material.subsurface ?? 0) > 0 && (
+            {(mat.subsurface ?? 0) > 0 && (
               <label className="prop-row">
                 <span>Subsurface colour</span>
-                <input type="color" aria-label="Subsurface colour" value={o.material.subsurfaceColor ?? '#ff6040'} onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, material: { subsurfaceColor: e.target.value } })} onBlur={() => store.commitPreview()} />
+                <input type="color" aria-label="Subsurface colour" value={mat.subsurfaceColor ?? '#ff6040'} onChange={(e) => store.preview({ type: 'setMaterial', id: o.id, slot, material: { subsurfaceColor: e.target.value } })} onBlur={() => store.commitPreview()} />
               </label>
             )}
             <div className="mat-presets">
               {MATERIAL_PRESETS.map((pr) => (
-                <button key={pr.name} className="btn" data-mat-preset={pr.name} onClick={() => store.dispatch({ type: 'setMaterial', id: o.id, material: pr.material }, { select: false })}>{pr.name}</button>
+                <button key={pr.name} className="btn" data-mat-preset={pr.name} onClick={() => store.dispatch({ type: 'setMaterial', id: o.id, slot, material: pr.material }, { select: false })}>{pr.name}</button>
               ))}
             </div>
           </details>
@@ -737,6 +747,88 @@ function AnimationSection({ id, animated }: { id: string; animated: boolean }) {
           : 'Insert a key, go to another frame, move the object, and insert another key. Play (Space) to see it move.'}
       </p>
     </Section>
+  );
+}
+
+/**
+ * Material slots (Blender's list in Material Properties): pick the material to edit, add or
+ * remove slots, and in Edit Mode assign the selected faces to a slot or select its faces.
+ */
+function SlotsBar({ o, slot, setSlot }: { o: SceneObject; slot: number; setSlot: (s: number) => void }) {
+  const { store } = useCtx();
+  const edit = useApp((s) => (s.edit?.id === o.id ? s.edit : null));
+  const mats = [o.material, ...(o.materialSlots ?? [])];
+  const used = useMemo(() => {
+    const m = o.mesh;
+    const counts = mats.map(() => 0);
+    if (m) m.faces.forEach((_, f) => counts[Math.min(slotOf(m, f), mats.length - 1)]++);
+    return counts;
+  }, [o.mesh, mats.length]);
+  const swatch = (m: SceneObject['material']) => (m.pattern ? m.pattern.colorB : m.texture ? '#9a8f80' : m.baseColor);
+  return (
+    <>
+      <div className="prop-row wrap">
+        <span>Slots</span>
+        <div className="seg-text" role="radiogroup" aria-label="Material slots">
+          {mats.map((m, i) => (
+            <button key={i} role="radio" aria-checked={slot === i} className={slot === i ? 'active' : ''} data-mat-slot={i} title={`${used[i]} face${used[i] === 1 ? '' : 's'}`} onClick={() => setSlot(i)}>
+              <span className="slot-swatch" style={{ background: swatch(m) }} />
+              {i === 0 ? 'Main' : `Slot ${i + 1}`}
+            </button>
+          ))}
+          {mats.length <= MAX_SLOTS && (
+            <button
+              data-testid="mat-slot-add"
+              title="Add a material slot (starts as a copy of the main material)"
+              onClick={() => {
+                store.dispatch({ type: 'setMaterial', id: o.id, slot: mats.length, material: {} }, { select: false });
+                setSlot(mats.length);
+              }}
+            >
+              +
+            </button>
+          )}
+        </div>
+      </div>
+      {(slot > 0 || edit) && (
+        <div className="prop-actions">
+          {edit && (
+            <>
+              <button
+                className="btn primary"
+                data-testid="mat-assign"
+                disabled={!edit.sel.faces.length}
+                onClick={() => store.dispatch({ type: 'assignMaterial', id: o.id, slot, faces: edit.sel.faces }, { select: false })}
+              >
+                Assign to {edit.sel.faces.length} face{edit.sel.faces.length === 1 ? '' : 's'}
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  const m = o.mesh!;
+                  const faces = m.faces.map((_, f) => f).filter((f) => slotOf(m, f) === slot);
+                  store.setEdit({ ...edit, sel: convertMode(m, 'face', edit.mode, flush(m, 'face', { verts: [], edges: [], faces })) });
+                }}
+              >
+                Select
+              </button>
+            </>
+          )}
+          {slot > 0 && (
+            <button
+              className="btn danger"
+              onClick={() => {
+                store.dispatch({ type: 'removeMaterialSlot', id: o.id, slot }, { select: false });
+                setSlot(slot - 1);
+              }}
+            >
+              Remove slot
+            </button>
+          )}
+        </div>
+      )}
+      {mats.length > 1 && !edit && <p className="prop-hint">Faces use these materials by slot. In Edit Mode, select faces and press Assign.</p>}
+    </>
   );
 }
 

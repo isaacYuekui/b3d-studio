@@ -31,6 +31,7 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Node } from '@babylonjs/core/node';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import { MultiMaterial } from '@babylonjs/core/Materials/multiMaterial';
 import { RawCubeTexture } from '@babylonjs/core/Materials/Textures/rawCubeTexture';
 import { HDRCubeTexture } from '@babylonjs/core/Materials/Textures/hdrCubeTexture';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
@@ -64,7 +65,7 @@ import { guessUnitScale, isUserAsset, updateUserModelMeta, userModelMetaNow, use
 
 class MissingModel extends Error {}
 import { babylonQuatToEulerDeg, clean, eulerDegToBabylonQuat, fromBabylonVec, toBabylonVec } from './coords';
-import { buildVertexData } from './geometry';
+import { applyGeometry } from './geometry';
 import { subtree } from '../core/commands';
 import { EditOverlay } from './EditOverlay';
 import { rippleNormalTexture } from './water';
@@ -98,6 +99,9 @@ interface Entry {
   /** Rebuild key — when it changes, the node is recreated. */
   key: string;
   material?: PBRMaterial;
+  /** Material slots 2, 3… (faces pick them by sub-mesh), combined with `material` in `multi`. */
+  slotMats?: PBRMaterial[];
+  multi?: MultiMaterial;
   light?: Light;
   /** Force fields with an explosion light (its brightness follows the frame). */
   flash?: PointLight;
@@ -434,7 +438,7 @@ export class Viewport {
       if (!want) {
         if (this.oceans.has(id)) {
           this.oceans.delete(id);
-          if (o?.mesh && e?.node instanceof Mesh) buildVertexData(applyModifiers(o.mesh, o.modifiers)).applyToMesh(e.node, true);
+          if (o?.mesh && e?.node instanceof Mesh) applyGeometry(e.node, applyModifiers(o.mesh, o.modifiers));
         }
         continue;
       }
@@ -547,6 +551,8 @@ export class Viewport {
           um.alphaMode = s.shape === 'fire' ? 1 /* additive */ : 2 /* blend */;
           um.backFaceCulling = false;
           mesh.hasVertexAlpha = true;
+          // Glowing fire draws after smoke, so flames show through a smoke column instead of vanishing in it.
+          mesh.alphaIndex = s.shape === 'fire' ? 2 : 1;
           mat = um;
         } else {
           mesh =
@@ -787,7 +793,7 @@ export class Viewport {
       if (now.has(id)) continue;
       const o = doc.objects[id];
       const e = this.entries.get(id);
-      if (o?.mesh && e?.node instanceof Mesh) buildVertexData(applyModifiers(o.mesh, o.modifiers)).applyToMesh(e.node, true);
+      if (o?.mesh && e?.node instanceof Mesh) applyGeometry(e.node, applyModifiers(o.mesh, o.modifiers));
     }
     this.skinned = now;
   }
@@ -803,7 +809,7 @@ export class Viewport {
   /** Update a skinned mesh's vertices in place (smooth meshes: positions + normals only). */
   private updateDeformed(node: Mesh, mesh: MeshData) {
     if (!mesh.smooth) {
-      buildVertexData(mesh).applyToMesh(node, true);
+      applyGeometry(node, mesh);
       node.refreshBoundingInfo();
       return;
     }
@@ -811,7 +817,7 @@ export class Viewport {
     const n = mesh.vertices.length;
     const fresh = !t || node.getTotalVertices() !== n || node.metadata?.topo !== mesh.faces;
     if (fresh) {
-      buildVertexData(mesh).applyToMesh(node, true);
+      applyGeometry(node, mesh);
       t = { indices: Array.from(node.getIndices() ?? []) };
       this.topo.set(mesh.faces, t);
       node.metadata = { ...node.metadata, topo: mesh.faces };
@@ -1179,6 +1185,8 @@ export class Viewport {
     e.shadow?.dispose();
     e.light?.dispose();
     e.flash?.dispose();
+    e.multi?.dispose();
+    e.slotMats?.forEach((m) => m.dispose());
     e.material?.dispose();
     e.node.dispose(false, true);
   }
@@ -1203,7 +1211,7 @@ export class Viewport {
         e = undefined;
       }
       if (e && o.mesh && (e.last?.mesh !== o.mesh || e.last?.modifiers !== o.modifiers) && e.node instanceof Mesh) {
-        buildVertexData(applyModifiers(o.mesh, o.modifiers)).applyToMesh(e.node, true);
+        applyGeometry(e.node, applyModifiers(o.mesh, o.modifiers));
         e.node.refreshBoundingInfo();
       }
       if (!e) {
@@ -1527,6 +1535,51 @@ export class Viewport {
     if (meta && !meta.max) void updateUserModelMeta(asset, { min: min.asArray() as Vec3, max: max.asArray() as Vec3 });
   }
 
+  /** A scene material on a Babylon PBR material (Principled-style settings, textures, patterns). */
+  private applyMaterial(mat: PBRMaterial, m: SceneMaterial, prev?: SceneMaterial) {
+    this.applyTexture(mat, m, prev);
+    mat.albedoColor = Color3.FromHexString(m.baseColor).toLinearSpace();
+    // With a texture, metal/roughness come from its maps (scalars act as multipliers).
+    mat.metallic = m.texture ? 1 : m.metallic;
+    mat.roughness = m.texture ? 1 : m.roughness;
+    // A glowing pattern's map carries the colour; its strength scales it (and replaces Emission).
+    const glow = !m.texture && m.pattern?.glow ? m.pattern.glow : 0;
+    mat.emissiveColor = glow ? new Color3(glow, glow, glow) : Color3.FromHexString(m.emission).toLinearSpace().scale(m.emissionStrength);
+    mat.alpha = m.alpha;
+    mat.transparencyMode = m.alpha < 1 ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
+    // A pattern carries the colour itself.
+    if (!m.texture && m.pattern) mat.albedoColor = Color3.White();
+    applyPrincipled(mat, m);
+  }
+
+  /** Material slots: one PBR material per extra slot, and a multi-material when there are any. */
+  private applySlots(e: Entry, o: SceneObject, prev?: SceneObject) {
+    const slots = o.materialSlots ?? [];
+    const mats = (e.slotMats ??= []);
+    while (mats.length > slots.length) mats.pop()!.dispose();
+    slots.forEach((m, i) => {
+      let mat = mats[i];
+      const had = !!mat;
+      if (!mat) {
+        mat = new PBRMaterial(`${o.id}-slot${i + 1}`, this.scene);
+        mat.backFaceCulling = e.material!.backFaceCulling;
+        mat.twoSidedLighting = e.material!.twoSidedLighting;
+        mats.push(mat);
+      }
+      if (!had || m !== prev?.materialSlots?.[i]) this.applyMaterial(mat, m, had ? prev?.materialSlots?.[i] : undefined);
+    });
+    if (!(e.node instanceof Mesh)) return;
+    if (slots.length) {
+      e.multi ??= new MultiMaterial(`${o.id}-multi`, this.scene);
+      e.multi.subMaterials = [e.material!, ...mats];
+      e.node.material = e.multi;
+    } else {
+      e.node.material = e.material!;
+      e.multi?.dispose();
+      e.multi = undefined;
+    }
+  }
+
   /** Photo-scanned PBR maps from the library (colour, normal, AO/roughness/metal). */
   private applyTexture(mat: PBRMaterial, m: SceneMaterial, prev?: SceneMaterial) {
     if (prev && prev.texture === m.texture && prev.textureScale === m.textureScale && prev.pattern === m.pattern) return;
@@ -1610,7 +1663,7 @@ export class Viewport {
         return MeshBuilder.CreateGround(o.name, { width: 2, height: 2 }, s);
       case 'mesh': {
         const mesh = new Mesh(o.name, s);
-        buildVertexData(applyModifiers(o.mesh!, o.modifiers)).applyToMesh(mesh, true);
+        applyGeometry(mesh, applyModifiers(o.mesh!, o.modifiers));
         return mesh;
       }
       default:
@@ -1624,23 +1677,8 @@ export class Viewport {
     n.setEnabled(o.visible);
     if (!(this.dragging && o.id === this.store.getState().selection)) this.applyTransform(n, o);
 
-    if (e.material && o.material !== prev?.material) {
-      const m = o.material;
-      const mat = e.material;
-      this.applyTexture(mat, m, prev?.material);
-      mat.albedoColor = Color3.FromHexString(m.baseColor).toLinearSpace();
-      // With a texture, metal/roughness come from its maps (scalars act as multipliers).
-      mat.metallic = m.texture ? 1 : m.metallic;
-      mat.roughness = m.texture ? 1 : m.roughness;
-      // A glowing pattern's map carries the colour; its strength scales it (and replaces Emission).
-      const glow = !m.texture && m.pattern?.glow ? m.pattern.glow : 0;
-      mat.emissiveColor = glow ? new Color3(glow, glow, glow) : Color3.FromHexString(m.emission).toLinearSpace().scale(m.emissionStrength);
-      mat.alpha = m.alpha;
-      mat.transparencyMode = m.alpha < 1 ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
-      // A pattern carries the colour itself.
-      if (!m.texture && m.pattern) mat.albedoColor = Color3.White();
-      applyPrincipled(mat, m);
-    }
+    if (e.material && o.material !== prev?.material) this.applyMaterial(e.material, o.material, prev?.material);
+    if (e.material && o.materialSlots !== prev?.materialSlots) this.applySlots(e, o, prev);
     if (e.material && o.water && (o.water !== prev?.water || o.material !== prev?.material)) {
       const mat = e.material;
       let tex = this.waters.get(o.id)?.tex;
@@ -2138,8 +2176,8 @@ export class Viewport {
    * can encode it). Deterministic: every frame is posed from the timeline, rendered,
    * copied, and encoded, so the result never drops frames however slow the device is.
    */
-  async renderVideo(opts: { width: number; height: number; start: number; end: number; fps: number; onProgress?: (done: number, total: number) => void; isCancelled?: () => boolean }): Promise<{ blob: Blob; codec: string } | null> {
-    const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, QUALITY_HIGH, getFirstEncodableVideoCodec } = await import('mediabunny');
+  async renderVideo(opts: { width: number; height: number; start: number; end: number; fps: number; sound?: boolean; onProgress?: (done: number, total: number) => void; isCancelled?: () => boolean }): Promise<{ blob: Blob; codec: string; audio: string | null; sound: AudioBuffer | null } | null> {
+    const { Output, Mp4OutputFormat, BufferTarget, CanvasSource, AudioBufferSource, QUALITY_HIGH, getFirstEncodableVideoCodec, getFirstEncodableAudioCodec } = await import('mediabunny');
     const W = Math.round(opts.width / 2) * 2;
     const H = Math.round(opts.height / 2) * 2;
     const codec = await getFirstEncodableVideoCodec(['avc', 'hevc', 'vp9', 'av1'], { width: W, height: H });
@@ -2171,7 +2209,32 @@ export class Viewport {
     const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
     const source = new CanvasSource(copy, { codec, quality: QUALITY_HIGH, keyFrameInterval: 2 });
     output.addVideoTrack(source, { frameRate: opts.fps });
+    // Automatic sound effects from the scene (explosions, waves, fire…), when asked for and possible.
+    let sound: AudioBuffer | null = null;
+    let audio: string | null = null;
+    let audioSource: InstanceType<typeof AudioBufferSource> | null = null;
+    if (opts.sound) {
+      try {
+        const [{ soundEvents }, { renderSoundtrack, SAMPLE_RATE }] = await Promise.all([import('../core/sound'), import('./soundSynth')]);
+        const events = soundEvents(this.store.getState().doc, opts.start, opts.end, opts.fps);
+        sound = await renderSoundtrack(events, (opts.end - opts.start + 1) / opts.fps);
+        if (sound) {
+          audio = await getFirstEncodableAudioCodec(['aac', 'opus'], { numberOfChannels: 2, sampleRate: SAMPLE_RATE });
+          if (audio) {
+            audioSource = new AudioBufferSource({ codec: audio as 'aac' | 'opus', quality: QUALITY_HIGH });
+            output.addAudioTrack(audioSource);
+          }
+        }
+      } catch (e) {
+        console.warn('Sound effects skipped:', e);
+        audio = null;
+      }
+    }
     await output.start();
+    if (audioSource && sound) {
+      await audioSource.add(sound);
+      audioSource.close();
+    }
 
     const total = opts.end - opts.start + 1;
     let cancelled = false;
@@ -2194,7 +2257,7 @@ export class Viewport {
       }
       await output.finalize();
       const buf = (output.target as InstanceType<typeof BufferTarget>).buffer!;
-      return { blob: new Blob([buf], { type: 'video/mp4' }), codec };
+      return { blob: new Blob([buf], { type: 'video/mp4' }), codec, audio: audioSource ? audio : null, sound };
     } finally {
       this.forceBest = false;
       this.recording = false;

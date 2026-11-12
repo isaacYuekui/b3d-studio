@@ -84,4 +84,27 @@ describe('Cell fracture', () => {
     expect(moved.length).toBeGreaterThan(2);
     expect(() => validateCommand({ type: 'fracture', id: 'x', pieces: 1 })).toThrow(/pieces/);
   });
+
+  it('settling debris is never flung into the air (contact kicks are capped)', () => {
+    for (let seed = 1; seed <= 24; seed++) {
+      let doc = createDefaultDoc();
+      for (const c of [
+        { type: 'delete', ids: [...doc.order] },
+        { type: 'add', primitive: 'cube', id: 'floor', transform: { position: [0, 0, -1], scale: [6, 6, 1] } },
+        { type: 'setRigidBody', id: 'floor', rigid: { type: 'passive' } },
+        { type: 'add', primitive: 'cube', id: 'block', name: 'Block', transform: { position: [0, 0, 2.5], rotation: [30, 20, 0], scale: [0.8, 0.8, 0.8] } },
+        { type: 'setAnimation', start: 1, end: 48 },
+        { type: 'setRigidBody', id: 'block', rigid: { type: 'active' } },
+        { type: 'fracture', id: 'block', pieces: 8, seed },
+        { type: 'bakePhysics' },
+      ])
+        doc = applyCommand(doc, validateCommand(c)).doc;
+      for (const o of Object.values(doc.objects).filter((x) => x.name.startsWith('Block piece'))) {
+        const k = doc.animation!.tracks[o.id];
+        const top = Math.max(...k.map((x) => x.transform.position[2]));
+        expect(top, `seed ${seed} ${o.id}`).toBeLessThan(k[0].transform.position[2] + 0.3);
+        expect(k[k.length - 1].transform.position[2], `seed ${seed} ${o.id}`).toBeLessThan(k[0].transform.position[2] - 0.3);
+      }
+    }
+  });
 });

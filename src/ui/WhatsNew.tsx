@@ -2,6 +2,8 @@ import { useState } from 'react';
 
 /** Newest first. The first entry is the current version. */
 const CHANGES: { v: string; items: string[] }[] = [
+  { v: '3.16', items: ['Videos come with sound effects worked out from the scene: explosions, waves, fire, rain, crashes (Render video → Sound effects)'] },
+  { v: '3.15', items: ['Material slots: several materials on one mesh (Material tab → Slots; Edit Mode → Assign)', 'Broken pieces show rough broken wall inside instead of windows'] },
   { v: '3.14', items: ['Spray off the top of a tsunami: Water tab → Add spray on the crest (example: Tsunami harbour)'] },
   { v: '3.13', items: ['Lit windows at night: Glow on patterns, towns light up after dark', 'Explosions flash light on everything around them (Force Field → Light flash)'] },
   { v: '3.12', items: ['Add → Town: village, town or city with windows and roofs, ready to blow up'] },
