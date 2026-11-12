@@ -5,6 +5,14 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Collections (v3.17)
+
+- **Outliner collections** like Blender: **+** on the Scene Collection row makes one; tap a collection to make it active — new objects go into it
+- **M** (or Object → Move to Collection) moves the selected object, with its children, to a collection or a new one
+- Each collection has an **eye** (hide in the viewport — also switches off its physics, force fields and particles) and a **camera** (leave out of rendered videos but keep in the viewport)
+- Long-press / right-click a collection: Select objects, Rename (or double-click), Delete keeping the objects, Delete with objects
+- Scripts: `addCollection`, `setCollection`, `removeCollection`, `moveToCollection`, and `collection` on `add`
+
 ## Sound effects (v3.16)
 
 - **Render video** now adds a **soundtrack made from the scene**, like a Foley artist watching the cut: explosion fields boom (with debris landing after), camera shakes rumble, a giant wave roars louder as it reaches the camera, fire crackles, a flying meteor whooshes, rain hisses, stormy seas wash, and baked physics pieces crash where they land

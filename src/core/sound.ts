@@ -3,6 +3,7 @@
 // crash down — so the soundtrack is worked out from it (like a Foley artist watching the cut).
 // This file only finds the events and how loud they are over time; the engine synthesises them.
 
+import { isShown } from './collections';
 import { animationOf, evaluateCamera, transformAt } from './animation';
 import { activeFields } from './fields';
 import { crestFrames } from './particles';
@@ -62,7 +63,7 @@ export function soundEvents(doc: SceneDoc, from: number, to: number, fps: number
 
   for (const id of doc.order) {
     const o = doc.objects[id];
-    if (!o?.visible) continue;
+    if (!isShown(doc, o)) continue;
 
     // Explosions: a short, strong push-out force field.
     const f = o.field;

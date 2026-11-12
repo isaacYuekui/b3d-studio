@@ -3,6 +3,7 @@
 // disappears after its lifetime. Motion is worked out in closed form for any frame, so particles
 // scrub, play backwards and render to video exactly the same every time — no baking needed.
 
+import { isShown } from './collections';
 import { applyModifiers } from './mesh/modifiers';
 import { primitiveMesh } from './mesh/primitives';
 import { triangulate } from './mesh/topology';
@@ -237,7 +238,7 @@ export function particlesAt(doc: SceneDoc, id: string, frame: number, fps: numbe
   const out: ParticleFrame = { positions: [], sizes: [], spins: [], dirs: [], life: [] };
   const o = doc.objects[id];
   const s = o?.particles;
-  if (!o || !s || !o.visible) return out;
+  if (!o || !s || !isShown(doc, o)) return out;
   const seeds = seedsFor(o, s);
   if (!seeds) return out;
   const n = seeds.p.length;

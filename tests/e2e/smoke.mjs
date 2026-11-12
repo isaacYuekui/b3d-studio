@@ -1013,6 +1013,47 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Collections (v3.17): Outliner folders, M to move, eye / camera toggles, active collection.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'cube', id: 'box' }] });
+    s.select(null);
+  });
+  await page.click('[data-testid="collection-add"]');
+  await page.click('[data-menu="Add"]');
+  await page.click('.menu [data-action="add.sphere"]');
+  const a = await page.evaluate(() => {
+    const st = window.__b3d.store.getState();
+    const c = st.doc.collections?.[0];
+    const sphere = Object.values(st.doc.objects).find((o) => o.type === 'sphere');
+    return { c: c?.name, active: st.activeCollection === c?.id, sphereIn: sphere?.collection === c?.id, rows: document.querySelectorAll('[data-collection-row]').length };
+  });
+  check('v3.17: + in the Outliner makes a collection, and new objects go into it', a.c === 'Collection' && a.active && a.sphereIn && a.rows === 2, JSON.stringify(a));
+  await page.click('[data-outliner-id="box"]');
+  await page.mouse.move(640, 400);
+  await page.keyboard.press('KeyM');
+  await page.waitForSelector('[data-testid="move-collection-menu"]');
+  const cid = await page.evaluate(() => window.__b3d.store.getState().doc.collections[0].id);
+  await page.click(`[data-move-to="${cid}"]`);
+  const moved = await page.evaluate(() => window.__b3d.store.getState().doc.objects.box.collection);
+  check('v3.17: M → collection moves the selected object', moved === cid, String(moved));
+  await page.click(`[data-collection-eye="${cid}"]`);
+  const hid = await page.evaluate(() => { const vp = window.__b3d.viewport(); return [...vp.entries.values()].map((e) => e.node.isEnabled()); });
+  check('v3.17: the collection eye hides everything in it', hid.length === 2 && hid.every((x) => !x), JSON.stringify(hid));
+  await page.click(`[data-collection-eye="${cid}"]`);
+  await page.click(`[data-collection-render="${cid}"]`);
+  const r = await page.evaluate(() => { const c = window.__b3d.store.getState().doc.collections[0]; return { visible: c.visible, render: c.render, shown: [...window.__b3d.viewport().entries.values()].every((e) => e.node.isEnabled()) }; });
+  check('v3.17: the camera toggle leaves a collection out of renders but shown in the viewport', r.visible && !r.render && r.shown, JSON.stringify(r));
+  await page.click(`[data-collection-row="${cid}"]`, { button: 'right' });
+  await page.click('[data-testid="collection-delete"]');
+  const after = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; return { cols: d.collections?.length ?? 0, objs: d.order.length, any: d.order.some((id) => d.objects[id].collection) }; });
+  check('v3.17: deleting a collection keeps its objects (back in the Scene Collection)', after.cols === 0 && after.objs === 2 && !after.any, JSON.stringify(after));
+  check('v3.17: no errors (collections)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Sound effects (v3.16): videos get an automatic soundtrack from the scene (here: an explosion).
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });

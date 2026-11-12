@@ -147,6 +147,8 @@ export interface SceneObject {
   parentId: string | null;
   transform: Transform;
   visible: boolean;
+  /** Collection id (Outliner folder); none = the Scene Collection. */
+  collection?: string;
   material: Material;
   /** More materials for faces of a mesh (Blender's material slots 2, 3…); faces pick one with mesh.materialIndex. */
   materialSlots?: Material[];
@@ -231,6 +233,8 @@ export interface SceneDoc {
   objects: Record<string, SceneObject>;
   /** Creation order — gives the Outliner a stable ordering. */
   order: string[];
+  /** Outliner collections, in display order. */
+  collections?: import('./collections').Collection[];
   world?: World;
   camera?: SceneCamera;
   lens?: CameraLens;
