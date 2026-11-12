@@ -192,7 +192,7 @@ export function Properties() {
   const tabs: [PropTab, string][] = [['scene', 'Scene'], ['object', 'Object']];
   if (canEdit(o)) tabs.push(['modifiers', 'Modifiers'], ['physics', 'Physics']);
   else if (o.type === 'empty') tabs.push(['physics', 'Physics']);
-  const dataLabel = o.text ? 'Text' : o.water ? 'Water' : o.light ? 'Light' : o.type === 'model' ? 'Model' : o.type === 'armature' ? 'Armature' : null;
+  const dataLabel = o.text ? 'Text' : o.water ? 'Water' : o.light ? 'Light' : o.type === 'model' ? 'Model' : o.type === 'armature' ? 'Armature' : o.modifiers?.curve ? 'Curve' : null;
   if (dataLabel) tabs.push(['data', dataLabel]);
   if (isRenderable(o.type) && o.type !== 'model') tabs.push(['material', 'Material']);
   const cur: PropTab = tabs.some(([t]) => t === tab) ? tab : 'object';
