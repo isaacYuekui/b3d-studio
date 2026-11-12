@@ -143,10 +143,12 @@ function addTown(style: 'village' | 'town' | 'city'): Action {
       let prefix: string = style;
       for (let k = 2; objs[`${prefix}-b0`] || objs[`${prefix}-ground`]; k++) prefix = `${style}${k}`;
       const before = c.store.getState().doc;
-      c.store.dispatch({ type: 'addTown', style, prefix, size: size[style], seed: Math.floor(Math.random() * 1e6) }, { select: false });
+      // After dark the windows come on.
+      const dark = ['night', 'dusk'].includes(before.world?.time ?? '');
+      c.store.dispatch({ type: 'addTown', style, prefix, size: size[style], seed: Math.floor(Math.random() * 1e6), ...(dark ? { lights: 3 } : {}) }, { select: false });
       if (c.store.getState().doc !== before) {
         c.viewport()?.frame(false);
-        c.store.notify(`${style === 'city' ? 'City' : style === 'town' ? 'Town' : 'Village'} added — each building is its own object (Quick Explode works on them)`);
+        c.store.notify(`${style === 'city' ? 'City' : style === 'town' ? 'Town' : 'Village'} added${dark ? ' with lit windows' : ''} — each building is its own object (Quick Explode works on them)`);
       }
     },
   };

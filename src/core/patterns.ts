@@ -13,7 +13,22 @@ export interface Pattern {
   scale: number;
   /** Bump strength 0..1 (0 = flat). */
   bump: number;
+  /**
+   * Light from the pattern (0 = none), like plugging the texture into Emission Strength: colour A
+   * areas glow in `glowColor`. On Windows, a random half of the windows are lit instead (night).
+   */
+  glow?: number;
+  /** Colour of the glow (default warm light). */
+  glowColor?: string;
 }
+
+export const DEFAULT_GLOW_COLOR = '#ffc27a';
+
+/** Windows per tile in each direction (so neighbouring windows differ); the scale still means storeys per metre. */
+export const WINDOW_GRID = 4;
+
+/** How many pattern repeats one texture tile holds (the texture's own scale is divided by this). */
+export const patternTile = (type: PatternType) => (type === 'windows' ? WINDOW_GRID : 1);
 
 const fract = (x: number) => x - Math.floor(x);
 const smooth = (t: number) => t * t * (3 - 2 * t);
@@ -61,6 +76,9 @@ function voronoi(u: number, v: number, cells: number, seed: number): number {
     }
   return Math.min(1, best / 0.9);
 }
+
+/** Glass area of one window cell (cell coordinates 0..1; v runs up the wall on box-mapped faces). */
+const inWindow = (fu: number, fv: number) => fu > 0.27 && fu < 0.73 && fv > 0.33 && fv < 0.82;
 
 /**
  * The pattern's mix values on a size×size tile (row-major, v down). One tile spans 1 / scale
@@ -112,17 +130,43 @@ export function patternValues(type: PatternType, size = 256, seed = 1): Float32A
           t = u;
           break;
         case 'windows': {
-          // One storey × one bay: wall (B) with an inset window (A) and a thin frame; each window a
-          // slightly different shade, like blinds and reflections. Scale 1/3 = 3 m storeys.
-          const inX = u > 0.27 && u < 0.73, inY = v > 0.33 && v < 0.82;
-          const frame = u > 0.24 && u < 0.76 && v > 0.3 && v < 0.85;
-          if (inX && inY) t = 0.06 * hash(Math.floor(u * 4), Math.floor(v * 4), 64, seed) + (Math.abs(u - 0.5) < 0.012 ? 0.3 : 0);
-          else if (frame) t = 0.5;
-          else t = 0.84 + 0.16 * fbm(u, v, 8, 2, seed + 3);
+          // A 4 × 4 grid of storey × bay cells: wall (B) with an inset window (A) and a thin frame;
+          // each window a slightly different shade, like blinds and reflections.
+          const cx = Math.floor(u * WINDOW_GRID), cy = Math.floor(v * WINDOW_GRID);
+          const fu = fract(u * WINDOW_GRID), fv = fract(v * WINDOW_GRID);
+          if (inWindow(fu, fv)) t = 0.02 + 0.08 * hash(cx, cy, WINDOW_GRID, seed) + (Math.abs(fu - 0.5) < 0.012 ? 0.3 : 0);
+          else if (fu > 0.24 && fu < 0.76 && fv > 0.3 && fv < 0.85) t = 0.5;
+          else t = 0.84 + 0.16 * fbm(u, v, 8 * WINDOW_GRID, 2, seed + 3);
           break;
         }
       }
       out[j * size + i] = t;
+    }
+  return out;
+}
+
+/**
+ * Where the pattern glows (0..1) on the same tile as patternValues. Most patterns glow where they
+ * show colour A; Windows lights about half its windows (each a little brighter or dimmer, some
+ * with the blind half down) and leaves walls and frames dark.
+ */
+export function patternGlowValues(type: PatternType, size = 256, seed = 1): Float32Array {
+  if (type !== 'windows') {
+    const v = patternValues(type, size, seed);
+    return v.map((t) => 1 - t);
+  }
+  const out = new Float32Array(size * size);
+  for (let j = 0; j < size; j++)
+    for (let i = 0; i < size; i++) {
+      const u = i / size, v = j / size;
+      const cx = Math.floor(u * WINDOW_GRID), cy = Math.floor(v * WINDOW_GRID);
+      const fu = fract(u * WINDOW_GRID), fv = fract(v * WINDOW_GRID);
+      if (!inWindow(fu, fv) || Math.abs(fu - 0.5) < 0.012) continue;
+      if (hash(cx, cy, WINDOW_GRID, seed + 11) > 0.5) continue; // unlit window
+      const level = 0.55 + 0.45 * hash(cx, cy, WINDOW_GRID, seed + 23);
+      // Some blinds are half down: the top of the window stays dark (v runs up the wall).
+      const blind = hash(cx, cy, WINDOW_GRID, seed + 37) < 0.3 && fv > 0.6;
+      out[j * size + i] = blind ? level * 0.15 : level;
     }
   return out;
 }

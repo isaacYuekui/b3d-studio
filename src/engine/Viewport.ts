@@ -12,6 +12,7 @@ import { cameraFov, equivalentFocal } from '../core/lens';
 import { isBillboard, particlesAt } from '../core/particles';
 import { floatTransform, oceanDisplace, oceanGrid } from '../core/ocean';
 import { shakeCamera } from '../core/shake';
+import { DEFAULT_FLASH_COLOR, flashLevel } from '../core/fields';
 import type { ParticleFrame, ParticleSettings } from '../core/particles';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
@@ -67,7 +68,7 @@ import { buildVertexData } from './geometry';
 import { subtree } from '../core/commands';
 import { EditOverlay } from './EditOverlay';
 import { rippleNormalTexture } from './water';
-import { isSharedTexture, patternColorTexture, patternNormalTexture } from './patternTexture';
+import { isSharedTexture, patternColorTexture, patternGlowTexture, patternNormalTexture } from './patternTexture';
 import { proportionalWeights } from '../core/mesh/proportional';
 import { brushStep, strokeContext } from '../core/mesh/sculpt';
 import type { StrokeContext } from '../core/mesh/sculpt';
@@ -98,6 +99,8 @@ interface Entry {
   key: string;
   material?: PBRMaterial;
   light?: Light;
+  /** Force fields with an explosion light (its brightness follows the frame). */
+  flash?: PointLight;
   /** Armatures: the drawn bones (rebuilt when the pose changes). */
   bonesKey?: string;
   shadow?: ShadowGenerator;
@@ -611,11 +614,13 @@ export class Viewport {
           b = (base.b + (0.55 - base.b) * hot) * (1 - cool);
           a = Math.min(1, t / 0.08) * Math.pow(1 - t, 1.5) * 0.8;
         } else {
-          // Smoke: grows and spreads, fades in quickly and thins out slowly.
+          // Smoke: grows and spreads, fades in quickly and thins out slowly. Glow brightens it
+          // (sunlit steam, white spray) without making it additive like fire.
           sz *= 1 + t * 2.2;
-          r = base.r + (1 - base.r) * t * 0.25;
-          g = base.g + (1 - base.g) * t * 0.25;
-          b = base.b + (1 - base.b) * t * 0.25;
+          const lift = 1 + s.glow * 1.5;
+          r = (base.r + (1 - base.r) * t * 0.25) * lift;
+          g = (base.g + (1 - base.g) * t * 0.25) * lift;
+          b = (base.b + (1 - base.b) * t * 0.25) * lift;
           a = Math.min(1, t / 0.12) * (1 - t) * 0.55;
         }
         cols!.set([r, g, b, a], i * 4);
@@ -1130,6 +1135,7 @@ export class Viewport {
       if (e && o) this.applyTransform(e.node, o);
     }
     this.animated = now;
+    this.applyFlashes(state);
     this.applyRigs(state);
     if (state.cameraView) {
       const cam = (anim?.camera.length ? evaluateCamera(anim.camera, state.frame) : null) ?? state.doc.camera;
@@ -1137,6 +1143,18 @@ export class Viewport {
         const c = shakeCamera(cam, anim?.shakes, state.frame, anim?.fps ?? 24);
         this.placeCamera(c.position, c.target);
       }
+    }
+  }
+
+  /** Explosion lights on force fields: brightness for the current frame. */
+  private applyFlashes(state: AppState) {
+    const fps = state.doc.animation?.fps ?? 24, first = state.doc.animation?.start ?? 1;
+    for (const [id, e] of this.entries) {
+      const f = e.flash && state.doc.objects[id]?.field;
+      if (!f || !e.flash) continue;
+      e.flash.diffuse = Color3.FromHexString(f.flashColor ?? DEFAULT_FLASH_COLOR);
+      e.flash.specular = e.flash.diffuse;
+      e.flash.intensity = (f.flash ?? 0) * POINT_SCALE * flashLevel(f, state.frame, fps, first);
     }
   }
 
@@ -1154,12 +1172,13 @@ export class Viewport {
   }
 
   private keyFor(o: SceneObject): string {
-    return `${o.type}|${JSON.stringify(o.params ?? {})}|${o.light?.type ?? ''}|${o.asset ?? ''}|${o.field ? `${o.field.type}:${o.field.radius}` : ''}`;
+    return `${o.type}|${JSON.stringify(o.params ?? {})}|${o.light?.type ?? ''}|${o.asset ?? ''}|${o.field ? `${o.field.type}:${o.field.radius}:${o.field.flash ? 'flash' : ''}` : ''}`;
   }
 
   private disposeEntry(e: Entry) {
     e.shadow?.dispose();
     e.light?.dispose();
+    e.flash?.dispose();
     e.material?.dispose();
     e.node.dispose(false, true);
   }
@@ -1292,7 +1311,16 @@ export class Viewport {
     helper.intersectionThreshold = 0.15;
     helper.metadata = { id: o.id };
     helper.parent = node;
-    return { node, pick: helper, key, meshes: [] };
+    let flash: PointLight | undefined;
+    if (o.field?.flash) {
+      // Explosion light: off until the field starts (applyFlashes sets it per frame).
+      // Raised above the centre so the ground right under it isn't a white-hot spot (Babylon Y = up).
+      flash = new PointLight(`${o.id}-flash`, new Vector3(0, Math.min(10, Math.max(1, o.field.radius * 0.25)), 0), s);
+      flash.parent = node;
+      flash.intensity = 0;
+      flash.setEnabled(this.store.getState().shading === 'rendered');
+    }
+    return { node, pick: helper, key, meshes: [], flash };
   }
 
   /** Load a library model (cached per asset) and instance it under the entry's node. */
@@ -1503,7 +1531,7 @@ export class Viewport {
   private applyTexture(mat: PBRMaterial, m: SceneMaterial, prev?: SceneMaterial) {
     if (prev && prev.texture === m.texture && prev.textureScale === m.textureScale && prev.pattern === m.pattern) return;
     for (const t of [mat.albedoTexture, mat.bumpTexture, mat.metallicTexture]) if (t && !isSharedTexture(t)) t.dispose();
-    mat.albedoTexture = mat.bumpTexture = mat.metallicTexture = null;
+    mat.albedoTexture = mat.bumpTexture = mat.metallicTexture = mat.emissiveTexture = null;
     mat.useAmbientOcclusionFromMetallicTextureRed = mat.useRoughnessFromMetallicTextureGreen = mat.useMetallnessFromMetallicTextureBlue = false;
     if (!m.texture && m.pattern) {
       // Procedural pattern: colour map + bump from the same values (Blender: texture → colour and bump).
@@ -1512,6 +1540,8 @@ export class Viewport {
         mat.bumpTexture = patternNormalTexture(this.scene, m.pattern.type, m.pattern.scale, m.pattern.bump);
         mat.invertNormalMapX = mat.invertNormalMapY = false;
       }
+      // Glow: the pattern drives emission (lit windows at night, glowing cracks…).
+      if (m.pattern.glow) mat.emissiveTexture = patternGlowTexture(this.scene, m.pattern);
       return;
     }
     if (!m.texture) return;
@@ -1602,7 +1632,9 @@ export class Viewport {
       // With a texture, metal/roughness come from its maps (scalars act as multipliers).
       mat.metallic = m.texture ? 1 : m.metallic;
       mat.roughness = m.texture ? 1 : m.roughness;
-      mat.emissiveColor = Color3.FromHexString(m.emission).toLinearSpace().scale(m.emissionStrength);
+      // A glowing pattern's map carries the colour; its strength scales it (and replaces Emission).
+      const glow = !m.texture && m.pattern?.glow ? m.pattern.glow : 0;
+      mat.emissiveColor = glow ? new Color3(glow, glow, glow) : Color3.FromHexString(m.emission).toLinearSpace().scale(m.emissionStrength);
       mat.alpha = m.alpha;
       mat.transparencyMode = m.alpha < 1 ? PBRMaterial.PBRMATERIAL_ALPHABLEND : PBRMaterial.PBRMATERIAL_OPAQUE;
       // A pattern carries the colour itself.
@@ -1648,6 +1680,7 @@ export class Viewport {
     const sceneLights = [...this.entries.values()].filter((e) => e.light);
     const useStudio = !rendered || sceneLights.length === 0;
     this.studio.forEach((l) => l.setEnabled(useStudio));
+    for (const e of this.entries.values()) e.flash?.setEnabled(rendered);
     const casters = [...this.entries.values()].flatMap((e) => e.meshes);
     let shadowCount = 0;
     for (const e of sceneLights) {

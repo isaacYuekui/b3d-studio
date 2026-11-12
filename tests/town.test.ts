@@ -3,7 +3,8 @@ import { boxMesh, hipRoof, townBuildingIds, townCommands, DEFAULT_TOWN } from '.
 import { isWatertight, signedVolume } from '../src/core/mesh/topology';
 import { applyCommand, validateCommand, validateSceneDoc } from '../src/core/commands';
 import { createDefaultDoc } from '../src/core/store';
-import { patternValues } from '../src/core/patterns';
+import { patternGlowValues, patternTile, patternValues, WINDOW_GRID } from '../src/core/patterns';
+import type { Command } from '../src/core/commands';
 
 describe('town generator', () => {
   it('buildings and roofs are closed, outward-facing solids', () => {
@@ -46,11 +47,60 @@ describe('town generator', () => {
     expect(() => validateCommand({ type: 'addTown', size: [5, 5] })).toThrow(/size/);
   });
 
-  it('the windows pattern has dark windows in a light wall', () => {
-    const v = patternValues('windows', 64, 1);
-    const at = (u: number, w: number) => v[Math.floor(w * 64) * 64 + Math.floor(u * 64)];
-    expect(at(0.4, 0.5)).toBeLessThan(0.2); // glass
-    expect(at(0.1, 0.1)).toBeGreaterThan(0.7); // wall
+  it('the windows pattern has dark windows in a light wall, 4 × 4 per tile', () => {
+    const v = patternValues('windows', 256, 1);
+    const at = (u: number, w: number) => v[Math.floor(w * 256) * 256 + Math.floor(u * 256)];
+    for (let c = 0; c < WINDOW_GRID; c++) {
+      expect(at((c + 0.4) / WINDOW_GRID, (c + 0.5) / WINDOW_GRID)).toBeLessThan(0.2); // glass
+      expect(at((c + 0.1) / WINDOW_GRID, (c + 0.1) / WINDOW_GRID)).toBeGreaterThan(0.7); // wall
+    }
+    expect(patternTile('windows')).toBe(WINDOW_GRID);
+    expect(patternTile('bricks')).toBe(1);
+  });
+
+  it('lit windows: about half glow, walls and frames never do', () => {
+    const g = patternGlowValues('windows', 256, 1);
+    const v = patternValues('windows', 256, 1);
+    let lit = 0;
+    for (let cy = 0; cy < WINDOW_GRID; cy++)
+      for (let cx = 0; cx < WINDOW_GRID; cx++) {
+        const i = Math.floor(((cy + 0.45) / WINDOW_GRID) * 256) * 256 + Math.floor(((cx + 0.4) / WINDOW_GRID) * 256);
+        if (g[i] > 0.3) lit++;
+      }
+    expect(lit).toBeGreaterThan(3);
+    expect(lit).toBeLessThan(13);
+    for (let i = 0; i < v.length; i++) if (v[i] > 0.4) expect(g[i]).toBe(0);
+    // Other patterns glow where they show colour A.
+    const n = patternValues('noise', 32, 1), ng = patternGlowValues('noise', 32, 1);
+    expect(ng[5]).toBeCloseTo(1 - n[5]);
+  });
+
+  it('town lights put a glow on every facade, and facades are shifted by whole storeys', () => {
+    const cmds = townCommands({ ...DEFAULT_TOWN, lights: 3, seed: 4 });
+    const buildings = cmds.filter((c): c is Extract<Command, { type: 'add' }> => c.type === 'add' && /-b\d+$/.test(c.id ?? ''));
+    const storey = 3.2;
+    const offsets = new Set<string>();
+    for (const b of buildings) {
+      expect(b.material?.pattern?.glow).toBe(3);
+      expect(b.material?.pattern?.glowColor).toMatch(/^#[0-9a-f]{6}$/);
+      for (const o of b.mesh!.uvOffset!) expect(Math.abs(o / storey - Math.round(o / storey))).toBeLessThan(1e-9);
+      offsets.add(b.mesh!.uvOffset!.join());
+    }
+    expect(offsets.size).toBeGreaterThan(3);
+    expect(townCommands(DEFAULT_TOWN).some((c) => c.type === 'add' && c.material?.pattern?.glow)).toBe(false);
+    let doc = createDefaultDoc();
+    doc = applyCommand(doc, validateCommand({ type: 'addTown', lights: 2.5 })).doc;
+    expect(doc.objects['town-b0'].material.pattern?.glow).toBe(2.5);
+    expect(() => validateCommand({ type: 'addTown', lights: 500 })).toThrow(/lights/);
+  });
+
+  it('pattern glow validates and is dropped at 0', () => {
+    const ok = validateCommand({ type: 'setMaterial', id: 'x', material: { pattern: { type: 'noise', glow: 4, glowColor: '#ff8800' } } });
+    expect(ok.type === 'setMaterial' && ok.material.pattern).toMatchObject({ glow: 4, glowColor: '#ff8800' });
+    const off = validateCommand({ type: 'setMaterial', id: 'x', material: { pattern: { type: 'noise', glow: 0 } } });
+    expect(off.type === 'setMaterial' && off.material.pattern && 'glow' in off.material.pattern).toBe(false);
+    expect(() => validateCommand({ type: 'setMaterial', id: 'x', material: { pattern: { type: 'noise', glow: -1 } } })).toThrow(/glow/);
+    expect(() => validateCommand({ type: 'setMaterial', id: 'x', material: { pattern: { type: 'noise', glow: 1, glowColor: 'red' } } })).toThrow(/glowColor/);
   });
 });
 

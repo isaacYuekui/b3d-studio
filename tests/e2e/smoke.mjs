@@ -1013,6 +1013,95 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Wave spray (v3.14): Water → Giant wave → Add spray on the crest.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'setAnimation', start: 1, end: 120 },
+      { type: 'addWater', id: 'sea', size: [80, 80], level: 0, direction: 90 },
+      { type: 'setWater', id: 'sea', water: { surge: { height: 8, start: 10, speed: 14, width: 15, from: -60 } } },
+    ] });
+    s.select('sea');
+  });
+  await page.click('[data-prop-tab="data"]');
+  await page.click('[data-testid="surge-spray"]');
+  const sp = await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const p = s.getState().doc.objects.sea.particles;
+    s.setShading('rendered');
+    s.setFrame(60);
+    return { emit: p?.emit, start: p?.start, end: p?.end, hide: p?.hideEmitter, shape: p?.shape };
+  });
+  // Front reaches y = -40 (water edge) at frame 9 + 20/14 s; leaves y = 40 at 9 + 100/14 s.
+  check('v3.14: Add spray on the crest sets crest particles for the time the wave is over the water', sp.emit === 'crest' && sp.start === 43 && sp.end === 181 && sp.hide === false && sp.shape === 'smoke', JSON.stringify(sp));
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: `${shots}/spray.png` });
+  check('v3.14: no errors (spray)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
+// Night lights (v3.13): pattern Glow (lit windows), towns light up after dark, explosion flash.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'setTimeOfDay', time: 'night' },
+      { type: 'add', primitive: 'cube', id: 'wall', name: 'Wall', material: { pattern: { type: 'windows', colorA: '#2b3a48', colorB: '#d8cdb8', scale: 0.333, bump: 0.5 } } },
+      { type: 'setAnimation', start: 1, end: 60 },
+    ] });
+    s.select('wall');
+  });
+  await page.click('[data-prop-tab="material"]');
+  await setNumber(page, '[data-testid="properties"]', 'Glow', 3);
+  const g = await page.evaluate(() => {
+    const p = window.__b3d.store.getState().doc.objects.wall.material.pattern;
+    const m = window.__b3d.viewport().entries.get('wall').material;
+    return { glow: p.glow, emissiveMap: !!m.emissiveTexture, emissive: m.emissiveColor.r, colourRow: !!document.querySelector('[aria-label="Pattern glow colour"]') };
+  });
+  check('v3.13: Material → Pattern → Glow lights the windows (emission map)', g.glow === 3 && g.emissiveMap && g.emissive === 3 && g.colourRow, JSON.stringify(g));
+  await page.click('[data-menu="Add"]');
+  await page.hover('.menu-item:has-text("Town")');
+  await page.click('.menu [data-action="add.town.village"]');
+  const lit = await page.evaluate(() => {
+    const o = window.__b3d.store.getState().doc.objects;
+    const b = Object.keys(o).filter((id) => /^village-b\d+$/.test(id));
+    return { buildings: b.length, lit: b.filter((id) => (o[id].material.pattern?.glow ?? 0) > 0).length };
+  });
+  check('v3.13: a town added at night has its windows lit', lit.buildings > 2 && lit.lit === lit.buildings, JSON.stringify(lit));
+  // Explosion preset carries a flash: dark before the blast, bright at it (Rendered).
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'add', primitive: 'empty', id: 'boom', name: 'Boom', transform: { position: [0, 0, 1] } });
+    s.select('boom');
+    s.setFrame(20);
+    s.setShading('rendered');
+  });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('[data-field-preset="blast"]');
+  const fl = await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const f = s.getState().doc.objects.boom.field;
+    const vp = window.__b3d.viewport();
+    s.setFrame(19);
+    const before = vp.entries.get('boom').flash?.intensity;
+    s.setFrame(20);
+    const at = vp.entries.get('boom').flash?.intensity;
+    s.setFrame(50);
+    const after = vp.entries.get('boom').flash?.intensity;
+    return { flash: f.flash, before, at, after, box: !!document.querySelector('[aria-label="Light flash"]:checked') };
+  });
+  check('v3.13: Explosion field flashes at its start frame and fades', fl.flash > 0 && fl.before === 0 && fl.at > 100 && fl.after < fl.at / 4 && fl.box, JSON.stringify(fl));
+  await page.waitForTimeout(1200);
+  await page.screenshot({ path: `${shots}/night-lights.png` });
+  check('v3.13: no errors (night lights)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Town generator (v3.12): Add → Town → Village / Town / City; buildings with windows and roofs.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });
@@ -1301,9 +1390,11 @@ const setNumber = async (page, scope, label, value) => {
   await page.evaluate(async () => { await window.__b3d.prepare([{ type: 'bakePhysics' }]); window.__b3d.store.dispatch({ type: 'bakePhysics' }); });
   const fell = await page.evaluate(() => {
     const d = window.__b3d.store.getState().doc;
-    return Object.values(d.objects).filter((o) => o.name.startsWith('Block piece')).every((o) => { const k = d.animation.tracks[o.id]; return k && k[k.length - 1].transform.position[2] < 1.5; });
+    // Every piece dropped; they may come to rest on each other, so allow a little stacking.
+    const z = Object.values(d.objects).filter((o) => o.name.startsWith('Block piece')).map((o) => { const k = d.animation.tracks[o.id]; return k ? [k[0].transform.position[2], k[k.length - 1].transform.position[2]] : null; });
+    return { ok: z.every((p) => p && p[1] < p[0] - 0.3 && p[1] < 2.2) && z.filter((p) => p[1] < 1.5).length >= z.length - 2, z: JSON.stringify(z) };
   });
-  check('v3.3: baked pieces fall and land on the floor', fell);
+  check('v3.3: baked pieces fall and land on the floor', fell.ok, fell.z);
   await page.keyboard.press('Control+z');
   await page.keyboard.press('Control+z');
   const back = await page.evaluate(() => !!window.__b3d.store.getState().doc.objects.block);

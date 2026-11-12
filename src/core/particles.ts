@@ -9,6 +9,7 @@ import { triangulate } from './mesh/topology';
 import type { V } from './mesh/topology';
 import { mulberry32 } from './fracture';
 import { apply as applyM4, worldMatrix } from './rig';
+import { oceanDisplace } from './ocean';
 import type { M4 } from './rig';
 import type { MeshData, PrimitiveType, SceneDoc, SceneObject, Vec3 } from './types';
 import { PRIMITIVES } from './types';
@@ -38,7 +39,7 @@ export interface ParticleSettings {
   sizeRandom: number;
   shape: ParticleShape;
   color: string;
-  /** Glow (for sparks, embers): 0..1. */
+  /** Glow (for sparks, embers; on smoke it brightens the puffs): 0..1. */
   glow: number;
   /** Steady wind: a push in m/s² along X, Y, Z (e.g. [1.5, 0, 0] blows smoke sideways). */
   wind?: Vec3;
@@ -47,7 +48,14 @@ export interface ParticleSettings {
   /** Hide the emitting object itself in renders (Blender's "Show Emitter"). */
   hideEmitter: boolean;
   seed: number;
+  /**
+   * Where particles come from: the object's surface (default), or — on water with a giant wave —
+   * the top of the wave as it runs (spray thrown up and forward off the crest).
+   */
+  emit?: (typeof PARTICLE_EMIT)[number];
 }
+
+export const PARTICLE_EMIT = ['surface', 'crest'] as const;
 
 export const DEFAULT_PARTICLES: ParticleSettings = {
   count: 500,
@@ -77,6 +85,7 @@ export const PARTICLE_PRESETS: { id: string; label: string; settings: Partial<Pa
   { id: 'smoke', label: 'Smoke', settings: { count: 700, lifetime: 130, speed: 0.5, random: 0.3, gravity: -0.12, size: 0.7, sizeRandom: 0.4, shape: 'smoke', color: '#5d5d5d', glow: 0, ground: 'none', wind: [0.35, 0, 0] } },
   { id: 'explosion', label: 'Explosion', burst: 3, settings: { count: 900, lifetime: 34, speed: 5, random: 5, gravity: 0.3, size: 0.55, sizeRandom: 0.5, shape: 'fire', color: '#ff8a2a', glow: 1, ground: 'none' } },
   { id: 'dust', label: 'Dust cloud', burst: 4, settings: { count: 450, lifetime: 140, speed: 2.5, random: 3, gravity: -0.03, size: 1.1, sizeRandom: 0.5, shape: 'smoke', color: '#8a7f72', glow: 0, ground: 'none', wind: [0.3, 0, 0] } },
+  { id: 'spray', label: 'Wave spray', settings: { count: 8000, lifetime: 22, speed: 5, random: 2.2, gravity: 1, size: 1.1, sizeRandom: 0.6, shape: 'smoke', color: '#f2f6f8', glow: 0.5, ground: 'none', hideEmitter: false, emit: 'crest' } },
   { id: 'debris', label: 'Debris', settings: { count: 400, lifetime: 120, speed: 5, random: 4, gravity: 1, size: 0.12, sizeRandom: 0.7, shape: 'cube', color: '#7d746a', glow: 0, ground: 'stop' } },
 ];
 
@@ -168,6 +177,61 @@ export interface ParticleFrame {
 
 const G = 9.81;
 
+/**
+ * The crest of a water object's giant wave: where a spray particle starts (object space), given a
+ * surface point (for its place across the wave) and a 0..1 number (for how far over the top).
+ */
+function crestOf(o: SceneObject) {
+  const w = o.water!, g = w.surge!;
+  const a = ((w.direction ?? 0) * Math.PI) / 180;
+  const ux = Math.cos(a), uy = Math.sin(a);
+  // The water's extent along the wave's direction.
+  let lo = Infinity, hi = -Infinity;
+  for (const p of o.mesh?.vertices ?? []) {
+    const d = ux * p[0] + uy * p[1];
+    lo = Math.min(lo, d);
+    hi = Math.max(hi, d);
+  }
+  const half = Math.max(0.5, g.width / 2);
+  return {
+    ux,
+    uy,
+    speed: g.speed,
+    point(p: V, r: number, frame: number, fps: number): Vec3 | null {
+      const t = frame / fps;
+      const front = g.from + g.speed * Math.max(0, t - (g.start - 1) / fps);
+      // Most of it off the top of the crest; the rest is whitewater down the front face.
+      const u = r < 0.6 ? -0.2 + (0.5 * r) / 0.6 : 0.3 + (r - 0.6) * 2.5;
+      const along = front + half * u;
+      if (along < lo || along > hi) return null;
+      const side = -uy * p[0] + ux * p[1];
+      const x = ux * along - uy * side, y = uy * along + ux * side;
+      const [dx, dy, dz] = oceanDisplace(x, y, t, w, fps);
+      // Whitewater on the face sits just in front of it (not inside the water).
+      const out = u > 0.3 ? 1.2 : 0;
+      return [x + dx + ux * out, y + dy + uy * out, dz + out * 0.5];
+    },
+  };
+}
+
+/** Frames while a water object's giant wave is over the water (for spray), or null. */
+export function crestFrames(o: SceneObject, fps: number): { start: number; end: number } | null {
+  const g = o.water?.surge;
+  if (!g || !o.mesh?.vertices.length) return null;
+  const a = ((o.water!.direction ?? 0) * Math.PI) / 180;
+  let lo = Infinity, hi = -Infinity;
+  for (const p of o.mesh.vertices) {
+    const d = Math.cos(a) * p[0] + Math.sin(a) * p[1];
+    lo = Math.min(lo, d);
+    hi = Math.max(hi, d);
+  }
+  // front(f) = from + speed × (f − start + 1) / fps, from `start` on.
+  const at = (d: number) => g.start - 1 + ((d - g.from) / g.speed) * fps;
+  const start = Math.max(g.start, Math.floor(at(lo)));
+  const end = Math.ceil(at(hi));
+  return end > start ? { start, end } : null;
+}
+
 /** Where every living particle of an emitter is at `frame` (seconds = frames / fps). */
 export function particlesAt(doc: SceneDoc, id: string, frame: number, fps: number): ParticleFrame {
   const out: ParticleFrame = { positions: [], sizes: [], spins: [], dirs: [], life: [] };
@@ -182,6 +246,7 @@ export function particlesAt(doc: SceneDoc, id: string, frame: number, fps: numbe
   const w: Vec3 = s.wind ?? [0, 0, 0];
   let lastBirth = -Infinity;
   let M: M4 | null = null;
+  const crest = s.emit === 'crest' && o.water?.surge ? crestOf(o) : null;
   for (let i = 0; i < n; i++) {
     const birth = s.start + (n > 1 ? (span * i) / (n - 1) : 0);
     const age = frame - birth;
@@ -191,12 +256,22 @@ export function particlesAt(doc: SceneDoc, id: string, frame: number, fps: numbe
       M = worldMatrix(doc, id, Math.round(birth));
       lastBirth = birth;
     }
-    const p0 = applyM4(M, seeds.p[i]);
-    const nW = applyM4(M, seeds.n[i]);
-    const o0 = applyM4(M, [0, 0, 0]);
-    const nn: Vec3 = [nW[0] - o0[0], nW[1] - o0[1], nW[2] - o0[2]];
-    const nl = Math.hypot(...nn) || 1;
-    const v: Vec3 = [0, 1, 2].map((k) => (nn[k] / nl) * s.speed + seeds.dir[i][k] * s.random) as Vec3;
+    let p0: Vec3, v: Vec3;
+    if (crest) {
+      // Spray: born on top of the giant wave where it was at that moment, thrown up and forward.
+      const at = crest.point(seeds.p[i], seeds.spin[i] / 360, birth, fps);
+      if (!at) continue; // the wave isn't over the water then
+      p0 = applyM4(M, at);
+      const fwd = crest.speed * 0.45;
+      v = [crest.ux * fwd + seeds.dir[i][0] * s.random, crest.uy * fwd + seeds.dir[i][1] * s.random, s.speed + seeds.dir[i][2] * s.random];
+    } else {
+      p0 = applyM4(M, seeds.p[i]);
+      const nW = applyM4(M, seeds.n[i]);
+      const o0 = applyM4(M, [0, 0, 0]);
+      const nn: Vec3 = [nW[0] - o0[0], nW[1] - o0[1], nW[2] - o0[2]];
+      const nl = Math.hypot(...nn) || 1;
+      v = [0, 1, 2].map((k) => (nn[k] / nl) * s.speed + seeds.dir[i][k] * s.random) as Vec3;
+    }
     let t = age / fps;
     // Stop at the ground: find when it reaches z = 0 going down and hold it there.
     if (s.ground === 'stop' && p0[2] >= 0) {

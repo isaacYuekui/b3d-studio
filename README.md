@@ -5,6 +5,18 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Wave spray (v3.14)
+
+- **Water → Giant wave → Add spray on the crest**: white spray and mist thrown up and forward off the top of the tsunami as it runs in (Physics → Particles → *Wave spray*, or "Emit from: Giant wave crest" on any water with a giant wave)
+- *Tsunami harbour* now has spray on the wave
+
+## Night lights (v3.13)
+
+- **Glow** on procedural patterns (Material → Pattern): colour A areas give off light — on the **Windows** pattern, about half the windows light up (warm lamps, some cooler, some blinds half down), each building a different mix
+- **Add → Town** at dusk or night lights the windows by itself (`lights` in scripts)
+- **Force Field → Light flash**: an explosion lights up everything around it, then flickers out over about two seconds (on by default for the Explosion preset and Quick Explode)
+- *Meteor strike* now has lit windows, a glowing meteor and a blast flash
+
 ## Town generator (v3.12)
 
 - **Add → Town**: **Village** (houses with tiled hip roofs), **Town** (blocks with flat roofs) or **City** (towers) on a street grid, with an asphalt ground — each building a real-size mesh with a new **Windows** facade pattern (also in Material → Pattern), so it reads as a building from a distance
