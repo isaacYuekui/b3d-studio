@@ -9,6 +9,7 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 - **Your own pictures as textures**: Material → Texture → **Upload an image…** (photos are shrunk to 2048 px and kept on the device; *Your images* lists them; project files carry them along)
 - **Smart UV Project** (U in Edit Mode, Mesh / Object → UV): each side becomes a flat island at true size, packed into the square — the picture then follows the model instead of being projected in metres
+- **UV Editor** (Timeline → **▦ UV**): the UV map over your image; in Edit Mode tap faces to select them, drag an island to move it, and Scale / Rotate 90° / **Fit to image** with the buttons — the model updates live
 - UV maps survive moving vertices and Subdivision; tools that rebuild faces (extrude, bevel…) drop it, like a stretched map in Blender you re-unwrap; **Clear UV Map** goes back to box projection
 - Scripts: `unwrap`, `clearUv`, and `mesh.uv` (per face, one [u, v] per corner)
 

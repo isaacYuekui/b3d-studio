@@ -1048,6 +1048,27 @@ const setNumber = async (page, scope, label, value) => {
   await page.keyboard.press('KeyU');
   const again = await page.evaluate(() => window.__b3d.store.getState().doc.objects.crate.mesh.uv?.length);
   check('v3.18: U in Edit Mode unwraps (Smart UV Project)', again === 6, String(again));
+  // UV Editor (Timeline → UV): tap a face to select it, drag to move its island, scale with a button.
+  await page.click('[data-testid="tl-uv"]');
+  await page.waitForSelector('[data-testid="uv-canvas"]');
+  await page.evaluate(() => { const st = window.__b3d.store; st.setEdit({ ...st.getState().edit, mode: 'face', sel: { verts: [], edges: [], faces: [] } }); });
+  const before = await page.evaluate(() => window.__b3d.store.getState().doc.objects.crate.mesh.uv[1].map((p) => [...p]));
+  const box = await page.$eval('[data-uv-face="1"]', (el) => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  await page.mouse.click(box.x, box.y);
+  const picked = await page.evaluate(() => window.__b3d.store.getState().edit?.sel.faces);
+  await page.mouse.move(box.x, box.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 20, box.y - 10, { steps: 4 });
+  await page.mouse.up();
+  const after = await page.evaluate(() => window.__b3d.store.getState().doc.objects.crate.mesh.uv[1].map((p) => [...p]));
+  const du = after[0][0] - before[0][0], dv = after[0][1] - before[0][1];
+  check('v3.18: UV Editor — tap selects a face, dragging moves its UVs', JSON.stringify(picked) === '[1]' && du > 0.01 && dv > 0.005, JSON.stringify({ picked, du, dv }));
+  await page.click('[data-testid="uv-scale-up"]');
+  const scaled = await page.evaluate(() => window.__b3d.store.getState().doc.objects.crate.mesh.uv[1].map((p) => [...p]));
+  const span = (f) => Math.max(...f.map((p) => p[0])) - Math.min(...f.map((p) => p[0]));
+  check('v3.18: UV Editor scale button grows the selected island', Math.abs(span(scaled) / span(after) - 1.25) < 0.01, JSON.stringify({ a: span(after), b: span(scaled) }));
+  await page.screenshot({ path: `${shots}/uv-editor.png`, timeout: 60000 }).catch(() => {});
+  await page.click('[data-testid="tl-uv"]');
   await page.click('[data-testid="mode-toggle"]');
   await page.waitForTimeout(1200);
   await page.screenshot({ path: `${shots}/uv-texture.png`, timeout: 60000 }).catch(() => {});
