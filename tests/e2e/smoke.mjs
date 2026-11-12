@@ -1013,6 +1013,58 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Curves + Follow Path (v3.20): Add → Curve, edit points, an object and the camera follow it.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'setAnimation', start: 1, end: 48 }] });
+    s.select(null);
+  });
+  await page.click('[data-menu="Add"]');
+  await page.hover('.menu-item:has-text("Curve")');
+  await page.click('.menu [data-action="add.curve.bezier"]');
+  const c = await page.evaluate(() => {
+    const st = window.__b3d.store.getState();
+    const o = st.doc.objects[st.selection];
+    const e = window.__b3d.viewport().entries.get(st.selection);
+    return { id: o.id, pts: o.mesh.vertices.length, curve: !!o.modifiers?.curve, tris: (e.node.getIndices()?.length ?? 0) / 3 };
+  });
+  check('v3.20: Add → Curve → Bezier makes a curve drawn as a tube', c.curve && c.pts === 4 && c.tris > 50, JSON.stringify(c));
+  await page.click('[data-testid="mode-toggle"]');
+  await page.evaluate((id) => { const st = window.__b3d.store; st.setEdit({ id, mode: 'vert', sel: { verts: [3], edges: [], faces: [] } }); }, c.id);
+  await page.mouse.move(640, 400);
+  await page.keyboard.press('KeyE');
+  const ex = await page.evaluate((id) => ({ pts: window.__b3d.store.getState().doc.objects[id].mesh.vertices.length, sel: window.__b3d.store.getState().edit?.sel.verts }), c.id);
+  check('v3.20: E on the end point adds a point to the curve and selects it', ex.pts === 5 && JSON.stringify(ex.sel) === '[4]', JSON.stringify(ex));
+  await page.click('[data-testid="mode-toggle"]');
+  await page.evaluate(() => { const s = window.__b3d.store; const [id] = s.dispatch({ type: 'add', primitive: 'cube', id: 'car', transform: { scale: [0.2, 0.2, 0.2] } }); s.select(id); });
+  await page.click('[data-prop-tab="object"]');
+  await page.click('.prop-section-head:has-text("Follow Path")');
+  await page.selectOption('[aria-label="Follow curve"]', c.id);
+  const fol = await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const node = window.__b3d.viewport().entries.get('car').node;
+    s.setFrame(1);
+    const a = node.position.clone();
+    s.setFrame(48);
+    const b = node.position.clone();
+    return { follow: s.getState().doc.objects.car.follow, moved: Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) };
+  });
+  check('v3.20: Object → Follow Path moves the object along the curve over the frames', fol.follow?.curve === c.id && fol.moved > 1.5, JSON.stringify(fol));
+  await page.click('[data-prop-tab="scene"]');
+  const camHead = page.locator('.prop-section-head', { hasText: /^Camera$/ });
+  if ((await camHead.getAttribute('aria-expanded')) !== 'true') await camHead.click();
+  await page.selectOption('[aria-label="Camera follow curve"]', c.id);
+  const cf = await page.evaluate(() => window.__b3d.store.getState().doc.animation?.cameraFollow);
+  check('v3.20: the camera can follow the curve too (Scene → Camera → Follow path)', cf?.curve === c.id && cf.look === 'ahead', JSON.stringify(cf));
+  await page.evaluate(() => window.__b3d.store.setFrame(20));
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: `${shots}/curves.png`, timeout: 60000 }).catch(() => {});
+  check('v3.20: no errors (curves)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Shader Editor (v3.19): Use Nodes, add a Pattern Texture, wire it into Base Color, the material bakes.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 900 });

@@ -11,8 +11,8 @@ import { BACKGROUNDS, DEFAULT_LIGHT, DEFAULT_MATERIAL, DEFAULT_WORLD, IDENTITY, 
 import { DEFAULT_ANIMATION, EASINGS, animationOf, transformAt, upsertKey } from './animation';
 import { KEY_OPS, editKeys as editKeysIn } from './dopesheet';
 import type { KeyOp, KeyRef } from './dopesheet';
-import type { Animation, Easing, PoseKey } from './animation';
-import type { ArmatureData, Bone, BonePose, Background, CameraLens, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
+import type { Animation, CameraFollow, Easing, PoseKey } from './animation';
+import type { ArmatureData, Bone, BonePose, Background, CameraLens, FollowPath, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
 import { ALIGNS, DEFAULT_TEXT, FONTS, MAX_TEXT_LENGTH, textMesh } from './text';
@@ -22,6 +22,7 @@ import { MAX_COLLECTIONS, collectionById, collectionsOf, uniqueCollectionName, w
 import type { Collection } from './collections';
 import { carryUv, smartUvProject } from './mesh/uv';
 import { validateGraph } from './shaderNodes';
+import { deleteCurvePoints, extrudeCurve, subdivideCurve } from './curve';
 import { MAX_SLOTS, slotOf, surfaceSlots, transferMaterialIndex, usesSlots, validIndex, withMaterialIndex } from './mesh/materialIndex';
 import { DEFAULT_PARTICLES, PARTICLE_EMIT, PARTICLE_GROUND, PARTICLE_SHAPES } from './particles';
 import type { ParticleSettings } from './particles';
@@ -92,6 +93,12 @@ export type Command =
   | { type: 'setParent'; id: string; parentId: string | null }
   | { type: 'setColor'; id: string; color: string }
   | { type: 'setMaterial'; id: string; material: Partial<Material>; slot?: number }
+  /** Follow Path: an object moves along a curve object (null removes it). */
+  | { type: 'setFollow'; id: string; follow: FollowPath | null }
+  /** The scene camera flies along a curve (null removes it). */
+  | { type: 'setCameraFollow'; follow: CameraFollow | null }
+  /** Curve Edit Mode tools on the control points. */
+  | { type: 'editCurve'; id: string; op: 'extrude' | 'subdivide' | 'delete'; points: number[] }
   /** Smart UV Project (Blender: U → Smart UV Project): a UV map for the whole mesh. */
   | { type: 'unwrap'; id: string; angle?: number; margin?: number }
   /** Remove the UV map (back to box projection). */
@@ -623,6 +630,47 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       if (slot > MAX_SLOTS) throw new CommandError(`At most ${MAX_SLOTS + 1} materials per object`);
       slots[slot - 1] = { ...(slots[slot - 1] ?? o.material), ...cmd.material };
       return { doc: withObject(doc, { ...o, materialSlots: slots }), created: [] };
+    }
+
+    case 'setFollow': {
+      const o = requireObj(doc, cmd.id);
+      if (!cmd.follow) {
+        const { follow: _f, ...rest } = o;
+        void _f;
+        return { doc: withObject(doc, rest), created: [] };
+      }
+      const c = doc.objects[cmd.follow.curve];
+      if (!c?.modifiers?.curve) throw new CommandError('Follow Path needs a curve object (Add → Curve)');
+      if (cmd.follow.curve === o.id) throw new CommandError('A curve can’t follow itself');
+      return { doc: withObject(doc, { ...o, follow: { ...cmd.follow } }), created: [] };
+    }
+
+    case 'setCameraFollow': {
+      const a = animationOf(doc);
+      if (!cmd.follow) {
+        const { cameraFollow: _c, ...rest } = a;
+        void _c;
+        return { doc: { ...doc, animation: rest }, created: [] };
+      }
+      if (!doc.objects[cmd.follow.curve]?.modifiers?.curve) throw new CommandError('The camera can follow a curve object (Add → Curve)');
+      if (cmd.follow.look !== 'ahead' && !doc.objects[cmd.follow.look]) throw new CommandError(`No object ${cmd.follow.look} to look at`);
+      return { doc: { ...doc, animation: { ...a, cameraFollow: { ...cmd.follow } } }, created: [] };
+    }
+
+    case 'editCurve': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      if (!o.modifiers?.curve) throw new CommandError(`${o.name} is not a curve`);
+      const pts = o.mesh!.vertices;
+      let points: Vec3[];
+      try {
+        if (cmd.op === 'delete') points = deleteCurvePoints(pts, cmd.points);
+        else if (cmd.op === 'extrude') points = extrudeCurve(pts, cmd.points).points;
+        else points = subdivideCurve(pts, cmd.points, !!o.modifiers.curve.cyclic).points;
+      } catch (e) {
+        throw new CommandError(e instanceof Error ? e.message : String(e));
+      }
+      if (points.length > 1000) throw new CommandError('A curve can have up to 1000 points');
+      return { doc: withObject(doc, { ...o, mesh: { vertices: points, faces: [], smooth: true } }), created: [] };
     }
 
     case 'unwrap': {
@@ -1401,6 +1449,24 @@ export function validateMeshData(v: unknown): MeshData {
   return out;
 }
 
+function validateFollow(v: unknown): FollowPath {
+  if (!isRecord(v) || !isId(v.curve)) fail('follow needs {curve, start, end, orient}');
+  if (!isFrame(v.start) || !isFrame(v.end) || (v.end as number) <= (v.start as number)) fail('follow start and end must be frames, end after start');
+  const f: FollowPath = { curve: v.curve, start: v.start as number, end: v.end as number, orient: v.orient !== false };
+  if (v.from !== undefined) f.from = inRange(v.from, 0, 1) ? (v.from as number) : fail('follow from must be 0..1');
+  if (v.to !== undefined) f.to = inRange(v.to, 0, 1) ? (v.to as number) : fail('follow to must be 0..1');
+  return f;
+}
+
+function validateCameraFollow(v: unknown): CameraFollow {
+  if (!isRecord(v) || !isId(v.curve)) fail('camera follow needs {curve, start, end, look}');
+  if (!isFrame(v.start) || !isFrame(v.end) || (v.end as number) <= (v.start as number)) fail('camera follow start and end must be frames, end after start');
+  const look = v.look === undefined ? 'ahead' : v.look === 'ahead' || isId(v.look) ? (v.look as string) : fail('camera follow look must be "ahead" or an object id');
+  const f: CameraFollow = { curve: v.curve, start: v.start as number, end: v.end as number, look };
+  if (v.height !== undefined) f.height = inRange(v.height, -1000, 1000) ? (v.height as number) : fail('camera follow height must be -1000..1000 m');
+  return f;
+}
+
 /** Extra material slots (full materials when `partial` is false, as stored in a scene). */
 function validateSlots(v: unknown, partial: boolean): Material[] {
   if (!Array.isArray(v) || v.length > MAX_SLOTS) fail(`materialSlots must be a list of up to ${MAX_SLOTS} materials`);
@@ -1508,7 +1574,7 @@ function validateEditStep(raw: unknown, i: number): EditStep {
   return step;
 }
 
-export const MODIFIER_KEYS = ['mirror', 'array', 'solidify', 'bevel', 'subdivision', 'displace'] as const;
+export const MODIFIER_KEYS = ['curve', 'mirror', 'array', 'solidify', 'bevel', 'subdivision', 'displace'] as const;
 /** setModifiers: a value merges into that modifier, null removes it. */
 export type ModifierPatch = { [K in (typeof MODIFIER_KEYS)[number]]?: Partial<NonNullable<Modifiers[K]>> | null };
 
@@ -1525,6 +1591,12 @@ const isBool = (x: unknown) => typeof x === 'boolean';
 const intIn = (lo: number, hi: number) => (x: unknown) => Number.isInteger(x) && inRange(x, lo, hi);
 const numIn = (lo: number, hi: number) => (x: unknown) => inRange(x, lo, hi);
 const MOD_SPEC: Record<(typeof MODIFIER_KEYS)[number], Record<string, FieldSpec>> = {
+  curve: {
+    bevel: { def: 0.05, check: numIn(0, 20), msg: '0..20 m' },
+    resolution: { def: 12, check: intIn(1, 64), msg: 'a whole number 1..64' },
+    cyclic: { def: false, check: isBool, msg: 'true/false' },
+    sides: { def: 8, check: intIn(3, 32), msg: 'a whole number 3..32' },
+  },
   mirror: {
     x: { def: false, check: isBool, msg: 'true/false' },
     y: { def: false, check: isBool, msg: 'true/false' },
@@ -1624,6 +1696,7 @@ export function validateSceneObject(raw: unknown): SceneObject {
   };
   if (v.params !== undefined) obj.params = validateParams(v.params);
   if (v.collection !== undefined) obj.collection = isId(v.collection) ? v.collection : fail(`object ${v.id}: collection invalid`);
+  if (v.follow !== undefined) obj.follow = validateFollow(v.follow);
   if (v.materialSlots !== undefined) {
     const slots = validateSlots(v.materialSlots, false);
     if (slots.length) obj.materialSlots = slots;
@@ -1903,7 +1976,8 @@ export function validateAnimation(v: unknown, objects: Record<string, SceneObjec
       return { start: k.start as number, end: k.end as number, strength: k.strength as number, ...(k.frequency !== undefined ? { frequency: k.frequency as number } : {}) };
     });
   }
-  return { fps, start, end, tracks, camera, ...(poses ? { poses } : {}), ...(shakes?.length ? { shakes } : {}) };
+  const cameraFollow = v.cameraFollow !== undefined ? validateCameraFollow(v.cameraFollow) : undefined;
+  return { fps, start, end, tracks, camera, ...(poses ? { poses } : {}), ...(shakes?.length ? { shakes } : {}), ...(cameraFollow ? { cameraFollow } : {}) };
 }
 
 const REF_ID = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -1975,6 +2049,16 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (!Array.isArray(v.faces) || v.faces.length > LIMITS.faces || !v.faces.every((f) => Number.isInteger(f) && f >= 0)) fail('assignMaterial faces must be a list of face indices');
       return { type: 'assignMaterial', id: v.id, slot: v.slot as number, faces: [...(v.faces as number[])] };
     }
+    case 'setFollow': {
+      if (!isId(v.id)) fail('setFollow needs id');
+      return { type: 'setFollow', id: v.id, follow: v.follow === null ? null : validateFollow(v.follow) };
+    }
+    case 'setCameraFollow':
+      return { type: 'setCameraFollow', follow: v.follow === null ? null : validateCameraFollow(v.follow) };
+    case 'editCurve':
+      if (!isId(v.id) || !['extrude', 'subdivide', 'delete'].includes(v.op as string)) fail('editCurve needs id and op extrude / subdivide / delete');
+      if (!Array.isArray(v.points) || !v.points.every((x) => Number.isInteger(x) && x >= 0)) fail('editCurve points must be point indices');
+      return { type: 'editCurve', id: v.id, op: v.op as 'extrude', points: [...(v.points as number[])] };
     case 'unwrap': {
       if (!isId(v.id)) fail('unwrap needs id');
       const cmd: Extract<Command, { type: 'unwrap' }> = { type: 'unwrap', id: v.id };

@@ -62,7 +62,7 @@ import { PRIMITIVES, isRenderable, worldOf } from '../core/types';
 import type { PrimitiveType } from '../core/types';
 import { primitiveMesh } from '../core/mesh/primitives';
 import { catalogNow, hdriUrl, loadCatalog, modelUrl, textureUrl } from './library';
-import { animationOf, evaluateCamera, evaluateTransform, transformEdit } from '../core/animation';
+import { animationOf, sceneCameraAt, transformAt, transformEdit } from '../core/animation';
 import { guessUnitScale, isUserAsset, updateUserModelMeta, userModelMetaNow, userModelUrl } from './userModels';
 
 class MissingModel extends Error {}
@@ -1125,8 +1125,17 @@ export class Viewport {
       if (!e || !keys.length) continue;
       now.add(id);
       if (this.dragging && id === sel) continue;
-      const t = evaluateTransform(keys, state.frame)!;
+      const t = transformAt(state.doc, id, state.frame)!;
       this.applyTransform(e.node, { ...state.doc.objects[id], transform: t });
+    }
+    // Follow Path without keys of their own.
+    for (const id of state.doc.order) {
+      const o = state.doc.objects[id];
+      if (!o?.follow || now.has(id)) continue;
+      const e = this.entries.get(id);
+      if (!e || (this.dragging && id === sel)) continue;
+      now.add(id);
+      this.applyTransform(e.node, { ...o, transform: transformAt(state.doc, id, state.frame)! });
     }
     // Objects floating on water ride the waves (after their own animation).
     for (const id of state.doc.order) {
@@ -1150,7 +1159,7 @@ export class Viewport {
     this.applyFlashes(state);
     this.applyRigs(state);
     if (state.cameraView) {
-      const cam = (anim?.camera.length ? evaluateCamera(anim.camera, state.frame) : null) ?? state.doc.camera;
+      const cam = sceneCameraAt(state.doc, state.frame);
       if (cam) {
         const c = shakeCamera(cam, anim?.shakes, state.frame, anim?.fps ?? 24);
         this.placeCamera(c.position, c.target);
@@ -2161,7 +2170,7 @@ export class Viewport {
   /** Move to the scene camera (if the scene has one). Returns false when there is none. */
   viewCamera(): boolean {
     const st = this.store.getState();
-    const c = (st.doc.animation?.camera.length ? evaluateCamera(st.doc.animation.camera, st.frame) : null) ?? st.doc.camera;
+    const c = sceneCameraAt(st.doc, st.frame);
     if (!c) return false;
     const pos = new Vector3(...toBabylonVec(c.position));
     const target = new Vector3(...toBabylonVec(c.target));
@@ -2303,7 +2312,7 @@ export class Viewport {
     this.forceBest = true;
     this.setRenderOnly(true);
     this.sync(this.store.getState());
-    const hasCamera = !!st0.doc.camera || (st0.doc.animation?.camera.length ?? 0) > 0;
+    const hasCamera = !!st0.doc.camera || (st0.doc.animation?.camera.length ?? 0) > 0 || !!st0.doc.animation?.cameraFollow;
 
     // Look the way the final video should: rendered shading, no selection, through the scene camera.
     this.store.select(null);

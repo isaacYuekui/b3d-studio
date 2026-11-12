@@ -1,6 +1,7 @@
 // Central action registry. Menus, keyboard shortcuts, context menus and
 // (later) the command palette / AI operator all invoke the same actions.
 
+import { DEFAULT_CURVE, curvePreset } from '../core/curve';
 import type { Store, ToolMode } from '../core/store';
 import type { Viewport, ViewName } from '../engine/Viewport';
 import { createDefaultDoc } from '../core/store';
@@ -133,6 +134,31 @@ export function pickFile(accept: string | null = '.json,.b3d,application/json'):
 }
 
 /** Add → Town: a street grid of buildings (village houses, town blocks or city towers). */
+function addCurve(kind: 'bezier' | 'circle' | 'path'): Action {
+  return {
+    id: `add.curve.${kind}`,
+    label: kind === 'bezier' ? 'Bezier' : kind === 'circle' ? 'Circle' : 'Path',
+    run: (c) => {
+      const p = curvePreset(kind);
+      const name = kind === 'bezier' ? 'BezierCurve' : kind === 'circle' ? 'BezierCircle' : 'NurbsPath';
+      // One undo step: the points and the curve setting together.
+      const objs = c.store.getState().doc.objects;
+      let n = 1;
+      while (objs[`curve-${n}`]) n++;
+      const id = `curve-${n}`;
+      c.store.dispatch({
+        type: 'batch',
+        commands: [
+          { type: 'add', primitive: 'mesh', id, name, mesh: { vertices: p.points, faces: [], smooth: true }, material: { baseColor: '#d9d9d9', roughness: 0.5 } },
+          { type: 'setModifiers', id, modifiers: { curve: { ...DEFAULT_CURVE, cyclic: p.cyclic } } },
+        ],
+      });
+      c.store.select(id);
+      c.store.notify('Curve added — Tab to move its points (E adds a point at an end); Object → Follow Path makes things move along it');
+    },
+  };
+}
+
 function addTown(style: 'village' | 'town' | 'city'): Action {
   const size: Record<typeof style, [number, number]> = { village: [70, 70], town: [80, 80], city: [110, 110] };
   return {
@@ -517,6 +543,9 @@ export const actions = {
   'add.torus': add('torus'),
   'add.capsule': add('capsule'),
   'add.empty': add('empty'),
+  'add.curve.bezier': addCurve('bezier'),
+  'add.curve.circle': addCurve('circle'),
+  'add.curve.path': addCurve('path'),
   'physics.bake': {
     id: 'physics.bake',
     label: 'Bake Rigid Body Physics',

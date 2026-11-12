@@ -5,7 +5,8 @@ import { NumberField } from './NumberField';
 import { Icon } from './icons';
 import { subtree } from '../core/commands';
 import type { Command, ModifierPatch } from '../core/commands';
-import type { LightType, Material as SceneMaterial, SceneObject, Vec3 } from '../core/types';
+import type { FollowPath, LightType, Material as SceneMaterial, SceneObject, Vec3 } from '../core/types';
+import type { CameraFollow } from '../core/animation';
 import { isRenderable } from '../core/types';
 import { pickFile, runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
@@ -227,6 +228,8 @@ export function Properties() {
 
       <AnimationSection id={o.id} animated={animated} />
 
+      {!o.modifiers?.curve && <FollowSection id={o.id} />}
+
       <Section title="Relations">
         <label className="prop-row">
           <span>Parent</span>
@@ -267,6 +270,7 @@ export function Properties() {
 
       {cur === 'data' && o.type === 'model' && <ModelSection id={o.id} />}
       {cur === 'data' && o.text && <TextSection id={o.id} />}
+      {cur === 'data' && o.modifiers?.curve && <CurveSection id={o.id} />}
       {cur === 'data' && o.water && <WaterSection id={o.id} />}
       {cur === 'modifiers' && <ModifiersSection id={o.id} />}
       {cur === 'physics' && o.type === 'empty' && <FieldSection id={o.id} />}
@@ -521,6 +525,136 @@ function ShakeSection() {
 }
 
 /** Scene camera lens (Blender's camera data): focal length and depth of field. */
+/** The scene camera flies along a curve (fly-throughs). */
+function CameraFollowRows() {
+  const { store } = useCtx();
+  const doc = useApp((s) => s.doc);
+  const cf = doc.animation?.cameraFollow;
+  const curves = doc.order.filter((x) => doc.objects[x]?.modifiers?.curve);
+  if (!curves.length && !cf) return null;
+  const { start, end } = animationOf(doc);
+  const set = (patch: Partial<CameraFollow> | null) => store.dispatch({ type: 'setCameraFollow', follow: patch === null ? null : ({ ...(cf ?? { curve: '', start, end, look: 'ahead', height: 1.6 }), ...patch } as CameraFollow) }, { select: false });
+  return (
+    <>
+      <label className="prop-row">
+        <span>Follow path</span>
+        <select aria-label="Camera follow curve" value={cf?.curve ?? ''} onChange={(e) => set(e.target.value ? { curve: e.target.value } : null)}>
+          <option value="">None (keys)</option>
+          {curves.map((x) => (
+            <option key={x} value={x}>
+              {doc.objects[x].name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {cf && (
+        <>
+          <label className="prop-row">
+            <span>Look at</span>
+            <select aria-label="Camera look at" value={cf.look} onChange={(e) => set({ look: e.target.value })}>
+              <option value="ahead">Along the path</option>
+              {doc.order.filter((x) => !doc.objects[x]?.modifiers?.curve).map((x) => (
+                <option key={x} value={x}>
+                  {doc.objects[x].name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <NumberField label="Height above path" value={cf.height ?? 0} step={0.1} dragRate={0.02} suffix=" m" onPreview={() => {}} onCommit={(v) => set({ height: v })} onCancel={() => {}} />
+          <NumberField label="From frame" value={cf.start} step={1} dragRate={0.2} onPreview={() => {}} onCommit={(v) => set({ start: Math.round(Math.min(v, cf.end - 1)) })} onCancel={() => {}} />
+          <NumberField label="To frame" value={cf.end} step={1} dragRate={0.2} onPreview={() => {}} onCommit={(v) => set({ end: Math.round(Math.max(v, cf.start + 1)) })} onCancel={() => {}} />
+        </>
+      )}
+    </>
+  );
+}
+
+/** Curve objects (Blender: Object Data → Shape / Geometry): the tube, smoothness, closed loop. */
+function CurveSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const c = useApp((s) => s.doc.objects[id]?.modifiers?.curve);
+  const n = useApp((s) => s.doc.objects[id]?.mesh?.vertices.length ?? 0);
+  if (!c) return null;
+  const set = (patch: Record<string, unknown>, preview = false) => {
+    const cmd: Command = { type: 'setModifiers', id, modifiers: { curve: patch } } as Command;
+    if (preview) store.preview(cmd);
+    else store.dispatch(cmd, { select: false });
+  };
+  const num = (key: 'bevel' | 'resolution' | 'sides', label: string, lo: number, hi: number, step: number, suffix = '', int = false) => (
+    <NumberField
+      label={label}
+      value={c[key]}
+      step={step}
+      dragRate={step / 4}
+      suffix={suffix}
+      onPreview={(v) => set({ [key]: Math.max(lo, Math.min(hi, int ? Math.round(v) : v)) }, true)}
+      onCommit={(v) => {
+        set({ [key]: Math.max(lo, Math.min(hi, int ? Math.round(v) : v)) }, true);
+        store.commitPreview();
+      }}
+      onCancel={() => store.cancelPreview()}
+    />
+  );
+  return (
+    <Section title="Curve">
+      <div className="prop-row"><span>Points</span><b>{n}</b></div>
+      {num('bevel', 'Bevel depth (tube radius)', 0, 20, 0.01, ' m')}
+      {num('resolution', 'Resolution', 1, 64, 1, '', true)}
+      {num('sides', 'Sides', 3, 32, 1, '', true)}
+      <label className="prop-row">
+        <span>Cyclic (closed)</span>
+        <input type="checkbox" aria-label="Cyclic" checked={c.cyclic} onChange={(e) => set({ cyclic: e.target.checked })} />
+      </label>
+      <p className="prop-hint">Tab to move the points; E adds a point past an end, X deletes. Other objects (and the camera) can follow this curve.</p>
+      <div className="prop-actions">
+        <button className="btn" data-testid="curve-convert" title="Turn the tube into an editable mesh (Blender: Convert → Mesh)" onClick={() => store.dispatch({ type: 'applyModifiers', id }, { select: false })}>
+          Convert to Mesh
+        </button>
+      </div>
+    </Section>
+  );
+}
+
+/** Follow Path (Blender's constraint): move along a curve between two frames. */
+function FollowSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const f = useApp((s) => s.doc.objects[id]?.follow);
+  const curves = useApp((s) => s.doc.order.filter((x) => x !== id && s.doc.objects[x]?.modifiers?.curve).map((x) => ({ id: x, name: s.doc.objects[x].name })).join('|'));
+  const list = curves ? curves.split('|') : [];
+  const anim = useApp((s) => s.doc.animation);
+  const { start, end } = animationOf({ animation: anim });
+  const docNow = useApp((s) => s.doc);
+  if (!list.length && !f) return null;
+  const set = (patch: Partial<FollowPath> | null) =>
+    store.dispatch({ type: 'setFollow', id, follow: patch === null ? null : ({ ...(f ?? { curve: '', start, end, orient: true }), ...patch } as FollowPath) }, { select: false });
+  return (
+    <Section title="Follow Path" defaultOpen={!!f}>
+      <label className="prop-row">
+        <span>Curve</span>
+        <select aria-label="Follow curve" value={f?.curve ?? ''} onChange={(e) => set(e.target.value ? { curve: e.target.value } : null)}>
+          <option value="">None</option>
+          {docNow.order.filter((x) => x !== id && docNow.objects[x]?.modifiers?.curve).map((x) => (
+            <option key={x} value={x}>
+              {docNow.objects[x].name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {f && (
+        <>
+          <NumberField label="From frame" value={f.start} step={1} dragRate={0.2} onPreview={() => {}} onCommit={(v) => set({ start: Math.round(Math.min(v, f.end - 1)) })} onCancel={() => {}} />
+          <NumberField label="To frame" value={f.end} step={1} dragRate={0.2} onPreview={() => {}} onCommit={(v) => set({ end: Math.round(Math.max(v, f.start + 1)) })} onCancel={() => {}} />
+          <label className="prop-row">
+            <span>Follow curve (turn along it)</span>
+            <input type="checkbox" aria-label="Follow orient" checked={f.orient} onChange={(e) => set({ orient: e.target.checked })} />
+          </label>
+          <p className="prop-hint">Its Location is an offset from the path, its Rotation adds to the path's (+Y points forward).</p>
+        </>
+      )}
+    </Section>
+  );
+}
+
 function CameraSection() {
   const { store } = useCtx();
   const lens = useApp((s) => s.doc.lens);
@@ -535,6 +669,7 @@ function CameraSection() {
   const clampF = (v: number) => Math.max(1, Math.min(5000, Math.round(v)));
   return (
     <Section title="Camera" defaultOpen={!!lens}>
+      <CameraFollowRows />
       <label className="prop-row">
         <span>Lens</span>
         <select data-testid="lens-focal" value={focal && (FOCAL_PRESETS as readonly number[]).includes(focal) ? String(focal) : focal ? 'custom' : ''} onChange={(e) => e.target.value !== 'custom' && set({ focal: e.target.value ? Number(e.target.value) : null })}>

@@ -1,6 +1,7 @@
 // Edit mode controller: entering/leaving edit mode, selection commands and mesh
 // operators with an "Adjust Last Operation" panel (re-run with new parameters).
 
+import { extrudeCurve, subdivideCurve } from '../core/curve';
 import type { Store } from '../core/store';
 import type { MeshData, SceneObject } from '../core/types';
 import { PRIMITIVES } from '../core/types';
@@ -335,6 +336,29 @@ export function runMeshOp(store: Store, id: MeshOpId, params?: Record<string, Pa
   if (!t) {
     store.notify('Mesh tools work in Edit Mode (Tab)');
     return false;
+  }
+  // Curves: their own Extrude (new point past an end), Subdivide and Delete on control points.
+  if (t.obj.modifiers?.curve) {
+    const op = id === 'extrude' ? 'extrude' : id === 'subdivide' ? 'subdivide' : id === 'delete' ? 'delete' : null;
+    if (!op) {
+      store.notify('On a curve: E adds a point past an end, Subdivide adds points between, X deletes points');
+      return false;
+    }
+    const pts = t.edit.sel.verts;
+    if (!pts.length) {
+      store.notify('Select curve points first');
+      return false;
+    }
+    const r = op === 'extrude' ? extrudeCurve(t.mesh.vertices, pts) : op === 'subdivide' ? subdivideCurve(t.mesh.vertices, pts, !!t.obj.modifiers.curve.cyclic) : null;
+    if (r && r.points.length === t.mesh.vertices.length) {
+      store.notify(op === 'extrude' ? 'Extrude works on an end point of the curve' : 'Select two neighbouring points to subdivide between them');
+      return false;
+    }
+    store.dispatch({ type: 'editCurve', id: t.obj.id, op, points: pts }, { select: false });
+    if (store.getState().doc.objects[t.obj.id].mesh === t.mesh) return false; // refused (e.g. too few points left)
+    store.setEdit({ id: t.obj.id, mode: 'vert', sel: { verts: r ? r.sel : [], edges: [], faces: [] } });
+    if (op === 'extrude' && store.getState().tool === 'select') store.setTool('move');
+    return true;
   }
   const op = MESH_OPS[id];
   const p = { ...op.defaults(t.mesh, t.edit.sel, t.edit.mode), ...params };

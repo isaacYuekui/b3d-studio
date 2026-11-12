@@ -120,6 +120,8 @@ export interface Modifiers {
    * of the bumps in metres, `seed` picks another pattern. Runs last, so subdivide first for detail.
    */
   displace?: { strength: number; scale: number; seed?: number };
+  /** Curve: the vertices are control points of a smooth path, drawn as a tube (Blender's curve object). */
+  curve?: import('./curve').CurveSettings;
 }
 
 /** One bone of an armature, in the armature's local space (metres, Z up), like Blender's edit bones. */
@@ -153,6 +155,8 @@ export interface SceneObject {
   visible: boolean;
   /** Collection id (Outliner folder); none = the Scene Collection. */
   collection?: string;
+  /** Follow Path: move along a curve object between two frames (Blender's Follow Path constraint). */
+  follow?: FollowPath;
   material: Material;
   /** More materials for faces of a mesh (Blender's material slots 2, 3…); faces pick one with mesh.materialIndex. */
   materialSlots?: Material[];
@@ -230,6 +234,18 @@ export interface CameraLens {
   fStop?: number;
   /** Focus distance in metres; unset = the camera's target point. */
   focus?: number;
+}
+
+export interface FollowPath {
+  /** The curve object's id. */
+  curve: string;
+  start: number;
+  end: number;
+  /** Turn to face along the path (its +Y forward, Z up). */
+  orient: boolean;
+  /** Where along the path it starts / ends, 0..1 (default 0 → 1). */
+  from?: number;
+  to?: number;
 }
 
 export interface SceneDoc {
