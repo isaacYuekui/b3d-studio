@@ -136,9 +136,11 @@ describe('wave spray (v3.14)', () => {
     expect(ps.positions.length).toBeGreaterThan(100);
     const young = ps.positions.filter((_, i) => ps.life[i] < 0.05);
     expect(young.length).toBeGreaterThan(5);
+    // Most of it comes off the top.
+    expect(young.filter((p) => p[2] > 6).length).toBeGreaterThan(young.length * 0.4);
     for (const p of young) {
-      expect(Math.abs(p[0] - front)).toBeLessThan(12); // near the crest
-      expect(p[2]).toBeGreaterThan(3); // up on the wave
+      expect(Math.abs(p[0] - front)).toBeLessThan(13); // on the crest or its front face
+      expect(p[2]).toBeGreaterThan(1.5); // up on the wave
       expect(Math.abs(p[1])).toBeLessThan(31); // across the water
     }
     // On average the spray moves forward with the wave.

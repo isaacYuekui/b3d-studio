@@ -347,7 +347,7 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   with it. Soft white `smoke` puffs read as spray and mist:
 
 ```json
-{"type":"setParticles","id":"sea","particles":{"emit":"crest","count":14000,"start":24,"end":192,"lifetime":30,"speed":6,"random":2.5,"gravity":0.7,"size":2.4,"shape":"smoke","color":"#eef3f5","hideEmitter":false}}
+{"type":"setParticles","id":"sea","particles":{"emit":"crest","count":16000,"start":24,"end":192,"lifetime":22,"speed":5,"random":2.2,"gravity":1,"size":1.3,"shape":"smoke","color":"#f2f6f8","glow":0.5,"hideEmitter":false}}
 ```
 
 ## Camera shake and floating (v3.7)

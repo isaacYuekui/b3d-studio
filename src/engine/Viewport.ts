@@ -614,11 +614,13 @@ export class Viewport {
           b = (base.b + (0.55 - base.b) * hot) * (1 - cool);
           a = Math.min(1, t / 0.08) * Math.pow(1 - t, 1.5) * 0.8;
         } else {
-          // Smoke: grows and spreads, fades in quickly and thins out slowly.
+          // Smoke: grows and spreads, fades in quickly and thins out slowly. Glow brightens it
+          // (sunlit steam, white spray) without making it additive like fire.
           sz *= 1 + t * 2.2;
-          r = base.r + (1 - base.r) * t * 0.25;
-          g = base.g + (1 - base.g) * t * 0.25;
-          b = base.b + (1 - base.b) * t * 0.25;
+          const lift = 1 + s.glow * 1.5;
+          r = (base.r + (1 - base.r) * t * 0.25) * lift;
+          g = (base.g + (1 - base.g) * t * 0.25) * lift;
+          b = (base.b + (1 - base.b) * t * 0.25) * lift;
           a = Math.min(1, t / 0.12) * (1 - t) * 0.55;
         }
         cols!.set([r, g, b, a], i * 4);

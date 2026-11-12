@@ -39,7 +39,7 @@ export interface ParticleSettings {
   sizeRandom: number;
   shape: ParticleShape;
   color: string;
-  /** Glow (for sparks, embers): 0..1. */
+  /** Glow (for sparks, embers; on smoke it brightens the puffs): 0..1. */
   glow: number;
   /** Steady wind: a push in m/s² along X, Y, Z (e.g. [1.5, 0, 0] blows smoke sideways). */
   wind?: Vec3;
@@ -85,7 +85,7 @@ export const PARTICLE_PRESETS: { id: string; label: string; settings: Partial<Pa
   { id: 'smoke', label: 'Smoke', settings: { count: 700, lifetime: 130, speed: 0.5, random: 0.3, gravity: -0.12, size: 0.7, sizeRandom: 0.4, shape: 'smoke', color: '#5d5d5d', glow: 0, ground: 'none', wind: [0.35, 0, 0] } },
   { id: 'explosion', label: 'Explosion', burst: 3, settings: { count: 900, lifetime: 34, speed: 5, random: 5, gravity: 0.3, size: 0.55, sizeRandom: 0.5, shape: 'fire', color: '#ff8a2a', glow: 1, ground: 'none' } },
   { id: 'dust', label: 'Dust cloud', burst: 4, settings: { count: 450, lifetime: 140, speed: 2.5, random: 3, gravity: -0.03, size: 1.1, sizeRandom: 0.5, shape: 'smoke', color: '#8a7f72', glow: 0, ground: 'none', wind: [0.3, 0, 0] } },
-  { id: 'spray', label: 'Wave spray', settings: { count: 5000, lifetime: 34, speed: 7, random: 2.5, gravity: 0.7, size: 1.8, sizeRandom: 0.6, shape: 'smoke', color: '#eef3f5', glow: 0, ground: 'none', hideEmitter: false, emit: 'crest' } },
+  { id: 'spray', label: 'Wave spray', settings: { count: 8000, lifetime: 22, speed: 5, random: 2.2, gravity: 1, size: 1.1, sizeRandom: 0.6, shape: 'smoke', color: '#f2f6f8', glow: 0.5, ground: 'none', hideEmitter: false, emit: 'crest' } },
   { id: 'debris', label: 'Debris', settings: { count: 400, lifetime: 120, speed: 5, random: 4, gravity: 1, size: 0.12, sizeRandom: 0.7, shape: 'cube', color: '#7d746a', glow: 0, ground: 'stop' } },
 ];
 
@@ -200,8 +200,9 @@ function crestOf(o: SceneObject) {
     point(p: V, r: number, frame: number, fps: number): Vec3 | null {
       const t = frame / fps;
       const front = g.from + g.speed * Math.max(0, t - (g.start - 1) / fps);
-      // Mostly on top and just ahead of the crest, where a breaking wave throws water.
-      const along = front + half * (-0.25 + 0.6 * r);
+      // Most of it off the top of the crest; the rest is whitewater down the front face.
+      const u = r < 0.6 ? -0.2 + (0.5 * r) / 0.6 : 0.3 + (r - 0.6) * 2.5;
+      const along = front + half * u;
       if (along < lo || along > hi) return null;
       const side = -uy * p[0] + ux * p[1];
       const x = ux * along - uy * side, y = uy * along + ux * side;
