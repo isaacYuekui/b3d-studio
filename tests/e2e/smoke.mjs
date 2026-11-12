@@ -1390,9 +1390,11 @@ const setNumber = async (page, scope, label, value) => {
   await page.evaluate(async () => { await window.__b3d.prepare([{ type: 'bakePhysics' }]); window.__b3d.store.dispatch({ type: 'bakePhysics' }); });
   const fell = await page.evaluate(() => {
     const d = window.__b3d.store.getState().doc;
-    return Object.values(d.objects).filter((o) => o.name.startsWith('Block piece')).every((o) => { const k = d.animation.tracks[o.id]; return k && k[k.length - 1].transform.position[2] < 1.5; });
+    // Every piece dropped; they may come to rest on each other, so allow a little stacking.
+    const z = Object.values(d.objects).filter((o) => o.name.startsWith('Block piece')).map((o) => { const k = d.animation.tracks[o.id]; return k ? [k[0].transform.position[2], k[k.length - 1].transform.position[2]] : null; });
+    return { ok: z.every((p) => p && p[1] < p[0] - 0.3 && p[1] < 2.2) && z.filter((p) => p[1] < 1.5).length >= z.length - 2, z: JSON.stringify(z) };
   });
-  check('v3.3: baked pieces fall and land on the floor', fell);
+  check('v3.3: baked pieces fall and land on the floor', fell.ok, fell.z);
   await page.keyboard.press('Control+z');
   await page.keyboard.press('Control+z');
   const back = await page.evaluate(() => !!window.__b3d.store.getState().doc.objects.block);

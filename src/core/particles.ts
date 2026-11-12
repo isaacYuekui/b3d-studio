@@ -207,7 +207,9 @@ function crestOf(o: SceneObject) {
       const side = -uy * p[0] + ux * p[1];
       const x = ux * along - uy * side, y = uy * along + ux * side;
       const [dx, dy, dz] = oceanDisplace(x, y, t, w, fps);
-      return [x + dx, y + dy, dz];
+      // Whitewater on the face sits just in front of it (not inside the water).
+      const out = u > 0.3 ? 1.2 : 0;
+      return [x + dx + ux * out, y + dy + uy * out, dz + out * 0.5];
     },
   };
 }
