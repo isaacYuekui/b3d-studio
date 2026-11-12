@@ -1013,6 +1013,69 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Image textures + UV unwrap (v3.18): upload a picture, Smart UV Project, it follows the UVs.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'mesh', id: 'crate', name: 'Crate', mesh: { vertices: [[-1, -1, 0], [1, -1, 0], [-1, 1, 0], [1, 1, 0], [-1, -1, 2], [1, -1, 2], [-1, 1, 2], [1, 1, 2]], faces: [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [1, 3, 7, 5], [3, 2, 6, 7], [2, 0, 4, 6]], smooth: false } },
+    ] });
+    s.select('crate');
+  });
+  await page.click('[data-prop-tab="material"]');
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.selectOption('#mat-texture', '__upload')]);
+  await chooser.setFiles('tests/e2e/assets/uv-test.png');
+  await page.waitForFunction(() => (window.__b3d.store.getState().doc.objects.crate.material.texture ?? '').startsWith('img-'), null, { timeout: 20000 });
+  await page.waitForSelector('#mat-texture optgroup[label="Your images"] option', { state: 'attached', timeout: 5000 }).catch(() => {});
+  const t = await page.evaluate(() => { const m = window.__b3d.store.getState().doc.objects.crate.material; return { tex: m.texture, scale: m.textureScale, hint: !!document.querySelector('[data-testid="mat-unwrap"]'), opt: !!document.querySelector('#mat-texture optgroup[label="Your images"] option') }; });
+  check('v3.18: Texture → Upload an image puts your picture on the object', t.tex.startsWith('img-') && t.scale === 1 && t.hint && t.opt, JSON.stringify(t));
+  await page.click('[data-testid="mat-unwrap"]');
+  await page.evaluate(() => window.__b3d.store.setShading('rendered'));
+  await page.waitForFunction(() => !!window.__b3d.viewport().entries.get('crate').material.albedoTexture?.isReady?.(), null, { timeout: 20000 }).catch(() => {});
+  const u = await page.evaluate(() => {
+    const o = window.__b3d.store.getState().doc.objects.crate;
+    const e = window.__b3d.viewport().entries.get('crate');
+    const uvs = e.node.getVerticesData('uv');
+    return { faces: o.mesh.uv?.length, inUnit: [...uvs].every((x) => x >= -1e-6 && x <= 1 + 1e-6), tex: !!e.material.albedoTexture };
+  });
+  check('v3.18: Smart UV Project gives a UV map in 0..1 and the texture follows it', u.faces === 6 && u.inUnit && u.tex, JSON.stringify(u));
+  // Edit Mode: U unwraps too; the Mesh menu has UV → Clear.
+  await page.click('[data-testid="mode-toggle"]');
+  await page.evaluate(() => window.__b3d.store.dispatch({ type: 'clearUv', id: 'crate' }, { select: false }));
+  await page.mouse.move(640, 400);
+  await page.keyboard.press('KeyU');
+  const again = await page.evaluate(() => window.__b3d.store.getState().doc.objects.crate.mesh.uv?.length);
+  check('v3.18: U in Edit Mode unwraps (Smart UV Project)', again === 6, String(again));
+  // UV Editor (Timeline → UV): tap a face to select it, drag to move its island, scale with a button.
+  await page.click('[data-testid="tl-uv"]');
+  await page.waitForSelector('[data-testid="uv-canvas"]');
+  await page.evaluate(() => { const st = window.__b3d.store; st.setEdit({ ...st.getState().edit, mode: 'face', sel: { verts: [], edges: [], faces: [] } }); });
+  const before = await page.evaluate(() => window.__b3d.store.getState().doc.objects.crate.mesh.uv[1].map((p) => [...p]));
+  const box = await page.$eval('[data-uv-face="1"]', (el) => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  await page.mouse.click(box.x, box.y);
+  const picked = await page.evaluate(() => window.__b3d.store.getState().edit?.sel.faces);
+  await page.mouse.move(box.x, box.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 20, box.y - 10, { steps: 4 });
+  await page.mouse.up();
+  const after = await page.evaluate(() => window.__b3d.store.getState().doc.objects.crate.mesh.uv[1].map((p) => [...p]));
+  const du = after[0][0] - before[0][0], dv = after[0][1] - before[0][1];
+  check('v3.18: UV Editor — tap selects a face, dragging moves its UVs', JSON.stringify(picked) === '[1]' && du > 0.01 && dv > 0.005, JSON.stringify({ picked, du, dv }));
+  await page.click('[data-testid="uv-scale-up"]');
+  const scaled = await page.evaluate(() => window.__b3d.store.getState().doc.objects.crate.mesh.uv[1].map((p) => [...p]));
+  const span = (f) => Math.max(...f.map((p) => p[0])) - Math.min(...f.map((p) => p[0]));
+  check('v3.18: UV Editor scale button grows the selected island', Math.abs(span(scaled) / span(after) - 1.25) < 0.01, JSON.stringify({ a: span(after), b: span(scaled) }));
+  await page.screenshot({ path: `${shots}/uv-editor.png`, timeout: 60000 }).catch(() => {});
+  await page.click('[data-testid="tl-uv"]');
+  await page.click('[data-testid="mode-toggle"]');
+  await page.waitForTimeout(1200);
+  await page.screenshot({ path: `${shots}/uv-texture.png`, timeout: 60000 }).catch(() => {});
+  check('v3.18: no errors (image textures)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Collections (v3.17): Outliner folders, M to move, eye / camera toggles, active collection.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });

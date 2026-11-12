@@ -20,6 +20,7 @@ import { DEFAULT_RIGID, RIGID_SHAPES, RIGID_TYPES, simulate } from './physics';
 import { fracturePieces } from './fracture';
 import { MAX_COLLECTIONS, collectionById, collectionsOf, uniqueCollectionName, withDescendants } from './collections';
 import type { Collection } from './collections';
+import { carryUv, smartUvProject } from './mesh/uv';
 import { MAX_SLOTS, slotOf, surfaceSlots, transferMaterialIndex, usesSlots, validIndex, withMaterialIndex } from './mesh/materialIndex';
 import { DEFAULT_PARTICLES, PARTICLE_EMIT, PARTICLE_GROUND, PARTICLE_SHAPES } from './particles';
 import type { ParticleSettings } from './particles';
@@ -90,6 +91,10 @@ export type Command =
   | { type: 'setParent'; id: string; parentId: string | null }
   | { type: 'setColor'; id: string; color: string }
   | { type: 'setMaterial'; id: string; material: Partial<Material>; slot?: number }
+  /** Smart UV Project (Blender: U → Smart UV Project): a UV map for the whole mesh. */
+  | { type: 'unwrap'; id: string; angle?: number; margin?: number }
+  /** Remove the UV map (back to box projection). */
+  | { type: 'clearUv'; id: string }
   /** Faces (by index) use material slot `slot` (0 = main material) — Blender's Assign in Edit Mode. */
   | { type: 'assignMaterial'; id: string; slot: number; faces: number[] }
   /** Remove material slot `slot` (1..); its faces go back to the main material. */
@@ -294,8 +299,8 @@ export function applyCommand(doc: SceneDoc, cmd: Command, idGen: IdGen = default
   const r = applyCommandInner(doc, cmd, idGen);
   if (r.doc === doc || cmd.type === 'batch') return r;
   const after = cmd.type === 'setText' || cmd.type === 'addText' ? r.doc : dropStaleText(doc, r.doc);
-  // Commands that set the per-face slots themselves are left as they are.
-  if (cmd.type === 'assignMaterial' || cmd.type === 'removeMaterialSlot') return { ...r, doc: after };
+  // Commands that set the per-face slots / UVs themselves are left as they are.
+  if (cmd.type === 'assignMaterial' || cmd.type === 'removeMaterialSlot' || cmd.type === 'clearUv') return { ...r, doc: after };
   return { ...r, doc: carrySlots(doc, after) };
 }
 
@@ -308,7 +313,17 @@ function carrySlots(before: SceneDoc, after: SceneDoc): SceneDoc {
   for (const [id, o] of Object.entries(after.objects)) {
     const b = before.objects[id]?.mesh;
     const m = o.mesh;
-    if (!m || !b || b === m || !usesSlots(b)) continue;
+    if (!m || !b || b === m) continue;
+    // UV map: kept while the faces are the same; tools that rebuilt faces lose it (re-unwrap).
+    if (b.uv && (m.uv === b.uv || !m.uv) && !(m.uv === b.uv && m.faces === b.faces)) {
+      const uv = carryUv(b, m);
+      if (objects === after.objects) objects = { ...objects };
+      const next = { ...m };
+      if (uv) next.uv = uv;
+      else delete next.uv;
+      objects[id] = { ...objects[id], mesh: next };
+    }
+    if (!usesSlots(b)) continue;
     let index: number[] | undefined;
     if (m.faces === b.faces) {
       if (m.materialIndex) continue; // same faces, slots kept (or changed on purpose)
@@ -316,7 +331,7 @@ function carrySlots(before: SceneDoc, after: SceneDoc): SceneDoc {
     } else if (m.materialIndex && m.materialIndex !== b.materialIndex && validIndex(m)) continue; // the command set them
     else index = transferMaterialIndex(b, m);
     if (objects === after.objects) objects = { ...objects };
-    objects[id] = { ...o, mesh: withMaterialIndex(m, index) };
+    objects[id] = { ...objects[id], mesh: withMaterialIndex(objects[id].mesh!, index) };
   }
   return objects === after.objects ? after : { ...after, objects };
 }
@@ -607,6 +622,19 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       if (slot > MAX_SLOTS) throw new CommandError(`At most ${MAX_SLOTS + 1} materials per object`);
       slots[slot - 1] = { ...(slots[slot - 1] ?? o.material), ...cmd.material };
       return { doc: withObject(doc, { ...o, materialSlots: slots }), created: [] };
+    }
+
+    case 'unwrap': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      const uv = smartUvProject(o.mesh!, { ...(cmd.angle !== undefined ? { angle: cmd.angle } : {}), ...(cmd.margin !== undefined ? { margin: cmd.margin } : {}) });
+      return { doc: withObject(doc, { ...o, mesh: { ...o.mesh!, uv } }), created: [] };
+    }
+
+    case 'clearUv': {
+      const o = asMesh(requireObj(doc, cmd.id));
+      const { uv: _uv, ...mesh } = o.mesh!;
+      void _uv;
+      return { doc: withObject(doc, { ...o, mesh }), created: [] };
     }
 
     case 'assignMaterial': {
@@ -1362,6 +1390,12 @@ export function validateMeshData(v: unknown): MeshData {
     if (!Array.isArray(mi) || mi.length !== faces.length || !mi.every((s) => Number.isInteger(s) && s >= 0 && s <= MAX_SLOTS)) fail(`mesh materialIndex must list one slot (0..${MAX_SLOTS}) per face`);
     if ((mi as number[]).some((s) => s > 0)) out.materialIndex = [...(mi as number[])];
   }
+  if (v.uv !== undefined) {
+    const uv = v.uv;
+    const ok = Array.isArray(uv) && uv.length === faces.length && uv.every((f, i) => Array.isArray(f) && f.length === faces[i].length && f.every((p) => Array.isArray(p) && p.length === 2 && p.every((x) => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) < 1e4)));
+    if (!ok) fail('mesh uv must list, for each face, one [u, v] per corner');
+    out.uv = (uv as [number, number][][]).map((f) => f.map(([a, b]) => [a, b] as [number, number]));
+  }
   return out;
 }
 
@@ -1939,6 +1973,16 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (!Array.isArray(v.faces) || v.faces.length > LIMITS.faces || !v.faces.every((f) => Number.isInteger(f) && f >= 0)) fail('assignMaterial faces must be a list of face indices');
       return { type: 'assignMaterial', id: v.id, slot: v.slot as number, faces: [...(v.faces as number[])] };
     }
+    case 'unwrap': {
+      if (!isId(v.id)) fail('unwrap needs id');
+      const cmd: Extract<Command, { type: 'unwrap' }> = { type: 'unwrap', id: v.id };
+      if (v.angle !== undefined) cmd.angle = inRange(v.angle, 1, 89) ? (v.angle as number) : fail('unwrap angle must be 1..89 degrees');
+      if (v.margin !== undefined) cmd.margin = inRange(v.margin, 0, 0.2) ? (v.margin as number) : fail('unwrap margin must be 0..0.2');
+      return cmd;
+    }
+    case 'clearUv':
+      if (!isId(v.id)) fail('clearUv needs id');
+      return { type: 'clearUv', id: v.id };
     case 'removeMaterialSlot':
       if (!isId(v.id) || !(Number.isInteger(v.slot) && inRange(v.slot, 1, MAX_SLOTS))) fail(`removeMaterialSlot needs id and slot 1..${MAX_SLOTS}`);
       return { type: 'removeMaterialSlot', id: v.id, slot: v.slot as number };

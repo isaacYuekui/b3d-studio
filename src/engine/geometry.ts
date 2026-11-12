@@ -7,6 +7,7 @@ import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { MeshData, Vec3 } from '../core/types';
 import { faceNormal, triangulate } from '../core/mesh/topology';
 import { usesSlots } from '../core/mesh/materialIndex';
+import { validUv } from '../core/mesh/uv';
 
 /** Index ranges per material slot (faces are ordered by slot), for multi-material meshes. */
 export type SlotGroups = { slot: number; start: number; count: number }[];
@@ -54,7 +55,8 @@ export function buildVertexData(mesh: MeshData): VertexData {
   const mark = (fi: number) => {
     if (slots && (!starts.length || starts[starts.length - 1].slot !== slots[fi])) starts.push({ slot: slots[fi], start: indices.length });
   };
-  if (mesh.smooth) {
+  const hasUv = validUv(mesh);
+  if (mesh.smooth && !hasUv) {
     for (const v of mesh.vertices) positions.push(...toBabylonVec(v));
     for (const fi of order) {
       mark(fi);
@@ -71,6 +73,8 @@ export function buildVertexData(mesh: MeshData): VertexData {
   }
   const normals: number[] = [];
   const uvs: number[] = [];
+  // Smooth shading with a UV map: corners are split at UV seams, normals still averaged.
+  const smoothN = mesh.smooth ? smoothNormals(mesh) : null;
   for (const fi of order) {
     const face = mesh.faces[fi];
     mark(fi);
@@ -82,9 +86,10 @@ export function buildVertexData(mesh: MeshData): VertexData {
       local.set(v, base + i);
       const p = mesh.vertices[v];
       positions.push(...toBabylonVec(p));
-      normals.push(...bn);
+      normals.push(...(smoothN ? toBabylonVec(smoothN[v]) : bn));
       const o = mesh.uvOffset;
-      uvs.push(...boxUV(o ? [p[0] + o[0], p[1] + o[1], p[2] + o[2]] : p, n));
+      if (hasUv) uvs.push(...mesh.uv![fi][i]);
+      else uvs.push(...boxUV(o ? [p[0] + o[0], p[1] + o[1], p[2] + o[2]] : p, n));
     });
     for (const t of triangulate(mesh.vertices, face)) indices.push(local.get(t[0])!, local.get(t[1])!, local.get(t[2])!);
   }
@@ -94,6 +99,19 @@ export function buildVertexData(mesh: MeshData): VertexData {
   vd.uvs = uvs;
   if (slots) (vd as VertexData & { groups?: SlotGroups }).groups = groupsOf(starts, indices.length);
   return vd;
+}
+
+/** Vertex normals averaged from the faces around each vertex (area-weighted), Blender space. */
+function smoothNormals(mesh: MeshData): Vec3[] {
+  const acc: Vec3[] = mesh.vertices.map(() => [0, 0, 0]);
+  for (const f of mesh.faces) {
+    const n = faceNormal(mesh.vertices, f);
+    for (const v of f) for (let k = 0; k < 3; k++) acc[v][k] += n[k];
+  }
+  return acc.map((a) => {
+    const l = Math.hypot(a[0], a[1], a[2]) || 1;
+    return [a[0] / l, a[1] / l, a[2] / l] as Vec3;
+  });
 }
 
 /** Box-projected UV for one point with a (Blender-space) normal. */

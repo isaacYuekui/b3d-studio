@@ -7,9 +7,11 @@ import { subtree } from '../core/commands';
 import type { Command, ModifierPatch } from '../core/commands';
 import type { LightType, Material as SceneMaterial, SceneObject, Vec3 } from '../core/types';
 import { isRenderable } from '../core/types';
-import { runAction } from './actions';
+import { pickFile, runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
 import { guessUnitScale, isUserAsset } from '../engine/userModels';
+import { isUserImage, listUserImages, onUserImagesChanged, saveUserImage } from '../engine/userImages';
+import type { UserImageMeta } from '../engine/userImages';
 import { TIMES } from '../core/sky';
 import { FOCAL_PRESETS, FSTOP_PRESETS } from '../core/lens';
 import { ALIGNS, FONTS, FONT_LABEL, MAX_TEXT_LENGTH, isFontLoaded, missingChars } from '../core/text';
@@ -26,7 +28,7 @@ import type { ForceField } from '../core/fields';
 import type { RigidBody } from '../core/physics';
 import { bakePhysics, freePhysics } from './physicsUi';
 import { prepareBooleans } from './prepare';
-import type { Quality } from '../core/store';
+import type { Quality, Store } from '../core/store';
 import { DEFAULT_GLOW_COLOR, PATTERNS } from '../core/patterns';
 import type { Pattern, PatternType } from '../core/patterns';
 import type { TimeOfDay } from '../core/sky';
@@ -88,6 +90,7 @@ export function Properties() {
   const frame = useApp((s) => s.frame);
   const o = sel ? doc.objects[sel] : null;
   const catalog = useCatalog();
+  const images = useUserImages();
   const [tab, setTabState] = useState<PropTab>(() => {
     try {
       return (localStorage.getItem('b3d.propTab') as PropTab | null) ?? 'object';
@@ -280,16 +283,39 @@ export function Properties() {
               id="mat-texture"
               aria-label="Texture"
               value={mat.texture ?? ''}
-              onChange={(e) =>
-                store.dispatch({ type: 'setMaterial', id: o.id, slot, material: e.target.value ? { texture: e.target.value, baseColor: '#ffffff' } : { texture: null } }, { select: false })
-              }
+              onChange={async (e) => {
+                const v = e.target.value;
+                if (v === '__upload') {
+                  const id = await uploadImage(store);
+                  if (id) store.dispatch({ type: 'setMaterial', id: o.id, slot, material: { texture: id, baseColor: '#ffffff', textureScale: 1, pattern: null } }, { select: false });
+                  return;
+                }
+                // Your images map once onto a UV map (or 1 per metre without one); library textures keep their repeat.
+                store.dispatch({ type: 'setMaterial', id: o.id, slot, material: v ? { texture: v, baseColor: '#ffffff', ...(isUserImage(v) ? { textureScale: 1 } : {}) } : { texture: null } }, { select: false });
+              }}
             >
               <option value="">None (plain colour)</option>
-              {catalog?.textures.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
+              {images.length > 0 && (
+                <optgroup label="Your images">
+                  {images.map((im) => (
+                    <option key={im.id} value={im.id}>{im.name}</option>
+                  ))}
+                </optgroup>
+              )}
+              <option value="__upload">Upload an image…</option>
+              <optgroup label="Library">
+                {catalog?.textures.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </optgroup>
             </select>
           </label>
+          {isUserImage(mat.texture) && o.type === 'mesh' && !o.mesh?.uv && (
+            <p className="prop-hint">
+              The picture is projected from the sides in metres. For it to fit the model, unwrap it:{' '}
+              <button className="link-btn" data-testid="mat-unwrap" onClick={() => store.dispatch({ type: 'unwrap', id: o.id }, { select: false })}>Smart UV Project</button>
+            </p>
+          )}
           {mat.texture && scalar('Repeat', mat.textureScale, 0.01, 1000, (v) => ({ type: 'setMaterial', id: o.id, slot, material: { textureScale: v } }), 0.1)}
           {!mat.texture && (
             <label className="prop-row">
@@ -748,6 +774,36 @@ function AnimationSection({ id, animated }: { id: string; animated: boolean }) {
       </p>
     </Section>
   );
+}
+
+/** Your uploaded images (kept fresh when one is added or removed). */
+function useUserImages(): UserImageMeta[] {
+  const [list, setList] = useState<UserImageMeta[]>([]);
+  useEffect(() => {
+    let live = true;
+    const load = () => void listUserImages().then((l) => live && setList(l));
+    load();
+    const off = onUserImagesChanged(load);
+    return () => {
+      live = false;
+      off();
+    };
+  }, []);
+  return list;
+}
+
+/** Pick a photo and store it; returns its texture id. */
+async function uploadImage(store: Store): Promise<string | null> {
+  const file = await pickFile('image/*');
+  if (!file) return null;
+  try {
+    const meta = await saveUserImage(file, file.name);
+    store.notify(`Image “${meta.name}” added (${meta.width}×${meta.height})`);
+    return meta.id;
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : 'Could not read that image');
+    return null;
+  }
 }
 
 /**

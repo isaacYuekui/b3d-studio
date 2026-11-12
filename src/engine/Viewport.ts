@@ -67,6 +67,8 @@ import { guessUnitScale, isUserAsset, updateUserModelMeta, userModelMetaNow, use
 class MissingModel extends Error {}
 import { babylonQuatToEulerDeg, clean, eulerDegToBabylonQuat, fromBabylonVec, toBabylonVec } from './coords';
 import { applyGeometry } from './geometry';
+import { validUv } from '../core/mesh/uv';
+import { isUserImage, userImageUrl } from './userImages';
 import { subtree } from '../core/commands';
 import { EditOverlay } from './EditOverlay';
 import { rippleNormalTexture } from './water';
@@ -809,7 +811,8 @@ export class Viewport {
 
   /** Update a skinned mesh's vertices in place (smooth meshes: positions + normals only). */
   private updateDeformed(node: Mesh, mesh: MeshData) {
-    if (!mesh.smooth) {
+    // Flat, or split at UV seams: rebuild (corner vertices don't map 1:1 to mesh vertices).
+    if (!mesh.smooth || validUv(mesh)) {
       applyGeometry(node, mesh);
       node.refreshBoundingInfo();
       return;
@@ -1589,8 +1592,12 @@ export class Viewport {
   }
 
   /** Photo-scanned PBR maps from the library (colour, normal, AO/roughness/metal). */
+  /** Which material settings a user-image texture is being loaded for (a newer change wins). */
+  private texWanted = new WeakMap<PBRMaterial, SceneMaterial>();
+
   private applyTexture(mat: PBRMaterial, m: SceneMaterial, prev?: SceneMaterial) {
     if (prev && prev.texture === m.texture && prev.textureScale === m.textureScale && prev.pattern === m.pattern) return;
+    this.texWanted.set(mat, m);
     for (const t of [mat.albedoTexture, mat.bumpTexture, mat.metallicTexture]) if (t && !isSharedTexture(t)) t.dispose();
     mat.albedoTexture = mat.bumpTexture = mat.metallicTexture = mat.emissiveTexture = null;
     mat.useAmbientOcclusionFromMetallicTextureRed = mat.useRoughnessFromMetallicTextureGreen = mat.useMetallnessFromMetallicTextureBlue = false;
@@ -1607,6 +1614,21 @@ export class Viewport {
     }
     if (!m.texture) return;
     const id = m.texture;
+    if (isUserImage(id)) {
+      // Your own picture: colour only (Blender: Image Texture → Base Color).
+      const want = m;
+      void userImageUrl(id).then((url) => {
+        if (!mat.getScene() || this.texWanted.get(mat) !== want) return;
+        if (!url) return this.store.notify('This scene uses an image that isn’t on this device — import the project file that has it.');
+        const t = new Texture(url, this.scene, false, true, Texture.TRILINEAR_SAMPLINGMODE);
+        t.uScale = t.vScale = want.textureScale;
+        t.anisotropicFilteringLevel = 8;
+        t.hasAlpha = false;
+        mat.albedoTexture = t;
+      });
+      this.texWanted.set(mat, want);
+      return;
+    }
     const maps = catalogNow()?.textures.find((t) => t.id === id)?.maps ?? ['diff', 'nor', 'arm'];
     const load = (map: 'diff' | 'nor' | 'arm' | 'rough'): Texture => {
       const t = new Texture(textureUrl(id, map), this.scene, false, true, Texture.TRILINEAR_SAMPLINGMODE, null, () => this.store.notify(`Could not load texture “${id}”.`));

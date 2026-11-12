@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 /** Newest first. The first entry is the current version. */
 const CHANGES: { v: string; items: string[] }[] = [
+  { v: '3.18', items: ['Your own pictures as textures: Material → Texture → Upload an image', 'UV unwrap: Smart UV Project (U in Edit Mode, or Object → UV) so the picture fits the model', 'UV Editor (Timeline → UV): select faces, drag, scale, rotate and fit their UVs over the image'] },
   { v: '3.17', items: ['Collections in the Outliner: folders with hide and render toggles; M moves objects; new objects go into the highlighted one'] },
   { v: '3.16', items: ['Videos come with sound effects worked out from the scene: explosions, waves, fire, rain, crashes (Render video → Sound effects)'] },
   { v: '3.15', items: ['Material slots: several materials on one mesh (Material tab → Slots; Edit Mode → Assign)', 'Broken pieces show rough broken wall inside instead of windows'] },

@@ -631,3 +631,10 @@ button.vp-mode.posing { background: #1f4f7a; border-color: #4fb0ff; color: #fff;
 /* Rows whose controls may need a second line (presets) */
 .prop-row.wrap { flex-wrap: wrap; row-gap: 4px; }
 .prop-row.wrap .seg-text { flex-wrap: wrap; }
+.link-btn { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font: inherit; }
+.uved { display: flex; flex-direction: column; gap: 4px; }
+.uved-bar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.uved-body { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.uved-svg { width: min(320px, 70vw); aspect-ratio: 1; background: #2a2a2a; border-radius: 4px; touch-action: none; }
+.uv-face { fill: #ffffff10; stroke: #e8e8e8; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.uv-face.sel { fill: #ff8c2a55; stroke: #ffa040; }
