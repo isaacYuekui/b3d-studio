@@ -73,6 +73,7 @@ export function Timeline() {
   const objKeys = sel ? tracks[sel] ?? [] : [];
   const setRange = (patch: { start?: number; end?: number; fps?: number }) => store.dispatch({ type: 'setAnimation', ...patch }, { select: false });
 
+  const animatedCount = new Set([...Object.keys(tracks), ...Object.keys(anim?.poses ?? {}), ...Object.keys(anim?.shapes ?? {})]).size;
   return (
     <div className="timeline">
       <div className="tl-transport">
@@ -150,7 +151,7 @@ export function Timeline() {
       {editor === 'shader' && <ShaderEditor />}
       <div className="tl-foot muted">
         {(end - start + 1) / fps < 60 ? `${((end - start + 1) / fps).toFixed(1)} s` : `${Math.floor((end - start + 1) / fps / 60)} min ${Math.round(((end - start + 1) / fps) % 60)} s`} at {fps} fps
-        {keyFrames(animationOf({ animation: anim }), null).length ? ` · ${Object.keys(tracks).length} animated object${Object.keys(tracks).length === 1 ? '' : 's'}${camera.length ? ', animated camera' : ''}` : ' · no animation yet: select an object and press ◆ Key'}
+        {keyFrames(animationOf({ animation: anim }), null).length ? ` · ${animatedCount} animated object${animatedCount === 1 ? '' : 's'}${camera.length ? ', animated camera' : ''}` : ' · no animation yet: select an object and press ◆ Key'}
       </div>
     </div>
   );
