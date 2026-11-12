@@ -1013,6 +1013,48 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Material slots (v3.15): Material tab → Slots → +, Edit Mode → Assign; fracture inner material.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'mesh', id: 'box', name: 'Box', mesh: { vertices: [[-1, -1, -1], [1, -1, -1], [-1, 1, -1], [1, 1, -1], [-1, -1, 1], [1, -1, 1], [-1, 1, 1], [1, 1, 1]], faces: [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [1, 3, 7, 5], [3, 2, 6, 7], [2, 0, 4, 6]], smooth: false }, material: { baseColor: '#cc3333' } },
+    ] });
+    s.select('box');
+  });
+  await page.click('[data-prop-tab="material"]');
+  await page.click('[data-testid="mat-slot-add"]');
+  await page.evaluate(() => window.__b3d.store.dispatch({ type: 'setMaterial', id: 'box', slot: 1, material: { baseColor: '#3355ff' } }, { select: false }));
+  await page.click('[data-testid="mode-toggle"]');
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { const s = window.__b3d.store; s.setEdit({ ...s.getState().edit, mode: 'face', sel: { verts: [4, 5, 6, 7], edges: [], faces: [1] } }); });
+  await page.click('[data-prop-tab="material"]');
+  await page.click('[data-mat-slot="1"]');
+  await page.click('[data-testid="mat-assign"]');
+  const sl = await page.evaluate(() => {
+    const o = window.__b3d.store.getState().doc.objects.box;
+    const node = window.__b3d.viewport().entries.get('box').node;
+    return { index: o.mesh.materialIndex, slots: o.materialSlots?.length, sub: node.subMeshes.length, multi: node.material?.getClassName?.(), mats: node.material?.subMaterials?.length };
+  });
+  check('v3.15: + adds a material slot and Assign puts the selected face on it (two sub-meshes, multi-material)', JSON.stringify(sl.index) === '[0,1,0,0,0,0]' && sl.slots === 1 && sl.sub === 2 && sl.multi === 'MultiMaterial' && sl.mats === 2, JSON.stringify(sl));
+  // Extrude the top face: the new cap keeps the slot.
+  await page.evaluate(() => window.__b3d.store.dispatch({ type: 'editMesh', id: 'box', steps: [{ op: 'extrude', select: { indices: [1] }, offset: 1 }] }, { select: false }));
+  const ex = await page.evaluate(() => {
+    const m = window.__b3d.store.getState().doc.objects.box.mesh;
+    const top = m.faces.findIndex((f) => f.every((v) => m.vertices[v][2] > 1.9));
+    return { top: m.materialIndex?.[top], n: m.materialIndex?.length, faces: m.faces.length };
+  });
+  check('v3.15: an extruded face keeps its material slot', ex.top === 1 && ex.n === ex.faces, JSON.stringify(ex));
+  await page.click('[data-testid="mode-toggle"]');
+  await page.evaluate(() => window.__b3d.store.setShading('rendered'));
+  await page.waitForTimeout(1200);
+  await page.screenshot({ path: `${shots}/slots.png` });
+  check('v3.15: no errors (material slots)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Wave spray (v3.14): Water → Giant wave → Add spray on the crest.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });
@@ -1129,6 +1171,12 @@ const setNumber = async (page, scope, label, value) => {
   await page.waitForFunction(() => !!window.__b3d.store.getState().doc.objects['town-b0-roof']?.rigid, null, { timeout: 90000 });
   const roof = await page.evaluate(() => { const d = window.__b3d.store.getState().doc; return { rigid: d.objects['town-b0-roof'].rigid.type, keys: d.animation?.tracks['town-b0-roof']?.length ?? 0 }; });
   check('v3.12: Quick Explode on a town building brings its roof down too', roof.rigid === 'active' && roof.keys > 2, JSON.stringify(roof));
+  const inner = await page.evaluate(() => {
+    const d = window.__b3d.store.getState().doc;
+    const pieces = Object.values(d.objects).filter((o) => o.id.startsWith('town-b0.'));
+    return { pieces: pieces.length, slotted: pieces.filter((o) => o.materialSlots?.length === 1 && o.mesh.materialIndex?.includes(1)).length };
+  });
+  check('v3.15: broken building pieces get an inside material', inner.pieces > 3 && inner.slotted === inner.pieces, JSON.stringify(inner));
   check('v3.12: no errors (town)', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }

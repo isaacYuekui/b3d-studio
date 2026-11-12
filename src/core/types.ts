@@ -43,6 +43,8 @@ export interface MeshData {
   smooth: boolean;
   /** Added to positions before box-projecting UVs, so the pieces of a broken object keep its texture in place. */
   uvOffset?: Vec3;
+  /** Material slot of each face (0 = the object's material, 1.. = materialSlots); missing = all 0. */
+  materialIndex?: number[];
 }
 
 /** Principled-BSDF-like material. */
@@ -146,6 +148,8 @@ export interface SceneObject {
   transform: Transform;
   visible: boolean;
   material: Material;
+  /** More materials for faces of a mesh (Blender's material slots 2, 3…); faces pick one with mesh.materialIndex. */
+  materialSlots?: Material[];
   params?: PrimitiveParams;
   mesh?: MeshData;
   /** Mesh objects only. */

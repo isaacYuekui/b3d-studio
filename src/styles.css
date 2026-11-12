@@ -178,6 +178,7 @@ button.vp-mode.editing { background: #7a4a12; border-color: var(--select); color
 .seg-text { display: flex; gap: 1px; background: var(--line); border-radius: var(--radius); overflow: hidden; }
 .seg-text button { min-width: 34px; min-height: calc(var(--tap) - 4px); border: 0; background: var(--bg-field); color: var(--text); font: 12px var(--font); padding: 0 8px; }
 .seg-text button.active { background: var(--accent); color: #fff; }
+.slot-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
 .viewport.editing .vp-header { right: calc(var(--tap) + 24px); }
 .viewport.editing .vp-nav { flex-direction: column; }
 .viewport.editing .vp-nav .tool-sep-v { width: auto; height: 1px; margin: 3px 4px; }

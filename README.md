@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Material slots (v3.15)
+
+- **Several materials on one mesh**, like Blender: Material tab → **Slots** (Main, Slot 2, Slot 3… up to 9); **+** adds a slot, each slot is a full material (colour, texture, pattern, glow…)
+- In **Edit Mode**, select faces and press **Assign** (or **Select** to pick a slot's faces); faces keep their materials through extrude, inset, bevel, subdivide, modifiers and booleans
+- **Join** keeps each object's material as a slot; **Separate** keeps them on both parts
+- **Cell Fracture / Quick Explode**: the broken surfaces inside get their own rough material, so a smashed building shows broken wall inside instead of windows
+
 ## Wave spray (v3.14)
 
 - **Water → Giant wave → Add spray on the crest**: white spray and mist thrown up and forward off the top of the tsunami as it runs in (Physics → Particles → *Wave spray*, or "Emit from: Giant wave crest" on any water with a giant wave)

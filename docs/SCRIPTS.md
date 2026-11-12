@@ -377,6 +377,28 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   share the original's mass by volume. Needs a closed solid. Follow with a moving object and
   `bakePhysics`.
 - Rigid body `shape` can now be `hull` (convex hull of the object, at most 200 points).
+- v3.15: the broken surfaces inside get their own material slot (Blender's interior material):
+  rough broken wall for a pattern (a building's windows don't show inside), the same texture for a
+  textured object, a darker rough version of a plain colour. `"inner": {material}` sets it,
+  `"inner": false` keeps one material.
+
+## Material slots (v3.15)
+
+```json
+{"type":"setMaterial","id":"car","slot":1,"material":{"baseColor":"#111111","roughness":0.4}}
+{"type":"assignMaterial","id":"car","slot":1,"faces":[4,5,6]}
+{"type":"removeMaterialSlot","id":"car","slot":1}
+{"type":"add","primitive":"mesh","id":"sign","mesh":{"vertices":[...],"faces":[...],"materialIndex":[0,0,1,1]},"material":{...},"materialSlots":[{"baseColor":"#ffcc00"}]}
+```
+
+- Like Blender's material slots: a mesh object has its main `material` (slot 0) and up to 8 more in
+  `materialSlots` (slots 1–8). `mesh.materialIndex` gives each face's slot (one number per face;
+  left out = all on the main material).
+- `setMaterial` with `slot` edits that slot; `slot` = the next number adds one (starting as a copy
+  of the main material). `assignMaterial` puts faces (indices) on a slot; `removeMaterialSlot`
+  moves its faces back to the main material.
+- Faces keep their slots through edits (`editMesh`, Edit Mode tools), modifiers, Separate and
+  booleans; Join turns each joined object's material into a slot of the result.
 
 ## 3D text (v2.9)
 
