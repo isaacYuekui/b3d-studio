@@ -1872,7 +1872,7 @@ const setNumber = async (page, scope, label, value) => {
   });
   const tabsOf = () => page.$$eval('[data-prop-tab]', (els) => els.map((e) => e.getAttribute('data-prop-tab') + (e.getAttribute('aria-selected') === 'true' ? '*' : '')).join(' '));
   const cube = await tabsOf();
-  check('v3.1: a shape gets Scene, Object, Modifiers, Physics, Material tabs (Object first)', cube === 'scene object* modifiers physics material', cube);
+  check('v3.1: a shape gets Scene, Object, Modifiers, Physics, Mesh, Material tabs (Object first)', cube === 'scene object* modifiers physics data material', cube);
   await page.click('[data-prop-tab="material"]');
   const mat = await page.isVisible('#mat-base');
   await page.evaluate(() => window.__b3d.store.select('l'));
