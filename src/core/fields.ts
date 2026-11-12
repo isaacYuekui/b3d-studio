@@ -19,12 +19,35 @@ export interface ForceField {
   /** Frames it is active (inclusive); unset = always. */
   start?: number;
   end?: number;
+  /**
+   * Explosion light: a point light at the field (watts, like a lamp's Power) that flares when the
+   * field starts and fades over about two seconds, lighting up everything around it. 0 / unset = none.
+   */
+  flash?: number;
+  /** Colour of the flash (default fire orange). */
+  flashColor?: string;
+}
+
+export const DEFAULT_FLASH_COLOR = '#ff9a45';
+
+/**
+ * How bright the flash is at a frame, 0..1: nothing before the field starts, full at the start,
+ * then a flickering fade (half-life about 0.4 s), gone after 3 s.
+ */
+export function flashLevel(f: ForceField, frame: number, fps = 24, firstFrame = 1): number {
+  if (!f.flash) return 0;
+  const dt = (frame - (f.start ?? firstFrame)) / fps;
+  if (dt < 0 || dt > 3) return 0;
+  const fade = Math.exp(-dt / 0.55) * (1 - dt / 3);
+  // Flames flicker: a few unrelated wobbles, stronger as the light dies down.
+  const flicker = 1 - 0.18 * Math.min(1, dt * 1.5) * (0.5 + 0.5 * Math.sin(dt * 37) * Math.sin(dt * 23 + 1.3));
+  return Math.max(0, fade * flicker);
 }
 
 export const DEFAULT_FIELD: ForceField = { type: 'force', strength: 30, radius: 10 };
 
 export const FIELD_PRESETS: { id: string; label: string; field: ForceField; frames?: number }[] = [
-  { id: 'blast', label: 'Explosion', field: { type: 'force', strength: 400, radius: 14 }, frames: 2 },
+  { id: 'blast', label: 'Explosion', field: { type: 'force', strength: 400, radius: 14, flash: 60000 }, frames: 2 },
   { id: 'push', label: 'Push', field: { type: 'force', strength: 30, radius: 10 } },
   { id: 'wind', label: 'Wind', field: { type: 'wind', strength: 12, radius: 0 } },
   { id: 'vortex', label: 'Tornado', field: { type: 'vortex', strength: 40, radius: 12 } },

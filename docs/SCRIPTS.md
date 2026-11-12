@@ -299,23 +299,26 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
 ## Town generator (v3.12)
 
 ```json
-{"type":"addTown","prefix":"town","style":"town","center":[0,8],"size":[64,64],"seed":5,"ground":true}
+{"type":"addTown","prefix":"town","style":"town","center":[0,8],"size":[64,64],"seed":5,"ground":true,"lights":2.5}
 ```
 
 - `style`: `village` (1–2 storeys, hip roofs), `town` (2–5 storeys, flat roofs), `city` (6–24 storeys).
   `center` [x, y] and `size` [width, depth] in metres (10–1000), `base` (ground height, default 0),
-  `seed` (same seed = same town), `ground` (asphalt slab, passive rigid body; default true).
+  `seed` (same seed = same town), `ground` (asphalt slab, passive rigid body; default true),
+  `lights` (v3.13: lit windows for dusk / night — the facade pattern's `glow`, about 2–4; default 0).
+  Add → Town in the app turns lights on by itself when the scene's time of day is dusk or night.
 - Objects are named by `prefix`: buildings `<prefix>-b0`, `-b1`…, their roofs `<prefix>-bN-roof`,
   the ground `<prefix>-ground` — so a script can `fracture` or `setRigidBody` chosen buildings.
   A second town needs another prefix.
 - Material pattern `windows`: storey-high tiles of wall (colour B) with an inset window (colour A);
-  `scale` = 1 / storey height (e.g. 0.333 for 3 m).
+  `scale` = 1 / storey height (e.g. 0.333 for 3 m). Each facade is shifted by whole storeys
+  (`mesh.uvOffset`), so neighbouring buildings show different windows.
 
 ## Force fields (v3.9)
 
 ```json
 {"type":"add","primitive":"empty","id":"blast","transform":{"position":[0,6,0.6]}}
-{"type":"setField","id":"blast","field":{"type":"force","strength":420,"radius":22,"start":60,"end":61}}
+{"type":"setField","id":"blast","field":{"type":"force","strength":420,"radius":22,"start":60,"end":61,"flash":400000}}
 {"type":"bakePhysics"}
 ```
 
@@ -324,6 +327,9 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
   acceleration in m/s² (same push for light and heavy pieces), fading linearly to zero at `radius` m
   (0 = everywhere, no fade). `start` / `end` frames limit it (null clears them). Acts during
   `bakePhysics` only — put the bake after the field.
+- `flash` (v3.13): an explosion light in watts (like a lamp's Power; 60000 for a building, 400000 for
+  a meteor) that flares at `start` and fades over about 2 s, lighting up everything around it in
+  Rendered view and videos. `flashColor` (default `#ff9a45`). 0 / null removes it.
 
 ## Tsunami / giant wave (v3.8)
 
@@ -436,7 +442,10 @@ Everything here exports to Roblox: see [ROBLOX.md](ROBLOX.md).
 
 - Principled extras (0–1 unless noted): `clearcoat`, `clearcoatRoughness`, `sheen` + `sheenColor`,
   `transmission` + `ior` (1–3), `subsurface` + `subsurfaceColor`, `anisotropy`.
-- `pattern`: `{type, colorA, colorB, scale, bump}`.
-  - `type` is one of `noise`, `voronoi`, `checker`, `bricks`, `wood`, `marble`, `gradient`.
+- `pattern`: `{type, colorA, colorB, scale, bump, glow?, glowColor?}`.
+  - `type` is one of `noise`, `voronoi`, `checker`, `bricks`, `wood`, `marble`, `gradient`, `windows`.
+  - `glow` (v3.13, 0–100): the pattern gives off light — colour A areas glow in `glowColor`
+    (default warm `#ffc27a`); on `windows`, about half the windows are lit instead. It replaces
+    the material's Emission while set. Try 2–4 at night, 8+ for lava cracks.
   - `scale` is repeats per metre (0.01–100). `bump` is 0–1.
   - Patterns apply when `texture` is null. `"pattern": null` removes one.

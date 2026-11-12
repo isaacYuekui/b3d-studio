@@ -5,17 +5,20 @@
 import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import type { Scene } from '@babylonjs/core/scene';
-import { patternValues } from '../core/patterns';
+import { DEFAULT_GLOW_COLOR, patternGlowValues, patternTile, patternValues } from '../core/patterns';
 import type { Pattern, PatternType } from '../core/patterns';
 
-const SIZE = 256;
+// Windows packs 4 × 4 windows into a tile, so it gets more pixels to keep each window sharp.
+const sizeOf = (t: PatternType) => (t === 'windows' ? 512 : 256);
 const values = new Map<PatternType, Float32Array>();
+const glowValues = new Map<PatternType, Float32Array>();
 const colorCache = new Map<string, RawTexture>();
 const normalCache = new Map<string, RawTexture>();
+const glowCache = new Map<string, RawTexture>();
 
 const vals = (t: PatternType) => {
   let v = values.get(t);
-  if (!v) values.set(t, (v = patternValues(t, SIZE)));
+  if (!v) values.set(t, (v = patternValues(t, sizeOf(t))));
   return v;
 };
 
@@ -36,6 +39,7 @@ export function patternColorTexture(scene: Scene, p: Pattern): RawTexture {
   const hit = colorCache.get(key);
   if (hit && hit.getInternalTexture()) return hit;
   const v = vals(p.type);
+  const SIZE = sizeOf(p.type);
   const a = rgb(p.colorA), b = rgb(p.colorB);
   const data = new Uint8Array(SIZE * SIZE * 4);
   for (let i = 0; i < v.length; i++) {
@@ -46,7 +50,7 @@ export function patternColorTexture(scene: Scene, p: Pattern): RawTexture {
     data[i * 4 + 3] = 255;
   }
   const tex = finish(RawTexture.CreateRGBATexture(data, SIZE, SIZE, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE), `pattern-${key}`, true);
-  tex.uScale = tex.vScale = p.scale;
+  tex.uScale = tex.vScale = p.scale / patternTile(p.type);
   colorCache.set(key, tex);
   return tex;
 }
@@ -57,6 +61,7 @@ export function patternNormalTexture(scene: Scene, type: PatternType, scale: num
   const hit = normalCache.get(key);
   if (hit && hit.getInternalTexture()) return hit;
   const v = vals(type);
+  const SIZE = sizeOf(type);
   const at = (i: number, j: number) => v[(((j % SIZE) + SIZE) % SIZE) * SIZE + (((i % SIZE) + SIZE) % SIZE)];
   const data = new Uint8Array(SIZE * SIZE * 4);
   const k = 6; // height → slope strength at bump 1 (the material's bump level scales it)
@@ -71,9 +76,32 @@ export function patternNormalTexture(scene: Scene, type: PatternType, scale: num
       data[o + 3] = 255;
     }
   const tex = finish(RawTexture.CreateRGBATexture(data, SIZE, SIZE, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE), `pattern-normal-${key}`, false);
-  tex.uScale = tex.vScale = scale;
+  tex.uScale = tex.vScale = scale / patternTile(type);
   tex.level = bump * 1.5;
   normalCache.set(key, tex);
+  return tex;
+}
+
+/** Emission map: the glow colour where the pattern glows (lit windows, colour A areas). */
+export function patternGlowTexture(scene: Scene, p: Pattern): RawTexture {
+  const color = p.glowColor ?? DEFAULT_GLOW_COLOR;
+  const key = `${p.type}|${color}|${p.scale}`;
+  const hit = glowCache.get(key);
+  if (hit && hit.getInternalTexture()) return hit;
+  let g = glowValues.get(p.type);
+  if (!g) glowValues.set(p.type, (g = patternGlowValues(p.type, sizeOf(p.type))));
+  const SIZE = sizeOf(p.type);
+  const c = rgb(color);
+  const data = new Uint8Array(SIZE * SIZE * 4);
+  for (let i = 0; i < g.length; i++) {
+    data[i * 4] = Math.round(c[0] * g[i]);
+    data[i * 4 + 1] = Math.round(c[1] * g[i]);
+    data[i * 4 + 2] = Math.round(c[2] * g[i]);
+    data[i * 4 + 3] = 255;
+  }
+  const tex = finish(RawTexture.CreateRGBATexture(data, SIZE, SIZE, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE), `pattern-glow-${key}`, true);
+  tex.uScale = tex.vScale = p.scale / patternTile(p.type);
+  glowCache.set(key, tex);
   return tex;
 }
 

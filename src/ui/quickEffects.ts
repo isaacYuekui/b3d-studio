@@ -57,7 +57,7 @@ export async function quickExplode(store: Store) {
   if (roof && !roof.rigid && !roof.parentId) cmds.push({ type: 'setRigidBody', id: `${id}-roof`, rigid: { mass: Math.max(1, size * size * 20), shape: 'box' } });
   const blast = freeId(store, `${id}-blast`);
   cmds.push({ type: 'add', primitive: 'empty', id: blast, name: `${o!.name} blast`, transform: { position: at } });
-  cmds.push({ type: 'setField', id: blast, field: { type: 'force', strength: 160 + 40 * size, radius: size * 2.5, start: f, end: f + 1 } });
+  cmds.push({ type: 'setField', id: blast, field: { type: 'force', strength: 160 + 40 * size, radius: size * 2.5, start: f, end: f + 1, flash: Math.round(Math.min(2e6, Math.max(5000, 600 * size * size))) } });
   const fire = freeId(store, `${id}-fireball`);
   const ex = PARTICLE_PRESETS.find((p) => p.id === 'explosion')!;
   cmds.push({ type: 'add', primitive: 'sphere', id: fire, name: `${o!.name} fireball`, transform: { position: at, scale: [size * 0.3, size * 0.3, size * 0.3] } });

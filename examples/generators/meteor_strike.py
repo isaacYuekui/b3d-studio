@@ -1,6 +1,7 @@
-"""What if a meteor hit a town: a burning meteor streaks in (moving fire + smoke emitter) and lands
-in a generated town; an explosion force field (v3.9) blows the nearest blocks apart, with a
-fireball, a dust cloud and camera shake. Writes examples/meteor-strike.b3d-script.json. 6 s at 24 fps."""
+"""What if a meteor hit a town: a burning meteor streaks in (moving fire + smoke emitter, carrying
+its own light) and lands in a generated town with lit windows at dusk; an explosion force field
+(v3.9) with a light flash (v3.13) blows the nearest blocks apart, with a fireball, a dust cloud
+and camera shake. Writes examples/meteor-strike.b3d-script.json. 6 s at 24 fps."""
 import json
 from pathlib import Path
 
@@ -33,7 +34,7 @@ C.append({"type": "setRigidBody", "id": "ground", "rigid": {"type": "passive", "
 
 # A town (v3.12 generator: buildings with windows on a street grid). The four blocks nearest the
 # impact are broken into pieces and made rigid, with their roofs, ready for the blast.
-C.append({"type": "addTown", "prefix": "town", "style": "town", "center": [0, 8], "size": [64, 64], "seed": 5, "ground": False})
+C.append({"type": "addTown", "prefix": "town", "style": "town", "center": [0, 8], "size": [64, 64], "seed": 5, "ground": False, "lights": 2.5})
 for i, b in enumerate(["town-b4", "town-b3", "town-b1", "town-b7"]):
     C.append({"type": "setRigidBody", "id": b, "rigid": {"mass": 400}})
     C.append({"type": "fracture", "id": b, "pieces": 16, "seed": 3 + i})
@@ -45,7 +46,9 @@ add("meteor", "Meteor", "sphere", ROCK, (-70, 90, 75), scale=(1.4, 1.4, 1.4), pa
 C.append({"type": "setModifiers", "id": "meteor", "modifiers": {"subdivision": {"levels": 1}, "displace": {"strength": 0.25, "scale": 0.5, "seed": 9}}})
 C.append({"type": "setKeyframe", "id": "meteor", "frame": 1, "easing": "linear", "transform": {"position": [-70, 90, 75], "rotation": [0, 0, 0], "scale": [1.4, 1.4, 1.4]}})
 C.append({"type": "setKeyframe", "id": "meteor", "frame": IMPACT, "easing": "constant", "transform": {"position": HIT, "rotation": [200, 90, 40], "scale": [1.4, 1.4, 1.4]}})
-C.append({"type": "setKeyframe", "id": "meteor", "frame": IMPACT + 1, "easing": "constant", "transform": {"position": [HIT[0], HIT[1], -3], "rotation": [200, 90, 40], "scale": [0.01, 0.01, 0.01]}})
+# After the impact it drops far below ground (taking its light with it).
+C.append({"type": "setKeyframe", "id": "meteor", "frame": IMPACT + 1, "easing": "constant", "transform": {"position": [HIT[0], HIT[1], -80], "rotation": [200, 90, 40], "scale": [0.01, 0.01, 0.01]}})
+C.append({"type": "add", "primitive": "light", "id": "meteor-light", "name": "Meteor glow", "parentId": "meteor", "light": {"type": "point", "power": 12000, "color": "#ff8a3a", "shadows": False}, "transform": {"position": [0, 0, 0]}})
 C.append({"type": "setParticles", "id": "meteor", "particles": {"count": 3200, "start": 1, "end": IMPACT, "lifetime": 22, "speed": 0.3, "random": 0.8, "gravity": -0.05, "size": 2.4, "sizeRandom": 0.4, "shape": "fire", "color": "#ff7a1a", "glow": 1, "ground": "none"}})
 
 # Hidden emitters at the impact: fireball and dust (they burst at the impact frame).
@@ -56,7 +59,7 @@ C.append({"type": "setParticles", "id": "dust", "particles": {"count": 700, "sta
 
 # The blast: a force field for two frames, then bake the falling pieces.
 C.append({"type": "add", "primitive": "empty", "id": "blast", "name": "Blast", "transform": {"position": HIT}})
-C.append({"type": "setField", "id": "blast", "field": {"type": "force", "strength": 650, "radius": 32, "start": IMPACT, "end": IMPACT + 1}})
+C.append({"type": "setField", "id": "blast", "field": {"type": "force", "strength": 650, "radius": 32, "start": IMPACT, "end": IMPACT + 1, "flash": 400000, "flashColor": "#ff9a45"}})
 C.append({"type": "addCameraShake", "start": IMPACT, "end": IMPACT + 60, "strength": 0.9, "frequency": 11})
 C.append({"type": "bakePhysics"})
 

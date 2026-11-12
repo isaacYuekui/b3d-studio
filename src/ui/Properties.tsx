@@ -21,13 +21,13 @@ import type { ParticleSettings } from '../core/particles';
 import type { Surge, WaterSettings } from '../core/ocean';
 import { DEFAULT_SURGE } from '../core/ocean';
 import { SHAKE_PRESETS } from '../core/shake';
-import { FIELD_PRESETS, FIELD_TYPES } from '../core/fields';
+import { DEFAULT_FLASH_COLOR, FIELD_PRESETS, FIELD_TYPES } from '../core/fields';
 import type { ForceField } from '../core/fields';
 import type { RigidBody } from '../core/physics';
 import { bakePhysics, freePhysics } from './physicsUi';
 import { prepareBooleans } from './prepare';
 import type { Quality } from '../core/store';
-import { PATTERNS } from '../core/patterns';
+import { DEFAULT_GLOW_COLOR, PATTERNS } from '../core/patterns';
 import type { Pattern, PatternType } from '../core/patterns';
 import type { TimeOfDay } from '../core/sky';
 import { worldOf } from '../core/types';
@@ -52,6 +52,8 @@ const PATTERN_DEFAULTS: Record<PatternType, Pattern> = {
   gradient: { type: 'gradient', colorA: '#1b2a49', colorB: '#f2a65a', scale: 1, bump: 0 },
   windows: { type: 'windows', colorA: '#2b3a48', colorB: '#d8cdb8', scale: 0.333, bump: 0.5 },
 };
+/** What carries over when switching pattern type: the colours and any glow. */
+const keepPatternLook = (p: Pattern): Partial<Pattern> => ({ colorA: p.colorA, colorB: p.colorB, ...(p.glow ? { glow: p.glow, glowColor: p.glowColor } : {}) });
 const EXTRA_LABEL = { clearcoat: 'Clearcoat', clearcoatRoughness: 'Coat roughness', transmission: 'Transmission (glass)', sheen: 'Sheen (fabric)', subsurface: 'Subsurface (skin)', anisotropy: 'Anisotropy (brushed)' } as const;
 /** One-tap looks, Blender-style Principled settings. */
 const MATERIAL_PRESETS: { name: string; material: Partial<SceneMaterial> }[] = [
@@ -288,7 +290,7 @@ export function Properties() {
                 value={o.material.pattern?.type ?? ''}
                 onChange={(e) => {
                   const t = e.target.value as PatternType | '';
-                  store.dispatch({ type: 'setMaterial', id: o.id, material: { pattern: t ? { ...PATTERN_DEFAULTS[t], ...(o.material.pattern ? { colorA: o.material.pattern.colorA, colorB: o.material.pattern.colorB } : {}), type: t } : null } }, { select: false });
+                  store.dispatch({ type: 'setMaterial', id: o.id, material: { pattern: t ? { ...PATTERN_DEFAULTS[t], ...(o.material.pattern ? keepPatternLook(o.material.pattern) : {}), type: t } : null } }, { select: false });
                 }}
               >
                 <option value="">None</option>
@@ -312,6 +314,13 @@ export function Properties() {
                 </label>
                 {scalar('Scale', p.scale, 0.01, 100, (v) => setP({ scale: v }), 0.1)}
                 {scalar('Bump', p.bump, 0, 1, (v) => setP({ bump: v }))}
+                {scalar('Glow', p.glow ?? 0, 0, 100, (v) => setP({ glow: v }), 0.1)}
+                {!!p.glow && (
+                  <label className="prop-row">
+                    <span>Glow colour</span>
+                    <input type="color" aria-label="Pattern glow colour" value={p.glowColor ?? DEFAULT_GLOW_COLOR} onChange={(e) => store.preview(setP({ glowColor: e.target.value }))} onBlur={() => store.commitPreview()} />
+                  </label>
+                )}
               </>
             );
           })()}
@@ -1033,7 +1042,7 @@ function FieldSection({ id }: { id: string }) {
   const f = useApp((s) => s.doc.objects[id].field);
   const frame = useApp((s) => s.frame);
   const set = (field: Partial<ForceField> | null) => store.dispatch({ type: 'setField', id, field }, { select: false });
-  const num = (key: 'strength' | 'radius' | 'start' | 'end', label: string, lo: number, hi: number, step: number, suffix: string, int = false) => (
+  const num = (key: 'strength' | 'radius' | 'start' | 'end' | 'flash', label: string, lo: number, hi: number, step: number, suffix: string, int = false) => (
     <NumberField
       label={label}
       value={f![key] ?? 0}
@@ -1052,7 +1061,7 @@ function FieldSection({ id }: { id: string }) {
     <Section title="Force field" defaultOpen>
       <div className="seg-text" role="group" aria-label="Force field presets">
         {FIELD_PRESETS.map((p) => (
-          <button key={p.id} data-field-preset={p.id} onClick={() => set(p.frames ? { ...p.field, start: frame, end: frame + p.frames } : { ...p.field, start: undefined, end: undefined })}>
+          <button key={p.id} data-field-preset={p.id} onClick={() => set(p.frames ? { flash: undefined, ...p.field, start: frame, end: frame + p.frames } : { flash: undefined, ...p.field, start: undefined, end: undefined })}>
             {p.label}
           </button>
         ))}
@@ -1077,6 +1086,19 @@ function FieldSection({ id }: { id: string }) {
           </label>
           {f.start !== undefined && num('start', 'From frame', -100000, 100000, 1, '', true)}
           {f.end !== undefined && num('end', 'To frame', -100000, 100000, 1, '', true)}
+          <label className="prop-row">
+            <span>Light flash (lights up the area)</span>
+            <input type="checkbox" aria-label="Light flash" checked={!!f.flash} onChange={(e) => set({ flash: e.target.checked ? 60000 : undefined })} />
+          </label>
+          {!!f.flash && (
+            <>
+              {num('flash', 'Flash power', 100, 10000000, 1000, ' W')}
+              <label className="prop-row">
+                <span>Flash colour</span>
+                <input type="color" aria-label="Flash colour" value={f.flashColor ?? DEFAULT_FLASH_COLOR} onChange={(e) => store.preview({ type: 'setField', id, field: { flashColor: e.target.value } })} onBlur={() => store.commitPreview()} />
+              </label>
+            </>
+          )}
           <div className="prop-actions">
             <button className="btn primary" onClick={() => void bakePhysics(store)}>Bake physics</button>
             <button className="btn" onClick={() => set(null)}>Remove field</button>

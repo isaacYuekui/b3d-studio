@@ -141,7 +141,7 @@ export type Command =
   /** Change a text object's words, font, size, thickness or alignment (rebuilds its mesh). */
   | { type: 'setText'; id: string; text: Partial<TextData> }
   /** A whole town of buildings on a street grid (village, town or city), with an optional ground. */
-  | { type: 'addTown'; prefix?: string; style?: TownStyle; center?: [number, number]; size?: [number, number]; base?: number; seed?: number; ground?: boolean }
+  | { type: 'addTown'; prefix?: string; style?: TownStyle; center?: [number, number]; size?: [number, number]; base?: number; seed?: number; ground?: boolean; lights?: number }
   /** Force field on an empty (null removes it): Force, Wind or Vortex, acting in the physics bake. */
   | { type: 'setField'; id: string; field: Partial<ForceField> | null }
   /** Float an object on the water under it (null stops it floating). */
@@ -1017,6 +1017,7 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
         const f: ForceField = { ...DEFAULT_FIELD, ...o.field, ...cmd.field };
         if (f.start === undefined) delete f.start;
         if (f.end === undefined) delete f.end;
+        if (f.flash === undefined) delete f.flash;
         if (f.start !== undefined && f.end !== undefined && f.end < f.start) throw new CommandError('The field must end after it starts');
         next.field = f;
       }
@@ -1123,6 +1124,9 @@ function validateMaterial(v: unknown, partial: boolean): Partial<Material> {
         scale: q.scale === undefined ? 1 : inRange(q.scale, 0.01, 100) ? (q.scale as number) : fail('material.pattern.scale must be 0.01..100 (repeats per metre)'),
         bump: q.bump === undefined ? 0.3 : inRange(q.bump, 0, 1) ? (q.bump as number) : fail('material.pattern.bump must be 0..1'),
       };
+      // Glow is optional; 0 is left out so plain patterns stay as they were.
+      if (q.glow !== undefined && q.glow !== 0) m.pattern.glow = inRange(q.glow, 0, 100) ? (q.glow as number) : fail('material.pattern.glow must be 0..100');
+      if (q.glowColor !== undefined) m.pattern.glowColor = isColor(q.glowColor) ? q.glowColor : fail('material.pattern.glowColor must be #rrggbb');
     }
   }
   return m;
@@ -1479,9 +1483,9 @@ export function validateSceneDoc(v: unknown): SceneDoc {
 
 /** Force field settings; `partial` checks only the fields given. */
 export function validateField(v: unknown, partial: boolean): Partial<ForceField> {
-  if (!isRecord(v)) fail('field must be an object: {type, strength, radius, start?, end?}');
+  if (!isRecord(v)) fail('field must be an object: {type, strength, radius, start?, end?, flash?, flashColor?}');
   const out: Partial<ForceField> = {};
-  for (const k of Object.keys(v)) if (!['type', 'strength', 'radius', 'start', 'end'].includes(k)) fail(`field has no setting "${k}" (use type, strength, radius, start, end)`);
+  for (const k of Object.keys(v)) if (!['type', 'strength', 'radius', 'start', 'end', 'flash', 'flashColor'].includes(k)) fail(`field has no setting "${k}" (use type, strength, radius, start, end, flash, flashColor)`);
   if (v.type !== undefined) out.type = (FIELD_TYPES as readonly unknown[]).includes(v.type) ? (v.type as FieldType) : fail(`field.type must be one of ${FIELD_TYPES.join(', ')}`);
   if (v.strength !== undefined) out.strength = inRange(v.strength, -100000, 100000) ? (v.strength as number) : fail('field.strength must be -100000..100000 m/s²');
   if (v.radius !== undefined) out.radius = inRange(v.radius, 0, 100000) ? (v.radius as number) : fail('field.radius must be 0..100000 m (0 = everywhere)');
@@ -1490,7 +1494,15 @@ export function validateField(v: unknown, partial: boolean): Partial<ForceField>
   else if (v.start !== undefined) out.start = isFrame(v.start) ? (v.start as number) : fail('field.start must be a frame');
   if (v.end === null && partial) out.end = undefined;
   else if (v.end !== undefined) out.end = isFrame(v.end) ? (v.end as number) : fail('field.end must be a frame');
-  if (!partial) return { ...DEFAULT_FIELD, ...out };
+  // 0 / null turns the flash off.
+  if (v.flash === null || v.flash === 0) out.flash = undefined;
+  else if (v.flash !== undefined) out.flash = inRange(v.flash, 0, 10000000) ? (v.flash as number) : fail('field.flash must be 0..10000000 W (0 = no light)');
+  if (v.flashColor !== undefined) out.flashColor = isColor(v.flashColor) ? v.flashColor : fail('field.flashColor must be #rrggbb');
+  if (!partial) {
+    const f = { ...DEFAULT_FIELD, ...out };
+    if (f.flash === undefined) delete f.flash;
+    return f;
+  }
   return out;
 }
 
@@ -2065,6 +2077,7 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (v.base !== undefined) cmd.base = inRange(v.base, -10000, 10000) ? (v.base as number) : fail('addTown base must be a height in metres');
       if (v.seed !== undefined) cmd.seed = Number.isInteger(v.seed) && inRange(v.seed, 0, 1e9) ? (v.seed as number) : fail('addTown seed must be a whole number');
       if (v.ground !== undefined) cmd.ground = typeof v.ground === 'boolean' ? v.ground : fail('addTown ground must be true/false');
+      if (v.lights !== undefined) cmd.lights = inRange(v.lights, 0, 100) ? (v.lights as number) : fail('addTown lights must be 0..100 (window glow; 0 = off)');
       return cmd;
     }
     case 'setField':

@@ -4,6 +4,7 @@
 // physics and force fields. Deterministic per seed.
 
 import type { Command } from './commands';
+import { WINDOW_GRID } from './patterns';
 import type { MeshData, Vec3 } from './types';
 
 export const TOWN_STYLES = ['village', 'town', 'city'] as const;
@@ -22,9 +23,14 @@ export interface TownOptions {
   seed: number;
   /** Add an asphalt ground under the town (default true). */
   ground: boolean;
+  /** Lit windows for night scenes: the facade pattern's glow strength (0 = off). */
+  lights: number;
 }
 
-export const DEFAULT_TOWN: TownOptions = { prefix: 'town', style: 'town', center: [0, 0], size: [60, 60], base: 0, seed: 1, ground: true };
+export const DEFAULT_TOWN: TownOptions = { prefix: 'town', style: 'town', center: [0, 0], size: [60, 60], base: 0, seed: 1, ground: true, lights: 0 };
+
+/** Window light colours at night: mostly warm lamps, some cooler LED / TV light. */
+const LIGHT_COLORS = ['#ffc27a', '#ffcf8f', '#ffdcab', '#ffb867', '#d9e6ff'];
 
 const STYLE = {
   village: { lot: 14, street: 7, storeys: [1, 2], fill: [0.45, 0.65], roof: 'pitched', walls: ['#e8dcc5', '#f0e3cf', '#e4d2b6', '#dfe6dc', '#efd9c8', '#d9d2c3'], glass: '#33424f', storey: 3 },
@@ -110,13 +116,17 @@ export function townCommands(o: TownOptions): Command[] {
       const yaw = o.style === 'village' ? Math.round((rand() - 0.5) * 16) : 0;
       const id = `${o.prefix}-b${n}`;
       const wall = pick(st.walls);
+      // Shift each facade by whole storeys / bays so neighbours show different windows (and lights).
+      const shift = (): number => Math.floor(rand() * WINDOW_GRID) * st.storey;
+      const mesh: MeshData = { ...boxMesh(w, d, h), uvOffset: [shift(), shift(), shift()] };
+      const lights = o.lights > 0 ? { glow: o.lights, glowColor: pick(LIGHT_COLORS) } : {};
       cmds.push({
         type: 'add',
         primitive: 'mesh',
         id,
         name: `${o.style === 'village' ? 'House' : 'Building'} ${n + 1}`,
-        mesh: boxMesh(w, d, h),
-        material: { baseColor: wall, roughness: 0.82, pattern: { type: 'windows', colorA: st.glass, colorB: wall, scale: 1 / st.storey, bump: 0.5 } },
+        mesh,
+        material: { baseColor: wall, roughness: 0.82, pattern: { type: 'windows', colorA: st.glass, colorB: wall, scale: 1 / st.storey, bump: 0.5, ...lights } },
         transform: { position: [px, py, o.base], rotation: [0, 0, yaw] },
       });
       // Roofs: a pitched roof for houses, a parapet slab for flat roofs (it also hides the roof windows).

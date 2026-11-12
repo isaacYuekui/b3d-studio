@@ -1013,6 +1013,65 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Night lights (v3.13): pattern Glow (lit windows), towns light up after dark, explosion flash.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'setTimeOfDay', time: 'night' },
+      { type: 'add', primitive: 'cube', id: 'wall', name: 'Wall', material: { pattern: { type: 'windows', colorA: '#2b3a48', colorB: '#d8cdb8', scale: 0.333, bump: 0.5 } } },
+      { type: 'setAnimation', start: 1, end: 60 },
+    ] });
+    s.select('wall');
+  });
+  await page.click('[data-prop-tab="material"]');
+  await setNumber(page, '[data-testid="properties"]', 'Glow', 3);
+  const g = await page.evaluate(() => {
+    const p = window.__b3d.store.getState().doc.objects.wall.material.pattern;
+    const m = window.__b3d.viewport().entries.get('wall').material;
+    return { glow: p.glow, emissiveMap: !!m.emissiveTexture, emissive: m.emissiveColor.r, colourRow: !!document.querySelector('[aria-label="Pattern glow colour"]') };
+  });
+  check('v3.13: Material → Pattern → Glow lights the windows (emission map)', g.glow === 3 && g.emissiveMap && g.emissive === 3 && g.colourRow, JSON.stringify(g));
+  await page.click('[data-menu="Add"]');
+  await page.hover('.menu-item:has-text("Town")');
+  await page.click('.menu [data-action="add.town.village"]');
+  const lit = await page.evaluate(() => {
+    const o = window.__b3d.store.getState().doc.objects;
+    const b = Object.keys(o).filter((id) => /^village-b\d+$/.test(id));
+    return { buildings: b.length, lit: b.filter((id) => (o[id].material.pattern?.glow ?? 0) > 0).length };
+  });
+  check('v3.13: a town added at night has its windows lit', lit.buildings > 2 && lit.lit === lit.buildings, JSON.stringify(lit));
+  // Explosion preset carries a flash: dark before the blast, bright at it (Rendered).
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'add', primitive: 'empty', id: 'boom', name: 'Boom', transform: { position: [0, 0, 1] } });
+    s.select('boom');
+    s.setFrame(20);
+    s.setShading('rendered');
+  });
+  await page.click('[data-prop-tab="physics"]');
+  await page.click('[data-field-preset="blast"]');
+  const fl = await page.evaluate(() => {
+    const s = window.__b3d.store;
+    const f = s.getState().doc.objects.boom.field;
+    const vp = window.__b3d.viewport();
+    s.setFrame(19);
+    const before = vp.entries.get('boom').flash?.intensity;
+    s.setFrame(20);
+    const at = vp.entries.get('boom').flash?.intensity;
+    s.setFrame(50);
+    const after = vp.entries.get('boom').flash?.intensity;
+    return { flash: f.flash, before, at, after, box: !!document.querySelector('[aria-label="Light flash"]:checked') };
+  });
+  check('v3.13: Explosion field flashes at its start frame and fades', fl.flash > 0 && fl.before === 0 && fl.at > 100 && fl.after < fl.at / 4 && fl.box, JSON.stringify(fl));
+  await page.waitForTimeout(1200);
+  await page.screenshot({ path: `${shots}/night-lights.png` });
+  check('v3.13: no errors (night lights)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Town generator (v3.12): Add → Town → Village / Town / City; buildings with windows and roofs.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });

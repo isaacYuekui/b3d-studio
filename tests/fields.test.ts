@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as CANNON from 'cannon-es';
-import { activeFields, fieldAcceleration } from '../src/core/fields';
+import { activeFields, fieldAcceleration, flashLevel } from '../src/core/fields';
 import { registerPhysics, simulate } from '../src/core/physics';
 import { applyCommand, validateCommand, validateSceneDoc } from '../src/core/commands';
 import { createDefaultDoc } from '../src/core/store';
@@ -86,5 +86,38 @@ describe('animated passive bodies', () => {
     const still = applyCommand(doc, validateCommand({ type: 'setRigidBody', id: 'paddle', rigid: { animated: false } })).doc;
     const t2 = simulate(still, 1, 48, 24).tracks.box;
     expect(Math.abs(t2[t2.length - 1].transform.position[0])).toBeLessThan(0.05);
+  });
+});
+
+describe('explosion flash', () => {
+  it('is dark before the blast, full at the start, then fades out within 3 s', () => {
+    const f = { type: 'force' as const, strength: 400, radius: 14, start: 60, end: 61, flash: 60000 };
+    expect(flashLevel(f, 59)).toBe(0);
+    expect(flashLevel(f, 60)).toBeCloseTo(1, 6);
+    expect(flashLevel(f, 72)).toBeLessThan(0.5);
+    expect(flashLevel(f, 72)).toBeGreaterThan(0.1);
+    expect(flashLevel(f, 60 + 3 * 24 + 1)).toBe(0);
+    let last = 1;
+    for (let k = 1; k <= 72; k += 6) {
+      const v = flashLevel(f, 60 + k);
+      expect(v).toBeLessThanOrEqual(last + 1e-9);
+      last = v;
+    }
+    expect(flashLevel({ ...f, flash: undefined }, 60)).toBe(0);
+  });
+
+  it('validates, merges and clears', () => {
+    let doc = scene([
+      { type: 'add', primitive: 'empty', id: 'f' },
+      { type: 'setField', id: 'f', field: { type: 'force', flash: 50000, flashColor: '#ffaa00' } },
+    ]);
+    expect(doc.objects.f.field).toMatchObject({ flash: 50000, flashColor: '#ffaa00' });
+    doc = applyCommand(doc, validateCommand({ type: 'setField', id: 'f', field: { strength: 99 } })).doc;
+    expect(doc.objects.f.field?.flash).toBe(50000);
+    doc = applyCommand(doc, validateCommand({ type: 'setField', id: 'f', field: { flash: 0 } })).doc;
+    expect(doc.objects.f.field && 'flash' in doc.objects.f.field).toBe(false);
+    expect(() => validateCommand({ type: 'setField', id: 'f', field: { flash: -5 } })).toThrow(/flash/);
+    expect(() => validateCommand({ type: 'setField', id: 'f', field: { flashColor: 'orange' } })).toThrow(/flashColor/);
+    expect(validateSceneDoc(JSON.parse(JSON.stringify(doc))).objects.f.field?.strength).toBe(99);
   });
 });
