@@ -115,7 +115,8 @@ export function Properties() {
     if (poseId) setTabState('data');
   }, [poseId]);
   useEffect(() => {
-    if (editId) setTabState('object');
+    // (Stays on the Mesh tab: shaping a shape key happens there.)
+    if (editId) setTabState((t) => (t === 'data' ? t : 'object'));
   }, [editId]);
 
   // Material slot shown in the Material tab (0 = main material).
@@ -597,7 +598,7 @@ function ShapeKeysSection({ id }: { id: string }) {
     else run(cmd);
   };
   return (
-    <Section title="Shape Keys" defaultOpen={!!sk}>
+    <Section title="Shape Keys">
       {sk && (
         <div className="sk-list" data-testid="shape-keys">
           {sk.keys.map((k, i) => {

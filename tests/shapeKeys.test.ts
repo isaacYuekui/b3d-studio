@@ -70,3 +70,20 @@ describe('shape keys', () => {
     expect(back.animation!.shapes).toEqual(d.animation!.shapes);
   });
 });
+
+describe('shape keys script example (docs/SCRIPTS.md)', () => {
+  it('squash ball runs', () => {
+    const d = run(emptyDoc(), { type: 'batch', commands: [
+      { type: 'add', primitive: 'sphere', id: 'ball' },
+      { type: 'addShapeKey', id: 'ball' },
+      { type: 'addShapeKey', id: 'ball', name: 'Squash' },
+      { type: 'editMesh', id: 'ball', steps: [{ op: 'scale', select: { mode: 'vert' }, by: [1.3, 1.3, 0.6] }] },
+      { type: 'setActiveShapeKey', id: 'ball', index: 0 },
+      { type: 'keyShape', id: 'ball', key: 'Squash', frame: 1, value: 0 },
+      { type: 'keyShape', id: 'ball', key: 'Squash', frame: 12, value: 1 },
+    ] });
+    const sk = d.objects.ball.shapeKeys!;
+    expect(Math.max(...sk.keys[1].verts.map((v) => v[2]))).toBeCloseTo(0.6, 2);
+    expect(Math.max(...d.objects.ball.mesh!.vertices.map((v) => v[2]))).toBeCloseTo(1, 2);
+  });
+});

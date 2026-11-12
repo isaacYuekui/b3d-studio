@@ -1013,6 +1013,69 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Shape keys (v3.21): Basis + a key shaped in Edit Mode, blended by a value that animates.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [{ type: 'delete', ids: [...s.getState().doc.order] }, { type: 'add', primitive: 'sphere', id: 'ball', name: 'Ball' }, { type: 'setAnimation', start: 1, end: 24 }] });
+    s.select('ball');
+    s.setFrame(1);
+  });
+  const topZ = () => page.evaluate(() => {
+    const p = window.__b3d.viewport().entries.get('ball').node.getVerticesData('position');
+    let m = -Infinity;
+    for (let i = 1; i < p.length; i += 3) m = Math.max(m, p[i]);
+    return Math.round(m * 1000) / 1000;
+  });
+  const setRange = (sel, v) => page.locator(sel).fill(String(v));
+  await page.click('[data-prop-tab="data"]');
+  await page.click('[data-testid="sk-add"]');
+  await page.click('[data-testid="sk-add"]');
+  const keys = await page.evaluate(() => window.__b3d.store.getState().doc.objects.ball.shapeKeys);
+  check('v3.21: Mesh tab → + makes the Basis, then a shape key that becomes active', keys?.keys.length === 2 && keys.active === 1 && keys.keys[0].name === 'Basis', JSON.stringify(keys && { n: keys.keys.length, active: keys.active, names: keys.keys.map((k) => k.name) }));
+  const z0 = await topZ();
+  await page.click('[data-testid="mode-toggle"]');
+  await page.evaluate(() => window.__b3d.store.dispatch({ type: 'editMesh', id: 'ball', steps: [{ op: 'move', select: { mode: 'vert', box: { min: [-2, -2, 0.5], max: [2, 2, 2] } }, by: [0, 0, 0.8] }] }));
+  await page.waitForTimeout(200);
+  const zEdit = await topZ();
+  await page.click('[data-testid="mode-toggle"]');
+  await page.waitForTimeout(200);
+  const zObj = await topZ();
+  const basisTop = await page.evaluate(() => Math.max(...window.__b3d.store.getState().doc.objects.ball.shapeKeys.keys[0].verts.map((v) => v[2])));
+  check('v3.21: Edit Mode shapes the key (Basis unchanged); Object Mode shows the mix at value 0', zEdit > z0 + 0.5 && Math.abs(zObj - z0) < 1e-3 && Math.abs(basisTop - z0) < 0.01, JSON.stringify({ z0, zEdit, zObj, basisTop }));
+  await setRange('[aria-label="Key 1 value"]', 1);
+  await page.evaluate(() => window.__b3d.store.commitPreview());
+  await page.waitForTimeout(200);
+  const z1 = await topZ();
+  check('v3.21: the value slider blends the shape in', Math.abs(z1 - zEdit) < 0.01, JSON.stringify({ z1, zEdit }));
+  // Animate: 0 at frame 1, 1 at frame 24.
+  await setRange('[aria-label="Key 1 value"]', 0);
+  await page.evaluate(() => window.__b3d.store.commitPreview());
+  await page.click('[aria-label="Keyframe Key 1"]');
+  await page.evaluate(() => window.__b3d.store.setFrame(24));
+  await setRange('[aria-label="Key 1 value"]', 1);
+  await page.evaluate(() => window.__b3d.store.commitPreview());
+  const shapes = await page.evaluate(() => window.__b3d.store.getState().doc.animation?.shapes?.ball);
+  await page.evaluate(() => window.__b3d.store.setFrame(12));
+  await page.waitForTimeout(200);
+  const zMid = await topZ();
+  check('v3.21: ◆ keyframes the value (changing an animated value keys it) and it plays back', shapes?.['Key 1']?.length === 2 && zMid > z0 + 0.1 && zMid < zEdit - 0.1, JSON.stringify({ shapes, zMid }));
+  await page.screenshot({ path: `${shots}/shapekeys.png`, timeout: 60000 }).catch(() => {});
+  // Geometry changes need the Basis.
+  const refused = await page.evaluate(() => {
+    try {
+      window.__b3d.store.dispatch({ type: 'editMesh', id: 'ball', steps: [{ op: 'extrude', select: { mode: 'face', indices: [0] }, offset: 0.2 }] });
+      return window.__b3d.store.getState().doc.objects.ball.shapeKeys.keys[1].verts.length === window.__b3d.store.getState().doc.objects.ball.mesh.vertices.length ? 'kept' : 'broken';
+    } catch (e) {
+      return 'threw';
+    }
+  });
+  check('v3.21: adding geometry on a shape key is refused (keys stay consistent)', refused !== 'broken', refused);
+  check('v3.21: no errors (shape keys)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Curves + Follow Path (v3.20): Add → Curve, edit points, an object and the camera follow it.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });

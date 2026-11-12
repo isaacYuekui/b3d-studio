@@ -572,3 +572,23 @@ A curve is a mesh object whose vertices are the control points (no faces) with a
 - `setCameraFollow`: `look` is `"ahead"` (along the path) or an object id to keep in view; `height` lifts the camera above the path.
 - `editCurve`: `{"type":"editCurve","id":"road","op":"extrude"|"subdivide"|"delete","points":[3]}`.
 - `applyModifiers` turns the tube into a real mesh.
+
+## Shape keys (v3.21)
+
+```json
+{"type":"batch","commands":[
+  {"type":"add","primitive":"sphere","id":"ball"},
+  {"type":"addShapeKey","id":"ball"},
+  {"type":"addShapeKey","id":"ball","name":"Squash"},
+  {"type":"editMesh","id":"ball","steps":[{"op":"scale","select":{"mode":"vert"},"by":[1.3,1.3,0.6]}]},
+  {"type":"setActiveShapeKey","id":"ball","index":0},
+  {"type":"keyShape","id":"ball","key":"Squash","frame":1,"value":0},
+  {"type":"keyShape","id":"ball","key":"Squash","frame":12,"value":1}
+]}
+```
+
+- The first `addShapeKey` makes the Basis; each later one adds a key (a copy of the Basis, or `fromMix: true`) and makes it active.
+- While a key is active, mesh edits (`editMesh`, `setMesh`, sculpting) change that key; on the Basis they move every key with it. Adding or removing points is refused unless the Basis is active.
+- `setShapeKey`: `{id, index, name?, value?, min?, max?, mute?}`; renaming keeps its keyframes.
+- `removeShapeKey` with `index: 0` removes them all (the mesh keeps the Basis shape).
+- `keyShape` `{id, key, frame, value?, easing?}` / `unkeyShape` `{id, key, frame}`; saved under `animation.shapes`.
