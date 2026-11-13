@@ -1013,6 +1013,52 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Drivers (v3.24): a wheel's rotation driven by the car's location, with safe expressions.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cube', id: 'car', name: 'Car', transform: { position: [0, 0, 0], scale: [0.6, 0.3, 0.2] } },
+      { type: 'add', primitive: 'cylinder', id: 'wheel', name: 'Wheel', transform: { position: [0, -1, 0], rotation: [90, 0, 0], scale: [0.4, 0.4, 0.1] } },
+      { type: 'setKeyframe', id: 'car', frame: 1, transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [0.6, 0.3, 0.2] } },
+      { type: 'setKeyframe', id: 'car', frame: 24, transform: { position: [2, 0, 0], rotation: [0, 0, 0], scale: [0.6, 0.3, 0.2] } },
+    ] });
+    s.select('wheel');
+    s.setFrame(1);
+  });
+  await page.click('[data-prop-tab="object"]');
+  const head = page.locator('.prop-section-head', { hasText: /^Drivers$/ });
+  if ((await head.getAttribute('aria-expanded')) !== 'true') await head.click();
+  await page.click('[data-testid="driver-add"]');
+  const d0 = await page.evaluate(() => window.__b3d.store.getState().doc.objects.wheel.drivers);
+  check('v3.24: + Add Driver makes a driver reading another object (var = Car X Location)', d0?.[0]?.vars[0]?.object === 'car' && d0[0].expression === 'var', JSON.stringify(d0));
+  await page.locator('[data-driver="0"] [aria-label="Driven property"]').selectOption('location.x');
+  const ex = page.locator('[data-driver="0"] [aria-label="Driver expression"]');
+  await ex.fill('var + 1');
+  await ex.press('Enter');
+  await page.evaluate(() => window.__b3d.store.setFrame(24));
+  await page.waitForTimeout(200);
+  const x24 = await page.evaluate(() => {
+    const n = window.__b3d.viewport().entries.get('wheel').node;
+    n.computeWorldMatrix(true);
+    return Math.round(n.getAbsolutePosition().x * 1000) / 1000;
+  });
+  const shown = await page.locator('[data-driver="0"] [data-testid="driver-value"]').textContent();
+  check('v3.24: the driven X follows the car every frame (car at 2 → wheel at 3) and shows its value', x24 === 3 && shown.includes('3'), JSON.stringify({ x24, shown }));
+  const before = await page.evaluate(() => window.__b3d.store.getState().doc.objects.wheel.drivers[0].expression);
+  await ex.fill('alert(1)');
+  await ex.press('Enter');
+  await page.waitForTimeout(200);
+  const after = await page.evaluate(() => window.__b3d.store.getState().doc.objects.wheel.drivers[0].expression);
+  const field = await ex.inputValue();
+  check('v3.24: code is refused — expressions are maths only (the field goes back)', before === after && after === 'var + 1' && field === 'var + 1', JSON.stringify({ before, after, field }));
+  await page.screenshot({ path: `${shots}/drivers.png`, timeout: 60000 }).catch(() => {});
+  check('v3.24: no errors (drivers)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Constraints (v3.23): Track To / Copy Location / Limit Distance from the Constraints tab.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });

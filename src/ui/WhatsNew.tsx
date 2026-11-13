@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 /** Newest first. The first entry is the current version. */
 const CHANGES: { v: string; items: string[] }[] = [
+  { v: '3.24', items: ['Drivers (Properties → Object): drive a channel or shape key from other objects with a maths expression — safe, no code'] },
   { v: '3.23', items: ['Object constraints (Properties → Constraints): Track To, Copy Location / Rotation / Scale, Limit Distance, with Influence'] },
   { v: '3.22', items: ['Weight Paint (Weights button): paint how much each bone moves each part — Draw / Add / Subtract / Blur, vertex groups in Properties → Mesh'] },
   { v: '3.21', items: ['Shape keys (Properties → Mesh): Basis + other shapes, shaped in Edit Mode or Sculpt, blended with an animatable value'] },

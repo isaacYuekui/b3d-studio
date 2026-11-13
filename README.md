@@ -5,6 +5,14 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Drivers (v3.24)
+
+- **Properties → Object → Drivers**, like Blender's Add Driver: a channel (location, rotation, scale) or a **shape key** value computed every frame from an expression
+- **Variables** read other objects' location / rotation (degrees) / scale; `frame` and `time` (seconds) are built in
+- A wheel that turns as the car moves: drive *Y Rotation* with `x / (2 * pi * 0.4) * 360`, where `x` is the car's X Location
+- Expressions are **maths only** (+ − * / ^ %, comparisons, `c ? a : b`, sin cos tan abs min max clamp lerp round sqrt noise radians degrees…), parsed by B3D itself — never run as code, unlike Blender's Python drivers
+- Scripts: `addDriver`, `setDriver`, `removeDriver`
+
 ## Object constraints (v3.23)
 
 - **Properties → Constraints**, like Blender's constraint tab: **+ Add Object Constraint** → **Track To**, **Copy Location**, **Copy Rotation**, **Copy Scale**, **Limit Distance**

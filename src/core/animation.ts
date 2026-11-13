@@ -9,6 +9,7 @@ import type { FollowPath, Transform, Vec3 } from './types';
 import { DEFAULT_CURVE, curvePolyline, pathAt } from './curve';
 import type { CurveSettings } from './curve';
 import { applyConstraints, mul4, trsMatrix } from './constraints';
+import { channelOf, driveTransform, driverValue } from './drivers';
 import type { M4 } from './constraints';
 
 export const EASINGS = ['linear', 'ease', 'easeIn', 'easeOut', 'constant'] as const;
@@ -181,7 +182,7 @@ export function evaluatePose(keys: PoseKey[], frame: number): { rotation: Vec3; 
 }
 
 /** Transform an object shows at a frame: animated if it has keys, otherwise its own. */
-type AnimDoc = { animation?: Animation; objects: Record<string, { id?: string; transform: Transform; follow?: FollowPath; parentId?: string | null; constraints?: import('./constraints').Constraint[]; mesh?: { vertices: Vec3[] }; modifiers?: { curve?: Partial<CurveSettings> } }> };
+type AnimDoc = { animation?: Animation; objects: Record<string, { id?: string; transform: Transform; follow?: FollowPath; parentId?: string | null; constraints?: import('./constraints').Constraint[]; drivers?: import('./drivers').Driver[]; mesh?: { vertices: Vec3[] }; modifiers?: { curve?: Partial<CurveSettings> } }> };
 
 /** Keys and Follow Path, before constraints: what the Location / Rotation / Scale fields show and edit (as in Blender). */
 export function baseTransformAt(doc: AnimDoc, id: string, frame: number): Transform | null {
@@ -196,6 +197,8 @@ export function transformAt(doc: AnimDoc, id: string, frame: number, depth = 0):
   const keys = doc.animation?.tracks[id];
   let base = (keys && evaluateTransform(keys, frame)) ?? o.transform;
   if (o.follow && o.follow.curve !== id) base = followTransform(doc, o.follow, base, frame) ?? base;
+  // Drivers (expressions of other objects' values) replace the channels they drive.
+  if (o.drivers?.length && depth < 12) base = driveTransform(base, o.drivers, frame, doc.animation?.fps ?? 24, (t, c) => (doc.objects[t] ? channelOf(transformAt(doc, t, frame, depth + 1) ?? doc.objects[t].transform, c) : null));
   // Constraints (Track To, Copy Location…) run last, in world space. Depth stops loops (A tracks B tracks A).
   if (o.constraints?.length && depth < 12) {
     const parent = o.parentId && doc.objects[o.parentId] ? worldAt(doc, o.parentId, frame, depth + 1) : null;
@@ -292,4 +295,19 @@ export function transformEdit(
   if (!isAnimated(doc, id)) return { type: 'transform', id, ...patch };
   const cur = baseTransformAt(doc, id, frame)!;
   return { type: 'setKeyframe', id, frame, transform: { position: patch.position ?? cur.position, rotation: patch.rotation ?? cur.rotation, scale: patch.scale ?? cur.scale } };
+}
+
+/** Shape key values with drivers applied (`shape:<name>` drivers override keyframes). */
+export function drivenShapeValues(doc: AnimDoc, id: string, frame: number, keyNames: string[], values: number[]): number[] {
+  const o = doc.objects[id];
+  const ds = o?.drivers?.filter((d) => d.property.startsWith('shape:'));
+  if (!ds?.length) return values;
+  const out = [...values];
+  for (const d of ds) {
+    const i = keyNames.indexOf(d.property.slice(6));
+    if (i <= 0) continue;
+    const v = driverValue(d, frame, doc.animation?.fps ?? 24, (t, c) => (doc.objects[t] ? channelOf(transformAt(doc, t, frame, 1) ?? doc.objects[t].transform, c) : null));
+    if (v !== null) out[i] = v;
+  }
+  return out;
 }
