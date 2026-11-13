@@ -62,7 +62,7 @@ import { PRIMITIVES, isRenderable, worldOf } from '../core/types';
 import type { PrimitiveType } from '../core/types';
 import { primitiveMesh } from '../core/mesh/primitives';
 import { catalogNow, hdriUrl, loadCatalog, modelUrl, textureUrl } from './library';
-import { animationOf, evaluateValue, sceneCameraAt, transformAt, transformEdit } from '../core/animation';
+import { animationOf, drivenShapeValues, evaluateValue, sceneCameraAt, transformAt, transformEdit } from '../core/animation';
 import { guessUnitScale, isUserAsset, updateUserModelMeta, userModelMetaNow, userModelUrl } from './userModels';
 
 class MissingModel extends Error {}
@@ -772,7 +772,7 @@ export class Viewport {
       if (!e || !(e.node instanceof Mesh)) continue;
       now.add(id);
       const own = state.edit?.id === id || state.sculpt?.id === id;
-      const values = own ? null : shapeValuesAt(o.shapeKeys, doc.animation?.shapes?.[id], state.frame, evaluateValue);
+      const values = own ? null : drivenShapeValues(doc, id, state.frame, o.shapeKeys.keys.map((k) => k.name), shapeValuesAt(o.shapeKeys, doc.animation?.shapes?.[id], state.frame, evaluateValue));
       const sig = values ? values.map((v) => v.toFixed(4)).join(',') : 'own';
       const prev = this.shapeSig.get(id);
       if (prev && prev.sig === sig && prev.mesh === o.mesh && prev.mods === o.modifiers && prev.node === e.node) continue;
@@ -821,7 +821,7 @@ export class Viewport {
       if (state.edit?.id === id) continue; // edit the rest shape
       now.add(id);
       let ev = this.evalCache.get(id);
-      const values = hasShapeKeys(o.shapeKeys) ? shapeValuesAt(o.shapeKeys, doc.animation?.shapes?.[id], state.frame, evaluateValue) : null;
+      const values = hasShapeKeys(o.shapeKeys) ? drivenShapeValues(doc, id, state.frame, o.shapeKeys.keys.map((k) => k.name), shapeValuesAt(o.shapeKeys, doc.animation?.shapes?.[id], state.frame, evaluateValue)) : null;
       const sig = values ? values.map((v) => v.toFixed(4)).join(',') : '';
       if (!ev || ev.mesh !== o.mesh || ev.mods !== o.modifiers || ev.sig !== sig) {
         ev = { mesh: o.mesh, mods: o.modifiers, sig, out: applyModifiers(values ? shapedMesh(o.mesh, o.shapeKeys, values) : o.mesh, o.modifiers) };
@@ -1179,7 +1179,7 @@ export class Viewport {
     // Follow Path without keys of their own.
     for (const id of state.doc.order) {
       const o = state.doc.objects[id];
-      if ((!o?.follow && !o?.constraints?.length) || now.has(id)) continue;
+      if ((!o?.follow && !o?.constraints?.length && !o?.drivers?.length) || now.has(id)) continue;
       const e = this.entries.get(id);
       if (!e || (this.dragging && id === sel)) continue;
       now.add(id);

@@ -18,6 +18,9 @@ import { MAX_GROUPS, carryGroups, uniqueGroupName, validGroups, weightsToGroups 
 import type { VertexGroups } from './vertexGroups';
 import { CONSTRAINT_TYPES, MAX_CONSTRAINTS, TRACK_AXES, constraintError } from './constraints';
 import type { Constraint } from './constraints';
+import { CHANNELS, MAX_DRIVERS, MAX_DRIVER_VARS, driverProblem, isVarName } from './drivers';
+import type { Driver } from './drivers';
+import { MAX_EXPR } from './expr';
 import type { ArmatureData, Bone, BonePose, Background, CameraLens, FollowPath, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
@@ -106,6 +109,10 @@ export type Command =
   | { type: 'setConstraint'; id: string; index: number; patch: Partial<Constraint> }
   | { type: 'removeConstraint'; id: string; index: number }
   | { type: 'moveConstraint'; id: string; index: number; to: number }
+  /** Drivers: a channel (or `shape:<key>`) computed from an expression of other objects' values. */
+  | { type: 'addDriver'; id: string; driver: Driver }
+  | { type: 'setDriver'; id: string; index: number; patch: Partial<Driver> }
+  | { type: 'removeDriver'; id: string; index: number }
   /** Shape keys: the first add makes the Basis; later ones a new key (from the Basis, or the current mix). */
   | { type: 'addShapeKey'; id: string; name?: string; fromMix?: boolean }
   | { type: 'setShapeKey'; id: string; index: number; name?: string; value?: number; min?: number; max?: number; mute?: boolean }
@@ -587,6 +594,9 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
         doomed.forEach((id) => (delete tracks[id], delete poses[id], delete shapes[id]));
         animation = { ...animation, tracks, poses, ...(animation.shapes ? { shapes } : {}) };
       }
+      // Driver variables reading deleted objects go with them.
+      for (const [id, o] of Object.entries(objects))
+        if (o.drivers?.some((d) => d.vars.some((v) => doomed.has(v.object)))) objects[id] = { ...o, drivers: o.drivers.map((d) => ({ ...d, vars: d.vars.filter((v) => !doomed.has(v.object)) })) };
       // Constraints aimed at deleted objects go with them.
       for (const [id, o] of Object.entries(objects))
         if (o.constraints?.some((c) => doomed.has(c.target))) {
@@ -711,6 +721,34 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       return { doc: withObject(doc, { ...o, follow: { ...cmd.follow } }), created: [] };
     }
 
+    case 'addDriver': {
+      const o = requireObj(doc, cmd.id);
+      const list = o.drivers ?? [];
+      if (list.length >= MAX_DRIVERS) throw new CommandError(`At most ${MAX_DRIVERS} drivers`);
+      if (list.some((d) => d.property === cmd.driver.property)) throw new CommandError(`${cmd.driver.property} already has a driver`);
+      checkDriver(doc, o, cmd.driver);
+      return { doc: withObject(doc, { ...o, drivers: [...list, cmd.driver] }), created: [] };
+    }
+
+    case 'setDriver': {
+      const o = requireObj(doc, cmd.id);
+      const d = o.drivers?.[cmd.index];
+      if (!d) throw new CommandError(`${o.name} has no driver ${cmd.index}`);
+      const next = { ...d, ...cmd.patch };
+      if (next.property !== d.property && o.drivers!.some((x) => x.property === next.property)) throw new CommandError(`${next.property} already has a driver`);
+      checkDriver(doc, o, next);
+      return { doc: withObject(doc, { ...o, drivers: o.drivers!.map((x, i) => (i === cmd.index ? next : x)) }), created: [] };
+    }
+
+    case 'removeDriver': {
+      const o = requireObj(doc, cmd.id);
+      if (!o.drivers?.[cmd.index]) throw new CommandError(`${o.name} has no driver ${cmd.index}`);
+      const left = o.drivers.filter((_, i) => i !== cmd.index);
+      const { drivers: _d, ...rest } = o;
+      void _d;
+      return { doc: withObject(doc, left.length ? { ...rest, drivers: left } : rest), created: [] };
+    }
+
     case 'addConstraint': {
       const o = requireObj(doc, cmd.id);
       const list = o.constraints ?? [];
@@ -795,7 +833,8 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
         else delete next.mute;
       }
       const keys = sk.keys.map((x, i) => (i === cmd.index ? next : x));
-      return { doc: { ...withObject(doc, { ...o, shapeKeys: { ...sk, keys } }), animation }, created: [] };
+      const drivers = next.name !== k.name ? o.drivers?.map((d) => (d.property === `shape:${k.name}` ? { ...d, property: `shape:${next.name}` } : d)) : o.drivers;
+      return { doc: { ...withObject(doc, { ...o, shapeKeys: { ...sk, keys }, ...(drivers ? { drivers } : {}) }), animation }, created: [] };
     }
 
     case 'setActiveShapeKey': {
@@ -1976,6 +2015,11 @@ export function validateSceneObject(raw: unknown): SceneObject {
   if (v.params !== undefined) obj.params = validateParams(v.params);
   if (v.collection !== undefined) obj.collection = isId(v.collection) ? v.collection : fail(`object ${v.id}: collection invalid`);
   if (v.follow !== undefined) obj.follow = validateFollow(v.follow);
+  if (v.drivers !== undefined) {
+    if (!Array.isArray(v.drivers) || v.drivers.length > MAX_DRIVERS) fail(`object ${String(v.id)}: drivers must be a list of up to ${MAX_DRIVERS}`);
+    const list = (v.drivers as unknown[]).map((d) => validateDriverFields(d, false) as Driver);
+    if (list.length) obj.drivers = list;
+  }
   if (v.constraints !== undefined) {
     if (!Array.isArray(v.constraints) || v.constraints.length > MAX_CONSTRAINTS) fail(`object ${String(v.id)}: constraints must be a list of up to ${MAX_CONSTRAINTS}`);
     const list = (v.constraints as unknown[]).map((c) => validateConstraintFields(c, true) as Constraint);
@@ -2353,6 +2397,15 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (!Array.isArray(v.faces) || v.faces.length > LIMITS.faces || !v.faces.every((f) => Number.isInteger(f) && f >= 0)) fail('assignMaterial faces must be a list of face indices');
       return { type: 'assignMaterial', id: v.id, slot: v.slot as number, faces: [...(v.faces as number[])] };
     }
+    case 'addDriver':
+      if (!isId(v.id)) fail('addDriver needs id');
+      return { type: 'addDriver', id: v.id, driver: validateDriverFields(v.driver, false) as Driver };
+    case 'setDriver':
+      if (!isId(v.id) || !(Number.isInteger(v.index) && inRange(v.index, 0, MAX_DRIVERS - 1))) fail('setDriver needs id and index');
+      return { type: 'setDriver', id: v.id, index: v.index as number, patch: validateDriverFields(v.patch, true) };
+    case 'removeDriver':
+      if (!isId(v.id) || !(Number.isInteger(v.index) && inRange(v.index, 0, MAX_DRIVERS - 1))) fail('removeDriver needs id and index');
+      return { type: 'removeDriver', id: v.id, index: v.index as number };
     case 'addConstraint':
       if (!isId(v.id)) fail('addConstraint needs id');
       return { type: 'addConstraint', id: v.id, constraint: validateConstraintFields(v.constraint, false) as Extract<Command, { type: 'addConstraint' }>['constraint'] };
@@ -2936,4 +2989,32 @@ function validateConstraintFields(v: unknown, full: boolean, partial = false): P
   if (v.distance !== undefined) c.distance = inRange(v.distance, 0, 1e5) ? (v.distance as number) : fail('limit distance must be 0..100000 m');
   if (v.mode !== undefined) c.mode = ['inside', 'outside', 'on'].includes(v.mode as string) ? (v.mode as Constraint['mode']) : fail('limit distance mode must be inside, outside or on');
   return c;
+}
+
+/** Driver fields from a script / file (`partial`: a patch). Expressions are only parsed, never run as code. */
+function validateDriverFields(v: unknown, partial: boolean): Partial<Driver> {
+  if (!isRecord(v)) fail('driver must be an object');
+  const d: Partial<Driver> = {};
+  if (v.property !== undefined || !partial) {
+    const p = v.property;
+    d.property = typeof p === 'string' && ((CHANNELS as readonly string[]).includes(p) || (p.startsWith('shape:') && p.length > 6 && p.length <= 70)) ? p : fail(`driver property must be one of ${CHANNELS.join(', ')} or shape:<key name>`);
+  }
+  if (v.expression !== undefined || !partial) d.expression = typeof v.expression === 'string' && v.expression.trim() && v.expression.length <= MAX_EXPR ? v.expression : fail(`driver expression must be 1..${MAX_EXPR} characters`);
+  if (v.vars !== undefined || !partial) {
+    const vars = v.vars ?? [];
+    if (!Array.isArray(vars) || vars.length > MAX_DRIVER_VARS) fail(`a driver has up to ${MAX_DRIVER_VARS} variables`);
+    d.vars = vars.map((x) => {
+      if (!isRecord(x) || !isVarName(x.name) || !isId(x.object) || !(CHANNELS as readonly string[]).includes(x.channel as string)) fail('driver variables need name (letters, digits, _), object and channel');
+      return { name: x.name as string, object: x.object as string, channel: x.channel as Driver['vars'][number]['channel'] };
+    });
+  }
+  if (v.mute !== undefined) d.mute = !!v.mute;
+  return d;
+}
+
+function checkDriver(doc: SceneDoc, o: SceneObject, d: Driver) {
+  const err = driverProblem(d);
+  if (err) throw new CommandError(err);
+  for (const v of d.vars) if (!doc.objects[v.object]) throw new CommandError(`Variable ${v.name}: no object ${v.object}`);
+  if (d.property.startsWith('shape:') && !o.shapeKeys?.keys.slice(1).some((k) => k.name === d.property.slice(6))) throw new CommandError(`${o.name} has no shape key ${d.property.slice(6)}`);
 }

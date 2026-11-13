@@ -686,3 +686,10 @@ button.vp-mode.posing { background: #1f4f7a; border-color: #4fb0ff; color: #fff;
 .con-title { flex: 1; font-weight: 600; color: #7fb0ff; }
 .con-axes { gap: 10px; }
 .con-axis { display: inline-flex; align-items: center; gap: 4px; }
+.drv-prop { flex: 1; background: transparent; border: none; color: #c78bff; font-weight: 600; min-width: 0; }
+.drv-expr input { font-family: ui-monospace, Menlo, monospace; min-width: 0; flex: 1; }
+.drv-err { color: #ff8a7a; }
+.drv-var { gap: 4px; }
+.drv-var select { min-width: 0; flex: 1; }
+.drv-name { width: 64px; flex: none; font-family: ui-monospace, Menlo, monospace; }
+.drv-addvar { margin: 2px 8px 6px; }

@@ -625,3 +625,18 @@ A vertex group is one weight (0..1) per mesh point. On a mesh skinned to an arma
 - Every constraint has `target` (object id), `influence` 0..1 (default 1) and `mute`.
 - `setConstraint` `{id, index, patch}`, `removeConstraint` `{id, index}`, `moveConstraint` `{id, index, to}`.
 - They run in world space after keyframes and Follow Path, top to bottom. Deleting the target removes the constraint. Loops (A tracks B tracks A) stop after a few steps.
+
+## Drivers (v3.24)
+
+```json
+{"type":"addDriver","id":"wheel","driver":{
+  "property":"rotation.y",
+  "expression":"x / (2 * pi * 0.4) * 360",
+  "vars":[{"name":"x","object":"car","channel":"location.x"}]
+}}
+```
+
+- `property`: `location.x|y|z`, `rotation.x|y|z` (degrees), `scale.x|y|z`, or `shape:<key name>` for a shape key value. One driver per property.
+- `vars`: up to 8 `{name, object, channel}` (channel as above); `frame` and `time` (seconds) are always there; `pi`, `e`, `tau` are constants.
+- Expressions: numbers, + − * / % ^ (or **), < > <= >= == !=, && || !, `c ? a : b`, and `sin cos tan asin acos atan atan2 sqrt abs floor ceil round exp log pow min max clamp lerp radians degrees sign noise`. Anything else is refused — they are parsed by B3D, never run as JavaScript.
+- Drivers run after keyframes and Follow Path and before constraints. `setDriver` `{id, index, patch}`, `removeDriver` `{id, index}`. Deleting an object drops the variables that read it.

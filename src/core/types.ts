@@ -159,6 +159,8 @@ export interface SceneObject {
   follow?: FollowPath;
   /** Object constraints (Track To, Copy Location / Rotation / Scale, Limit Distance), applied in order. */
   constraints?: import('./constraints').Constraint[];
+  /** Drivers: channels (or shape key values) computed from expressions of other objects' values. */
+  drivers?: import('./drivers').Driver[];
   material: Material;
   /** More materials for faces of a mesh (Blender's material slots 2, 3…); faces pick one with mesh.materialIndex. */
   materialSlots?: Material[];

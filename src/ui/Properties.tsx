@@ -10,6 +10,9 @@ import type { CameraFollow } from '../core/animation';
 import { evaluateValue } from '../core/animation';
 import { CONSTRAINT_LABELS, CONSTRAINT_TYPES, MAX_CONSTRAINTS, TRACK_AXES } from '../core/constraints';
 import type { Constraint, ConstraintType, TrackAxis } from '../core/constraints';
+import { CHANNELS, CHANNEL_LABELS, MAX_DRIVERS, MAX_DRIVER_VARS, channelOf, driverProblem, driverValue, isVarName } from '../core/drivers';
+import type { Channel, Driver } from '../core/drivers';
+import { MAX_EXPR } from '../core/expr';
 import { isRenderable } from '../core/types';
 import { pickFile, runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
@@ -37,7 +40,7 @@ import { DEFAULT_GLOW_COLOR, PATTERNS } from '../core/patterns';
 import type { Pattern, PatternType } from '../core/patterns';
 import type { TimeOfDay } from '../core/sky';
 import { worldOf } from '../core/types';
-import { EASINGS, animationOf, baseTransformAt, isAnimated, transformEdit } from '../core/animation';
+import { EASINGS, animationOf, baseTransformAt, isAnimated, transformAt, transformEdit } from '../core/animation';
 import type { Easing } from '../core/animation';
 import type { Background } from '../core/types';
 import { canEdit, setSmooth, setSubdivision, togglePose } from './editing';
@@ -233,6 +236,7 @@ export function Properties() {
       <AnimationSection id={o.id} animated={animated} />
 
       {!o.modifiers?.curve && <FollowSection id={o.id} />}
+      <DriversSection id={o.id} />
 
       <Section title="Relations">
         <label className="prop-row">
@@ -882,6 +886,143 @@ function ConstraintsSection({ id }: { id: string }) {
           : 'Track To keeps an object (or a light) facing another; Copy Location / Rotation / Scale glue it to one; Limit Distance keeps it on a leash.'}
       </p>
     </>
+  );
+}
+
+/**
+ * Drivers (Blender's Add Driver): a channel computed every frame from an expression of other
+ * objects' values. Expressions are safe maths (core/expr.ts), never code.
+ */
+function DriversSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const list = useApp((s) => s.doc.objects[id]?.drivers);
+  const doc = useApp((s) => s.doc);
+  const frame = useApp((s) => s.frame);
+  const o = doc.objects[id];
+  const others = doc.order.filter((x) => x !== id);
+  const run = (cmd: Command) => store.dispatch(cmd, { select: false });
+  const set = (index: number, patch: Partial<Driver>) => run({ type: 'setDriver', id, index, patch });
+  const shapeProps = (o?.shapeKeys?.keys.slice(1) ?? []).map((k) => `shape:${k.name}`);
+  const props = [...CHANNELS, ...shapeProps];
+  const free = props.filter((p) => !list?.some((d) => d.property === p));
+  const add = () => {
+    const property = (free.includes('rotation.z') ? 'rotation.z' : free[0]) as string;
+    const src = others[0];
+    run({ type: 'addDriver', id, driver: src ? { property, expression: 'var', vars: [{ name: 'var', object: src, channel: 'location.x' }] } : { property, expression: 'frame', vars: [] } });
+  };
+  const fps = doc.animation?.fps ?? 24;
+  const read = (t: string, c: Channel) => (doc.objects[t] ? channelOf(transformAt(doc, t, frame, 1) ?? doc.objects[t].transform, c) : null);
+  return (
+    <Section title="Drivers" defaultOpen={!!list?.length}>
+      {list?.map((d, i) => {
+        const problem = driverProblem(d);
+        const value = problem ? null : driverValue({ ...d, mute: false }, frame, fps, read);
+        return (
+          <div key={i} className={`con-card${d.mute ? ' muted' : ''}`} data-driver={i}>
+            <div className="con-head">
+              <select className="con-title drv-prop" aria-label="Driven property" value={d.property} onChange={(e) => set(i, { property: e.target.value })}>
+                {props.filter((p) => p === d.property || free.includes(p)).map((p) => (
+                  <option key={p} value={p}>
+                    {p.startsWith('shape:') ? `Shape key: ${p.slice(6)}` : CHANNEL_LABELS[p as Channel]}
+                  </option>
+                ))}
+              </select>
+              <button className="icon-btn" aria-label={d.mute ? 'Turn on' : 'Turn off'} title={d.mute ? 'Turn on' : 'Turn off'} onClick={() => set(i, { mute: !d.mute })}>
+                {d.mute ? '◌' : '●'}
+              </button>
+              <button className="icon-btn" aria-label="Remove driver" onClick={() => run({ type: 'removeDriver', id, index: i })}>✕</button>
+            </div>
+            <label className="prop-row drv-expr">
+              <span>Expression</span>
+              <input
+                aria-label="Driver expression"
+                key={d.expression}
+                defaultValue={d.expression}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                maxLength={MAX_EXPR}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+                onBlur={(e) => {
+                  const val = e.target.value.trim();
+                  if (val && val !== d.expression) set(i, { expression: val });
+                  // Refused (not maths): show what's stored again.
+                  const kept = store.getState().doc.objects[id]?.drivers?.[i]?.expression;
+                  if (kept !== undefined && kept !== val) e.target.value = kept;
+                }}
+              />
+            </label>
+            <p className={`prop-hint${problem ? ' drv-err' : ''}`} data-testid="driver-value">
+              {problem ? problem : `= ${value === null ? '—' : +value.toFixed(4)}${d.mute ? ' (off)' : ''}`}
+            </p>
+            {d.vars.map((v, j) => (
+              <div key={j} className="prop-row drv-var">
+                <input
+                  className="drv-name"
+                  aria-label="Variable name"
+                  key={v.name}
+                  defaultValue={v.name}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                  }}
+                  onBlur={(e) => {
+                    const name = e.target.value.trim();
+                    if (name === v.name) return;
+                    if (!isVarName(name)) {
+                      store.notify('Variable names are letters, digits and _ (not frame, time, pi)');
+                      e.target.value = v.name;
+                      return;
+                    }
+                    // Renaming a variable renames it in the expression too.
+                    const expression = d.expression.replace(new RegExp(`\\b${v.name}\\b`, 'g'), name);
+                    set(i, { vars: d.vars.map((x, k) => (k === j ? { ...x, name } : x)), expression });
+                  }}
+                />
+                <select aria-label="Variable object" value={v.object} onChange={(e) => set(i, { vars: d.vars.map((x, k) => (k === j ? { ...x, object: e.target.value } : x)) })}>
+                  {others.map((x) => (
+                    <option key={x} value={x}>
+                      {doc.objects[x].name}
+                    </option>
+                  ))}
+                </select>
+                <select aria-label="Variable channel" value={v.channel} onChange={(e) => set(i, { vars: d.vars.map((x, k) => (k === j ? { ...x, channel: e.target.value as Channel } : x)) })}>
+                  {CHANNELS.map((c) => (
+                    <option key={c} value={c}>
+                      {CHANNEL_LABELS[c]}
+                    </option>
+                  ))}
+                </select>
+                <button className="icon-btn" aria-label="Remove variable" onClick={() => set(i, { vars: d.vars.filter((_, k) => k !== j) })}>✕</button>
+              </div>
+            ))}
+            {others.length > 0 && d.vars.length < MAX_DRIVER_VARS && (
+              <button
+                className="btn drv-addvar"
+                onClick={() => {
+                  let n = 1;
+                  while (d.vars.some((x) => x.name === `var${n}`)) n++;
+                  set(i, { vars: [...d.vars, { name: d.vars.length ? `var${n}` : 'var', object: others[0], channel: 'location.x' }] });
+                }}
+              >
+                + Variable
+              </button>
+            )}
+          </div>
+        );
+      })}
+      <div className="prop-actions">
+        <button className="btn" data-testid="driver-add" disabled={!free.length || (list?.length ?? 0) >= MAX_DRIVERS} onClick={add}>
+          + Add Driver
+        </button>
+      </div>
+      <p className="prop-hint">Maths only: + − * / ^ %, ( ), a &gt; b ? x : y, sin cos abs min max clamp lerp noise… plus frame and time (seconds). Rotations are in degrees.</p>
+    </Section>
   );
 }
 
