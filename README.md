@@ -5,6 +5,13 @@ Runs on desktop browsers and on iPad / iPhone / Android (touch-first controls).
 
 > Independent project. Inspired by professional desktop 3D tools; not affiliated with or endorsed by the Blender Foundation.
 
+## Object constraints (v3.23)
+
+- **Properties → Constraints**, like Blender's constraint tab: **+ Add Object Constraint** → **Track To**, **Copy Location**, **Copy Rotation**, **Copy Scale**, **Limit Distance**
+- Each has a **Target**, its own settings (track axis, which axes, offset, distance and clamp region), **Influence**, on/off, reorder and remove
+- They run top to bottom after keyframes and Follow Path, every frame, so a spotlight can follow a moving car, or an eye can keep looking at the camera target; the Location / Rotation / Scale fields still show the object's own values
+- Scripts: `addConstraint`, `setConstraint`, `removeConstraint`, `moveConstraint`
+
 ## Weight Paint and vertex groups (v3.22)
 
 - **Weights** (viewport header, next to Sculpt) enters **Weight Paint** like Blender's: the mesh shows its active vertex group from blue (0) to red (1)

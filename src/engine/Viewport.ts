@@ -1179,7 +1179,7 @@ export class Viewport {
     // Follow Path without keys of their own.
     for (const id of state.doc.order) {
       const o = state.doc.objects[id];
-      if (!o?.follow || now.has(id)) continue;
+      if ((!o?.follow && !o?.constraints?.length) || now.has(id)) continue;
       const e = this.entries.get(id);
       if (!e || (this.dragging && id === sel)) continue;
       now.add(id);
@@ -2054,7 +2054,18 @@ export class Viewport {
     const q = n.rotationQuaternion ?? Quaternion.FromEulerVector(n.rotation);
     const r = (v: Vector3): Vec3 => fromBabylonVec([clean(v.x), clean(v.y), clean(v.z)]);
     const st = this.store.getState();
-    this.store.dispatch(transformEdit(st.doc, st.frame, sel, { position: r(n.position), rotation: babylonQuatToEulerDeg([q.x, q.y, q.z, q.w]), scale: r(n.scaling) }));
+    const all = { position: r(n.position), rotation: babylonQuatToEulerDeg([q.x, q.y, q.z, q.w]), scale: r(n.scaling) };
+    // Constrained objects: keep only what the tool changed, so the constraint's result (e.g. a
+    // Track To rotation) isn't baked into the object's own values.
+    const gm = this.gizmos;
+    const patch = st.doc.objects[sel]?.constraints?.length
+      ? gm?.positionGizmoEnabled
+        ? { position: all.position }
+        : gm?.rotationGizmoEnabled
+          ? { rotation: all.rotation }
+          : { scale: all.scale }
+      : all;
+    this.store.dispatch(transformEdit(st.doc, st.frame, sel, patch));
   }
 
   private grid: LinesMesh[] = [];
