@@ -157,6 +157,8 @@ export interface SceneObject {
   collection?: string;
   /** Follow Path: move along a curve object between two frames (Blender's Follow Path constraint). */
   follow?: FollowPath;
+  /** Object constraints (Track To, Copy Location / Rotation / Scale, Limit Distance), applied in order. */
+  constraints?: import('./constraints').Constraint[];
   material: Material;
   /** More materials for faces of a mesh (Blender's material slots 2, 3…); faces pick one with mesh.materialIndex. */
   materialSlots?: Material[];

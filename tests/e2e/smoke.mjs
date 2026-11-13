@@ -1013,6 +1013,60 @@ const setNumber = async (page, scope, label, value) => {
   await ctx.close();
 }
 
+// Constraints (v3.23): Track To / Copy Location / Limit Distance from the Constraints tab.
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 860 });
+  await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'batch', commands: [
+      { type: 'delete', ids: [...s.getState().doc.order] },
+      { type: 'add', primitive: 'cone', id: 'pointer', name: 'Pointer', transform: { position: [0, 0, 0], scale: [0.4, 0.4, 0.4] } },
+      { type: 'add', primitive: 'sphere', id: 'ball', name: 'Ball', transform: { position: [3, 0, 0], scale: [0.4, 0.4, 0.4] } },
+      { type: 'setKeyframe', id: 'ball', frame: 1, transform: { position: [3, 0, 0], rotation: [0, 0, 0], scale: [0.4, 0.4, 0.4] } },
+      { type: 'setKeyframe', id: 'ball', frame: 24, transform: { position: [0, 3, 0], rotation: [0, 0, 0], scale: [0.4, 0.4, 0.4] } },
+    ] });
+    s.select('pointer');
+    s.setFrame(1);
+  });
+  await page.click('[data-prop-tab="constraints"]');
+  await page.selectOption('[data-testid="con-add"]', 'trackTo');
+  const yAxis = () => page.evaluate(() => {
+    const n = window.__b3d.viewport().entries.get('pointer').node;
+    n.computeWorldMatrix(true);
+    const m = n.getWorldMatrix().m;
+    // Babylon is Y-up: Blender's +Y axis is Babylon's +Z column.
+    const v = [m[8], m[9], m[10]];
+    const l = Math.hypot(...v);
+    return v.map((x) => Math.round((x / l) * 100) / 100);
+  });
+  const c = await page.evaluate(() => window.__b3d.store.getState().doc.objects.pointer.constraints);
+  const a1 = await yAxis();
+  await page.evaluate(() => window.__b3d.store.setFrame(24));
+  await page.waitForTimeout(200);
+  const a24 = await yAxis();
+  check('v3.23: Constraints → Track To aims +Y at the target and follows it as it moves', c?.[0]?.type === 'trackTo' && c[0].target === 'ball' && a1[0] > 0.95 && a24[2] > 0.95, JSON.stringify({ c, a1, a24 }));
+  const shown = await page.evaluate(() => { window.__b3d.store.select('pointer'); return window.__b3d.store.getState().doc.objects.pointer.transform.rotation; });
+  check('v3.23: the object’s own rotation is untouched (the constraint runs on top)', JSON.stringify(shown) === '[0,0,0]', JSON.stringify(shown));
+  await page.selectOption('[data-testid="con-add"]', 'limitDistance');
+  await page.locator('[data-con="1"] [aria-label="Limit mode"]').selectOption('on');
+  const lim = await page.evaluate(() => {
+    const s = window.__b3d.store;
+    s.dispatch({ type: 'setConstraint', id: 'pointer', index: 1, patch: { distance: 1 } }, { select: false });
+    const n = window.__b3d.viewport().entries.get('pointer').node;
+    const b = window.__b3d.viewport().entries.get('ball').node;
+    n.computeWorldMatrix(true);
+    b.computeWorldMatrix(true);
+    return Math.round(n.getAbsolutePosition().subtract(b.getAbsolutePosition()).length() * 100) / 100;
+  });
+  check('v3.23: Limit Distance (On surface, 1 m) keeps it 1 m from the target', lim === 1, String(lim));
+  await page.click('[data-con="0"] [aria-label="Remove constraint"]');
+  const left = await page.evaluate(() => window.__b3d.store.getState().doc.objects.pointer.constraints?.map((x) => x.type));
+  check('v3.23: ✕ removes a constraint', JSON.stringify(left) === '["limitDistance"]', JSON.stringify(left));
+  await page.screenshot({ path: `${shots}/constraints.png`, timeout: 60000 }).catch(() => {});
+  check('v3.23: no errors (constraints)', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Weight Paint (v3.22): vertex groups from the automatic weights, painted with a brush.
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 860 });
@@ -1872,12 +1926,12 @@ const setNumber = async (page, scope, label, value) => {
   });
   const tabsOf = () => page.$$eval('[data-prop-tab]', (els) => els.map((e) => e.getAttribute('data-prop-tab') + (e.getAttribute('aria-selected') === 'true' ? '*' : '')).join(' '));
   const cube = await tabsOf();
-  check('v3.1: a shape gets Scene, Object, Modifiers, Physics, Mesh, Material tabs (Object first)', cube === 'scene object* modifiers physics data material', cube);
+  check('v3.1: a shape gets Scene, Object, Constraints, Modifiers, Physics, Mesh, Material tabs (Object first)', cube === 'scene object* constraints modifiers physics data material', cube);
   await page.click('[data-prop-tab="material"]');
   const mat = await page.isVisible('#mat-base');
   await page.evaluate(() => window.__b3d.store.select('l'));
   const lamp = await tabsOf();
-  check('v3.1: Material shows the material; a light has a Light tab and no Material tab', mat && lamp === 'scene object* data', lamp);
+  check('v3.1: Material shows the material; a light has a Light tab and no Material tab', mat && lamp === 'scene object* constraints data', lamp);
   await page.evaluate(() => window.__b3d.store.select('c'));
   const back = await tabsOf();
   check('v3.1: the last tab is remembered when going back to the shape', back.includes('material*'), back);

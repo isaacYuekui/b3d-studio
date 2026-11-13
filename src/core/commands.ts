@@ -16,6 +16,8 @@ import { addShapeKey, carryShapeKeys, removeShapeKey, setActiveKey, validShapeKe
 import type { ShapeKeys } from './shapeKeys';
 import { MAX_GROUPS, carryGroups, uniqueGroupName, validGroups, weightsToGroups } from './vertexGroups';
 import type { VertexGroups } from './vertexGroups';
+import { CONSTRAINT_TYPES, MAX_CONSTRAINTS, TRACK_AXES, constraintError } from './constraints';
+import type { Constraint } from './constraints';
 import type { ArmatureData, Bone, BonePose, Background, CameraLens, FollowPath, LightData, LightType, Material, MeshData, Modifiers, ObjectType, PrimitiveParams, PrimitiveType, SceneDoc, SceneObject, Transform, Vec3, World } from './types';
 import { primitiveMesh } from './mesh/primitives';
 import { applyModifiers } from './mesh/modifiers';
@@ -99,6 +101,11 @@ export type Command =
   | { type: 'setMaterial'; id: string; material: Partial<Material>; slot?: number }
   /** Follow Path: an object moves along a curve object (null removes it). */
   | { type: 'setFollow'; id: string; follow: FollowPath | null }
+  /** Object constraints, run in order after keys and Follow Path (Blender's constraint stack). */
+  | { type: 'addConstraint'; id: string; constraint: Omit<Constraint, 'influence'> & { influence?: number } }
+  | { type: 'setConstraint'; id: string; index: number; patch: Partial<Constraint> }
+  | { type: 'removeConstraint'; id: string; index: number }
+  | { type: 'moveConstraint'; id: string; index: number; to: number }
   /** Shape keys: the first add makes the Basis; later ones a new key (from the Basis, or the current mix). */
   | { type: 'addShapeKey'; id: string; name?: string; fromMix?: boolean }
   | { type: 'setShapeKey'; id: string; index: number; name?: string; value?: number; min?: number; max?: number; mute?: boolean }
@@ -580,6 +587,14 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
         doomed.forEach((id) => (delete tracks[id], delete poses[id], delete shapes[id]));
         animation = { ...animation, tracks, poses, ...(animation.shapes ? { shapes } : {}) };
       }
+      // Constraints aimed at deleted objects go with them.
+      for (const [id, o] of Object.entries(objects))
+        if (o.constraints?.some((c) => doomed.has(c.target))) {
+          const left = o.constraints.filter((c) => !doomed.has(c.target));
+          const { constraints: _c, ...rest } = o;
+          void _c;
+          objects[id] = left.length ? { ...rest, constraints: left } : rest;
+        }
       // Meshes skinned to a deleted armature keep their rest shape.
       for (const [id, o] of Object.entries(objects)) if (o.skin && doomed.has(o.skin.armature)) {
         const { skin: _drop, ...rest } = o;
@@ -694,6 +709,52 @@ function applyCommandInner(doc: SceneDoc, cmd: Command, idGen: IdGen): ApplyResu
       if (!c?.modifiers?.curve) throw new CommandError('Follow Path needs a curve object (Add → Curve)');
       if (cmd.follow.curve === o.id) throw new CommandError('A curve can’t follow itself');
       return { doc: withObject(doc, { ...o, follow: { ...cmd.follow } }), created: [] };
+    }
+
+    case 'addConstraint': {
+      const o = requireObj(doc, cmd.id);
+      const list = o.constraints ?? [];
+      if (list.length >= MAX_CONSTRAINTS) throw new CommandError(`At most ${MAX_CONSTRAINTS} constraints`);
+      if (!doc.objects[cmd.constraint.target]) throw new CommandError(`No object ${cmd.constraint.target} to target`);
+      if (cmd.constraint.target === o.id) throw new CommandError('An object can’t target itself');
+      const c: Constraint = { ...cmd.constraint, influence: cmd.constraint.influence ?? 1 };
+      if (c.type === 'trackTo' && !c.axis) c.axis = o.light ? '-Z' : 'Y';
+      if (c.type === 'limitDistance' && c.distance === undefined) {
+        // Blender sets the distance to how far apart they are now.
+        const a = o.transform.position, b = doc.objects[c.target].transform.position;
+        c.distance = Math.round(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) * 1000) / 1000;
+      }
+      return { doc: withObject(doc, { ...o, constraints: [...list, c] }), created: [] };
+    }
+
+    case 'setConstraint': {
+      const o = requireObj(doc, cmd.id);
+      const c = o.constraints?.[cmd.index];
+      if (!c) throw new CommandError(`${o.name} has no constraint ${cmd.index}`);
+      const next = { ...c, ...cmd.patch };
+      if (cmd.patch.target !== undefined && (!doc.objects[next.target] || next.target === o.id)) throw new CommandError('Pick another object to target');
+      const err = constraintError(next);
+      if (err) throw new CommandError(err);
+      return { doc: withObject(doc, { ...o, constraints: o.constraints!.map((x, i) => (i === cmd.index ? next : x)) }), created: [] };
+    }
+
+    case 'removeConstraint': {
+      const o = requireObj(doc, cmd.id);
+      if (!o.constraints?.[cmd.index]) throw new CommandError(`${o.name} has no constraint ${cmd.index}`);
+      const left = o.constraints.filter((_, i) => i !== cmd.index);
+      const { constraints: _c, ...rest } = o;
+      void _c;
+      return { doc: withObject(doc, left.length ? { ...rest, constraints: left } : rest), created: [] };
+    }
+
+    case 'moveConstraint': {
+      const o = requireObj(doc, cmd.id);
+      const list = [...(o.constraints ?? [])];
+      if (!list[cmd.index]) throw new CommandError(`${o.name} has no constraint ${cmd.index}`);
+      const to = Math.max(0, Math.min(list.length - 1, cmd.to));
+      const [c] = list.splice(cmd.index, 1);
+      list.splice(to, 0, c);
+      return { doc: withObject(doc, { ...o, constraints: list }), created: [] };
     }
 
     case 'addShapeKey': {
@@ -1915,6 +1976,11 @@ export function validateSceneObject(raw: unknown): SceneObject {
   if (v.params !== undefined) obj.params = validateParams(v.params);
   if (v.collection !== undefined) obj.collection = isId(v.collection) ? v.collection : fail(`object ${v.id}: collection invalid`);
   if (v.follow !== undefined) obj.follow = validateFollow(v.follow);
+  if (v.constraints !== undefined) {
+    if (!Array.isArray(v.constraints) || v.constraints.length > MAX_CONSTRAINTS) fail(`object ${String(v.id)}: constraints must be a list of up to ${MAX_CONSTRAINTS}`);
+    const list = (v.constraints as unknown[]).map((c) => validateConstraintFields(c, true) as Constraint);
+    if (list.length) obj.constraints = list;
+  }
   if (v.materialSlots !== undefined) {
     const slots = validateSlots(v.materialSlots, false);
     if (slots.length) obj.materialSlots = slots;
@@ -2287,6 +2353,18 @@ export function validateCommand(v: unknown, depth = 0): Command {
       if (!Array.isArray(v.faces) || v.faces.length > LIMITS.faces || !v.faces.every((f) => Number.isInteger(f) && f >= 0)) fail('assignMaterial faces must be a list of face indices');
       return { type: 'assignMaterial', id: v.id, slot: v.slot as number, faces: [...(v.faces as number[])] };
     }
+    case 'addConstraint':
+      if (!isId(v.id)) fail('addConstraint needs id');
+      return { type: 'addConstraint', id: v.id, constraint: validateConstraintFields(v.constraint, false) as Extract<Command, { type: 'addConstraint' }>['constraint'] };
+    case 'setConstraint':
+      if (!isId(v.id) || !(Number.isInteger(v.index) && inRange(v.index, 0, MAX_CONSTRAINTS - 1))) fail('setConstraint needs id and index');
+      return { type: 'setConstraint', id: v.id, index: v.index as number, patch: validateConstraintFields(v.patch, false, true) };
+    case 'removeConstraint':
+      if (!isId(v.id) || !(Number.isInteger(v.index) && inRange(v.index, 0, MAX_CONSTRAINTS - 1))) fail('removeConstraint needs id and index');
+      return { type: 'removeConstraint', id: v.id, index: v.index as number };
+    case 'moveConstraint':
+      if (!isId(v.id) || !(Number.isInteger(v.index) && inRange(v.index, 0, MAX_CONSTRAINTS - 1)) || !(Number.isInteger(v.to) && inRange(v.to, 0, MAX_CONSTRAINTS - 1))) fail('moveConstraint needs id, index and to');
+      return { type: 'moveConstraint', id: v.id, index: v.index as number, to: v.to as number };
     case 'setFollow': {
       if (!isId(v.id)) fail('setFollow needs id');
       return { type: 'setFollow', id: v.id, follow: v.follow === null ? null : validateFollow(v.follow) };
@@ -2843,4 +2921,19 @@ function validateVertexGroups(v: unknown, vertexCount: number, id: string): Vert
   const err = validGroups(vg, vertexCount);
   if (err) fail(`object ${id}: ${err}`);
   return vg;
+}
+
+/** Constraint fields from a script / file. `full`: a stored constraint (influence required); `partial`: a patch. */
+function validateConstraintFields(v: unknown, full: boolean, partial = false): Partial<Constraint> {
+  if (!isRecord(v)) fail('constraint must be an object');
+  const c: Partial<Constraint> = {};
+  if (v.type !== undefined || !partial) c.type = CONSTRAINT_TYPES.includes(v.type as never) ? (v.type as Constraint['type']) : fail(`constraint type must be one of ${CONSTRAINT_TYPES.join(', ')}`);
+  if (v.target !== undefined || !partial) c.target = isId(v.target) ? v.target : fail('constraint needs a target object id');
+  if (v.influence !== undefined || full) c.influence = inRange(v.influence ?? 1, 0, 1) ? ((v.influence ?? 1) as number) : fail('constraint influence must be 0..1');
+  if (v.mute !== undefined) c.mute = !!v.mute;
+  if (v.axis !== undefined) c.axis = TRACK_AXES.includes(v.axis as never) ? (v.axis as Constraint['axis']) : fail(`track axis must be one of ${TRACK_AXES.join(', ')}`);
+  for (const k of ['x', 'y', 'z', 'offset'] as const) if (v[k] !== undefined) c[k] = !!v[k];
+  if (v.distance !== undefined) c.distance = inRange(v.distance, 0, 1e5) ? (v.distance as number) : fail('limit distance must be 0..100000 m');
+  if (v.mode !== undefined) c.mode = ['inside', 'outside', 'on'].includes(v.mode as string) ? (v.mode as Constraint['mode']) : fail('limit distance mode must be inside, outside or on');
+  return c;
 }

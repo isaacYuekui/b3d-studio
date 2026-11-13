@@ -8,6 +8,8 @@
 import type { FollowPath, Transform, Vec3 } from './types';
 import { DEFAULT_CURVE, curvePolyline, pathAt } from './curve';
 import type { CurveSettings } from './curve';
+import { applyConstraints, mul4, trsMatrix } from './constraints';
+import type { M4 } from './constraints';
 
 export const EASINGS = ['linear', 'ease', 'easeIn', 'easeOut', 'constant'] as const;
 export type Easing = (typeof EASINGS)[number];
@@ -179,14 +181,34 @@ export function evaluatePose(keys: PoseKey[], frame: number): { rotation: Vec3; 
 }
 
 /** Transform an object shows at a frame: animated if it has keys, otherwise its own. */
-type AnimDoc = { animation?: Animation; objects: Record<string, { transform: Transform; follow?: FollowPath; mesh?: { vertices: Vec3[] }; modifiers?: { curve?: Partial<CurveSettings> } }> };
+type AnimDoc = { animation?: Animation; objects: Record<string, { id?: string; transform: Transform; follow?: FollowPath; parentId?: string | null; constraints?: import('./constraints').Constraint[]; mesh?: { vertices: Vec3[] }; modifiers?: { curve?: Partial<CurveSettings> } }> };
 
-export function transformAt(doc: AnimDoc, id: string, frame: number): Transform | null {
+/** Keys and Follow Path, before constraints: what the Location / Rotation / Scale fields show and edit (as in Blender). */
+export function baseTransformAt(doc: AnimDoc, id: string, frame: number): Transform | null {
+  const o = doc.objects[id];
+  if (!o?.constraints?.length) return transformAt(doc, id, frame);
+  return transformAt({ ...doc, objects: { ...doc.objects, [id]: { ...o, constraints: undefined } } }, id, frame);
+}
+
+export function transformAt(doc: AnimDoc, id: string, frame: number, depth = 0): Transform | null {
   const o = doc.objects[id];
   if (!o) return null;
   const keys = doc.animation?.tracks[id];
-  const base = (keys && evaluateTransform(keys, frame)) ?? o.transform;
-  return o.follow && o.follow.curve !== id ? followTransform(doc, o.follow, base, frame) ?? base : base;
+  let base = (keys && evaluateTransform(keys, frame)) ?? o.transform;
+  if (o.follow && o.follow.curve !== id) base = followTransform(doc, o.follow, base, frame) ?? base;
+  // Constraints (Track To, Copy Location…) run last, in world space. Depth stops loops (A tracks B tracks A).
+  if (o.constraints?.length && depth < 12) {
+    const parent = o.parentId && doc.objects[o.parentId] ? worldAt(doc, o.parentId, frame, depth + 1) : null;
+    base = applyConstraints({ id, constraints: o.constraints }, base, parent, (t) => (doc.objects[t] ? worldAt(doc, t, frame, depth + 1) : null));
+  }
+  return base;
+}
+
+/** An object's world matrix at a frame, with keys, Follow Path and constraints. */
+export function worldAt(doc: AnimDoc, id: string, frame: number, depth = 0): M4 {
+  const o = doc.objects[id];
+  const local = trsMatrix(transformAt(doc, id, frame, depth) ?? o?.transform ?? { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] });
+  return o?.parentId && doc.objects[o.parentId] && depth < 64 ? mul4(worldAt(doc, o.parentId, frame, depth + 1), local) : local;
 }
 
 const polyCache = new WeakMap<Vec3[], Map<string, Vec3[]>>();
@@ -260,7 +282,7 @@ export function keyFrames(anim: Animation, ids: string[] | null): number[] {
  * edited directly.
  */
 export function transformEdit(
-  doc: { animation?: Animation; objects: Record<string, { transform: Transform }> },
+  doc: AnimDoc,
   frame: number,
   id: string,
   patch: Partial<Transform>,
@@ -268,6 +290,6 @@ export function transformEdit(
   | { type: 'transform'; id: string; position?: Vec3; rotation?: Vec3; scale?: Vec3 }
   | { type: 'setKeyframe'; id: string; frame: number; transform: Transform } {
   if (!isAnimated(doc, id)) return { type: 'transform', id, ...patch };
-  const cur = transformAt(doc, id, frame)!;
+  const cur = baseTransformAt(doc, id, frame)!;
   return { type: 'setKeyframe', id, frame, transform: { position: patch.position ?? cur.position, rotation: patch.rotation ?? cur.rotation, scale: patch.scale ?? cur.scale } };
 }

@@ -610,3 +610,18 @@ A vertex group is one weight (0..1) per mesh point. On a mesh skinned to an arma
 - `setVertexGroup` `{id, index, name}` renames, `setActiveVertexGroup` picks the one Weight Paint paints, `removeVertexGroup` `{id, index}`.
 - `groupsFromWeights` `{id, weights: {bones, w}}` turns skinning weights into groups (what Weight Paint does the first time).
 - Adding geometry keeps weights: new points take the weight of the old point at the same place, or the nearest.
+
+## Object constraints (v3.23)
+
+```json
+{"type":"batch","commands":[
+  {"type":"addConstraint","id":"spot","constraint":{"type":"trackTo","target":"car","axis":"-Z"}},
+  {"type":"addConstraint","id":"dog","constraint":{"type":"limitDistance","target":"owner","distance":2,"mode":"inside"}},
+  {"type":"addConstraint","id":"hat","constraint":{"type":"copyLocation","target":"head","offset":true,"influence":0.8}}
+]}
+```
+
+- Types: `trackTo` (`axis`: `Y` default, `-Y`, `X`, `-X`, `Z`, `-Z`; lights default to `-Z`), `copyLocation` (`x`/`y`/`z`, `offset`), `copyRotation`, `copyScale` (`x`/`y`/`z`), `limitDistance` (`distance` metres, default how far apart they are now; `mode` `inside` / `outside` / `on`).
+- Every constraint has `target` (object id), `influence` 0..1 (default 1) and `mute`.
+- `setConstraint` `{id, index, patch}`, `removeConstraint` `{id, index}`, `moveConstraint` `{id, index, to}`.
+- They run in world space after keyframes and Follow Path, top to bottom. Deleting the target removes the constraint. Loops (A tracks B tracks A) stop after a few steps.

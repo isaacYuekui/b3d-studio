@@ -676,3 +676,13 @@ button.vp-mode.posing { background: #1f4f7a; border-color: #4fb0ff; color: #fff;
 .sk-key { flex: none; width: 28px; height: 28px; border: none; background: transparent; color: #8a8a8a; font-size: 14px; border-radius: 4px; cursor: pointer; }
 .sk-key.anim { color: #b9c94a; }
 .sk-key.on { color: #f0c330; }
+
+/* Object constraints stack (Properties → Constraints) */
+.con-add { padding: 8px; }
+.con-add select { width: 100%; min-height: 34px; }
+.con-card { margin: 6px 8px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; background: rgba(0, 0, 0, 0.18); padding-bottom: 4px; }
+.con-card.muted { opacity: 0.55; }
+.con-head { display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+.con-title { flex: 1; font-weight: 600; color: #7fb0ff; }
+.con-axes { gap: 10px; }
+.con-axis { display: inline-flex; align-items: center; gap: 4px; }

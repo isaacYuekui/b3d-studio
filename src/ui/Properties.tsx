@@ -8,6 +8,8 @@ import type { Command, ModifierPatch } from '../core/commands';
 import type { FollowPath, LightType, Material as SceneMaterial, SceneObject, Vec3 } from '../core/types';
 import type { CameraFollow } from '../core/animation';
 import { evaluateValue } from '../core/animation';
+import { CONSTRAINT_LABELS, CONSTRAINT_TYPES, MAX_CONSTRAINTS, TRACK_AXES } from '../core/constraints';
+import type { Constraint, ConstraintType, TrackAxis } from '../core/constraints';
 import { isRenderable } from '../core/types';
 import { pickFile, runAction } from './actions';
 import { useCatalog, useUserModels } from './LibraryDialog';
@@ -35,7 +37,7 @@ import { DEFAULT_GLOW_COLOR, PATTERNS } from '../core/patterns';
 import type { Pattern, PatternType } from '../core/patterns';
 import type { TimeOfDay } from '../core/sky';
 import { worldOf } from '../core/types';
-import { EASINGS, animationOf, isAnimated, transformAt, transformEdit } from '../core/animation';
+import { EASINGS, animationOf, baseTransformAt, isAnimated, transformEdit } from '../core/animation';
 import type { Easing } from '../core/animation';
 import type { Background } from '../core/types';
 import { canEdit, setSmooth, setSubdivision, togglePose } from './editing';
@@ -142,7 +144,7 @@ export function Properties() {
   const mat = slot ? o.materialSlots![slot - 1] : o.material;
 
   // Animated objects show (and edit, via auto-key) their pose at the current frame.
-  const shown = transformAt(doc, o.id, frame) ?? o.transform;
+  const shown = baseTransformAt(doc, o.id, frame) ?? o.transform;
   const animated = isAnimated(doc, o.id);
 
   const vecField = (key: 'position' | 'rotation' | 'scale', label: string, opts: { step: number; rate: number; suffix?: string }) => (
@@ -191,7 +193,7 @@ export function Properties() {
   const parentOptions = doc.order.filter((id) => !forbidden.has(id));
 
   // Tabs like Blender's Properties editor: only the ones this kind of object has.
-  const tabs: [PropTab, string][] = [['scene', 'Scene'], ['object', 'Object']];
+  const tabs: [PropTab, string][] = [['scene', 'Scene'], ['object', 'Object'], ['constraints', 'Constraints']];
   if (canEdit(o)) tabs.push(['modifiers', 'Modifiers'], ['physics', 'Physics']);
   else if (o.type === 'empty') tabs.push(['physics', 'Physics']);
   const dataLabel = o.text ? 'Text' : o.water ? 'Water' : o.light ? 'Light' : o.type === 'model' ? 'Model' : o.type === 'armature' ? 'Armature' : o.modifiers?.curve ? 'Curve' : canEdit(o) && !o.terrain ? 'Mesh' : null;
@@ -274,6 +276,7 @@ export function Properties() {
       {cur === 'data' && o.text && <TextSection id={o.id} />}
       {cur === 'data' && o.modifiers?.curve && <CurveSection id={o.id} />}
       {cur === 'data' && o.water && <WaterSection id={o.id} />}
+      {cur === 'constraints' && <ConstraintsSection id={o.id} />}
       {cur === 'data' && canEdit(o) && !o.modifiers?.curve && !o.text && !o.water && !o.terrain && <VertexGroupsSection id={o.id} />}
       {cur === 'data' && canEdit(o) && !o.modifiers?.curve && !o.text && !o.water && !o.terrain && <ShapeKeysSection id={o.id} />}
       {cur === 'modifiers' && <ModifiersSection id={o.id} />}
@@ -458,7 +461,7 @@ export function Properties() {
   );
 }
 
-type PropTab = 'scene' | 'object' | 'modifiers' | 'physics' | 'data' | 'material';
+type PropTab = 'scene' | 'object' | 'constraints' | 'modifiers' | 'physics' | 'data' | 'material';
 
 function PropTabs({ tabs, cur, onPick }: { tabs: [PropTab, string][]; cur: PropTab; onPick: (t: PropTab) => void }) {
   return (
@@ -765,6 +768,123 @@ function CurveSection({ id }: { id: string }) {
 }
 
 /** Follow Path (Blender's constraint): move along a curve between two frames. */
+/**
+ * Object Constraints (Blender's constraint tab): a stack run top to bottom after keyframes and
+ * Follow Path. Each has a target, its own settings and an Influence.
+ */
+function ConstraintsSection({ id }: { id: string }) {
+  const { store } = useCtx();
+  const list = useApp((s) => s.doc.objects[id]?.constraints);
+  const doc = useApp((s) => s.doc);
+  const others = doc.order.filter((x) => x !== id);
+  const run = (cmd: Command) => store.dispatch(cmd, { select: false });
+  const set = (index: number, patch: Partial<Constraint>) => run({ type: 'setConstraint', id, index, patch });
+  const firstTarget = others.find((x) => doc.objects[x].type !== 'armature') ?? others[0];
+  return (
+    <>
+      <div className="prop-actions con-add">
+        <select
+          aria-label="Add Object Constraint"
+          data-testid="con-add"
+          value=""
+          disabled={!firstTarget || (list?.length ?? 0) >= MAX_CONSTRAINTS}
+          onChange={(e) => e.target.value && firstTarget && run({ type: 'addConstraint', id, constraint: { type: e.target.value as ConstraintType, target: firstTarget } })}
+        >
+          <option value="">+ Add Object Constraint</option>
+          {CONSTRAINT_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {CONSTRAINT_LABELS[t]}
+            </option>
+          ))}
+        </select>
+      </div>
+      {!firstTarget && <p className="prop-hint">Constraints need another object to look at or copy from. Add one first.</p>}
+      {list?.map((c, i) => (
+        <div key={i} className={`con-card${c.mute ? ' muted' : ''}`} data-con={i}>
+          <div className="con-head">
+            <span className="con-title">{CONSTRAINT_LABELS[c.type]}</span>
+            <button className="icon-btn" aria-label={c.mute ? 'Turn on' : 'Turn off'} title={c.mute ? 'Turn on' : 'Turn off'} onClick={() => set(i, { mute: !c.mute })}>
+              {c.mute ? '◌' : '●'}
+            </button>
+            <button className="icon-btn" aria-label="Move up" disabled={i === 0} onClick={() => run({ type: 'moveConstraint', id, index: i, to: i - 1 })}>↑</button>
+            <button className="icon-btn" aria-label="Move down" disabled={i === list.length - 1} onClick={() => run({ type: 'moveConstraint', id, index: i, to: i + 1 })}>↓</button>
+            <button className="icon-btn" aria-label="Remove constraint" onClick={() => run({ type: 'removeConstraint', id, index: i })}>✕</button>
+          </div>
+          <label className="prop-row">
+            <span>Target</span>
+            <select aria-label="Constraint target" value={c.target} onChange={(e) => set(i, { target: e.target.value })}>
+              {others.map((x) => (
+                <option key={x} value={x}>
+                  {doc.objects[x].name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {c.type === 'trackTo' && (
+            <label className="prop-row">
+              <span>Track axis</span>
+              <select aria-label="Track axis" value={c.axis ?? 'Y'} onChange={(e) => set(i, { axis: e.target.value as TrackAxis })}>
+                {TRACK_AXES.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {(c.type === 'copyLocation' || c.type === 'copyScale') && (
+            <div className="prop-row con-axes">
+              <span>Axes</span>
+              {(['x', 'y', 'z'] as const).map((k) => (
+                <label key={k} className="con-axis">
+                  <input type="checkbox" aria-label={`Copy ${k.toUpperCase()}`} checked={c[k] !== false} onChange={(e) => set(i, { [k]: e.target.checked })} />
+                  {k.toUpperCase()}
+                </label>
+              ))}
+            </div>
+          )}
+          {c.type === 'copyLocation' && (
+            <label className="prop-row">
+              <span>Offset (add its own location)</span>
+              <input type="checkbox" aria-label="Offset" checked={!!c.offset} onChange={(e) => set(i, { offset: e.target.checked })} />
+            </label>
+          )}
+          {c.type === 'limitDistance' && (
+            <>
+              <NumberField label="Distance" value={c.distance ?? 1} step={0.1} dragRate={0.02} suffix=" m" onPreview={(v) => store.preview({ type: 'setConstraint', id, index: i, patch: { distance: Math.max(0, v) } })} onCommit={(v) => { store.preview({ type: 'setConstraint', id, index: i, patch: { distance: Math.max(0, v) } }); store.commitPreview(); }} onCancel={() => store.cancelPreview()} />
+              <label className="prop-row">
+                <span>Clamp region</span>
+                <select aria-label="Limit mode" value={c.mode ?? 'inside'} onChange={(e) => set(i, { mode: e.target.value as Constraint['mode'] })}>
+                  <option value="inside">Inside</option>
+                  <option value="outside">Outside</option>
+                  <option value="on">On surface</option>
+                </select>
+              </label>
+            </>
+          )}
+          <NumberField
+            label="Influence"
+            value={c.influence}
+            step={0.05}
+            dragRate={0.01}
+            onPreview={(v) => store.preview({ type: 'setConstraint', id, index: i, patch: { influence: Math.max(0, Math.min(1, v)) } })}
+            onCommit={(v) => {
+              store.preview({ type: 'setConstraint', id, index: i, patch: { influence: Math.max(0, Math.min(1, v)) } });
+              store.commitPreview();
+            }}
+            onCancel={() => store.cancelPreview()}
+          />
+        </div>
+      ))}
+      <p className="prop-hint">
+        {list?.length
+          ? 'Constraints run top to bottom after keyframes. The Location / Rotation / Scale fields still show the object’s own values.'
+          : 'Track To keeps an object (or a light) facing another; Copy Location / Rotation / Scale glue it to one; Limit Distance keeps it on a leash.'}
+      </p>
+    </>
+  );
+}
+
 function FollowSection({ id }: { id: string }) {
   const { store } = useCtx();
   const f = useApp((s) => s.doc.objects[id]?.follow);
